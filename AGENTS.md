@@ -8,7 +8,7 @@ on Postgres (Neon), deployed to Vercel.
 | Path               | What                                                                             |
 | ------------------ | -------------------------------------------------------------------------------- |
 | `client/`          | Browser app (root `elm.json`). `client/UI/`: elmcn components                    |
-| `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs)                        |
+| `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages)        |
 | `tests/`           | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                |
 | `api/tests/`       | elm-test suites for the server                                                   |
 | `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon`, `Brevo`, `WebAuthn`, `Aaguid` |
@@ -358,9 +358,11 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   each with the text to show (`ApiClient.errorToString`).
 - A `Browser.application` without the `Navigation.Key` in its model: `main` keeps it
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
-  `open` picks the `Page` from the URL: `/`, `/auth/signup`, `/auth/signin`,
-  `/auth/verify`, `/dashboard`, else `NotFound`. A new page outside `/auth/` needs its
-  rewrite in `vercel.json`. `open` also ends a passkey ceremony left unfinished.
+  `open` picks the `Page` from `Path.parse` (`shared/Path.elm`): `/`, `/auth/signup`,
+  `/auth/signin`, `/auth/verify`, `/dashboard`, else `NotFound`. Links, `PushUrl` and the
+  server's emails write the same addresses with `Path.toString`. A new page needs a `Path`
+  variant and, outside `/auth/`, its rewrite in `vercel.json`. `open` also ends a passkey
+  ceremony left unfinished.
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
   (only on a 401), `SignedIn account`, or `Unavailable reason` when the check failed some
   other way: the page then says so and offers "Try again" (`SessionRetried`), and sends

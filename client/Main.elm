@@ -10,6 +10,7 @@ import Html.Events exposing (onClick, onInput, onSubmit)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
 import Json.Decode as Decode
+import Path
 import Phosphor exposing (IconWeight(..))
 import UI.Button as Button
 import UI.Card as Card
@@ -151,41 +152,37 @@ open url opened =
         model =
             { opened | ceremony = Resting Nothing }
     in
-    case ( url.path, url.fragment ) of
-        ( "/", _ ) ->
+    case Path.parse url of
+        Just Path.Home ->
             ( { model | page = Home, health = Checking (lastReport model.health) }, checkHealth )
 
-        ( "/auth/signup", _ ) ->
+        Just Path.SignUp ->
             ( { model | page = SignUp { email = "", username = "", state = Open (Editing Nothing) } }, NoEffect )
 
-        ( "/auth/signin", _ ) ->
+        Just Path.SignIn ->
             ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
 
-        ( "/dashboard", _ ) ->
+        Just Path.Dashboard ->
             ( { model | page = Dashboard { passkeys = Loading, confirming = Nothing, removalProblem = Nothing } }
             , if model.session == SignedOut then
-                PushUrl "/auth/signin"
+                PushUrl (Path.toString Path.SignIn)
 
               else
                 Request (ApiClient.request Api.passkeys () GotPasskeys)
             )
 
-        ( "/auth/verify", Just token ) ->
-            if String.isEmpty token then
-                ( { model | page = Verify (Refused missingToken) }, NoEffect )
-
-            else
-                ( { model | page = Verify (Looking token) }
-                , Request
-                    (ApiClient.request Api.verification () GotVerification
-                        |> ApiClient.withToken token
-                    )
+        Just (Path.Verify (Just token)) ->
+            ( { model | page = Verify (Looking token) }
+            , Request
+                (ApiClient.request Api.verification () GotVerification
+                    |> ApiClient.withToken token
                 )
+            )
 
-        ( "/auth/verify", Nothing ) ->
+        Just (Path.Verify Nothing) ->
             ( { model | page = Verify (Refused missingToken) }, NoEffect )
 
-        _ ->
+        Nothing ->
             ( { model | page = NotFound }, NoEffect )
 
 
@@ -384,7 +381,7 @@ update msg model =
                         ( { model | session = SignedIn account, page = Verify Accepted }, NoEffect )
 
                     else
-                        ( { model | session = SignedIn account }, PushUrl "/dashboard" )
+                        ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Dashboard) )
 
                 ( Verify (Found _ _ Accepting), Err error ) ->
                     ( { model | page = Verify (Refused (ApiClient.errorToString error)) }, NoEffect )
@@ -404,7 +401,7 @@ update msg model =
                     ( { model | session = SignedOut }
                     , case model.page of
                         Dashboard _ ->
-                            PushUrl "/auth/signin"
+                            PushUrl (Path.toString Path.SignIn)
 
                         _ ->
                             NoEffect
@@ -461,7 +458,7 @@ update msg model =
             ( model, Request (ApiClient.request Api.signOut () GotSignOut) )
 
         GotSignOut (Ok ()) ->
-            ( { model | session = SignedOut }, PushUrl "/" )
+            ( { model | session = SignedOut }, PushUrl (Path.toString Path.Home) )
 
         GotSignOut (Err _) ->
             ( model, NoEffect )
@@ -501,7 +498,7 @@ update msg model =
                                 dashboard
                     )
             , if model.page == Verify Accepted then
-                PushUrl "/dashboard"
+                PushUrl (Path.toString Path.Dashboard)
 
               else
                 NoEffect
@@ -556,7 +553,7 @@ update msg model =
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         GotPasskeySignIn (Ok account) ->
-            ( { model | session = SignedIn account }, PushUrl "/dashboard" )
+            ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Dashboard) )
 
         GotPasskeySignIn (Err error) ->
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
@@ -728,12 +725,12 @@ viewPage model =
                         ]
 
                     SignedOut ->
-                        [ link "/auth/signup" "Create an account"
-                        , link "/auth/signin" "Sign in"
+                        [ link Path.SignUp "Create an account"
+                        , link Path.SignIn "Sign in"
                         ]
 
                     SignedIn _ ->
-                        [ link "/dashboard" "Dashboard" ]
+                        [ link Path.Dashboard "Dashboard" ]
                 )
             ]
 
@@ -755,15 +752,15 @@ viewPage model =
             [ viewVerification model.ceremony verification ]
 
         NotFound ->
-            [ notice "Not found" "There is nothing at this address." [ link "/" "Go home" ] ]
+            [ notice "Not found" "There is nothing at this address." [ link Path.Home "Go home" ] ]
 
 
-link : String -> String -> Html Msg
-link url label =
+link : Path.Path -> String -> Html Msg
+link path label =
     Button.new
         |> Button.text label
         |> Button.link
-        |> Button.toAnchor [ href url ]
+        |> Button.toAnchor [ href (Path.toString path) ]
 
 
 notice : String -> String -> List (Html Msg) -> Html Msg
@@ -840,7 +837,7 @@ viewSignUpForm signUp attempt =
                 ]
             ]
         |> Card.footer [ class "text-sm text-muted-foreground" ]
-            [ text "Already have an account?", link "/auth/signin" "Sign in" ]
+            [ text "Already have an account?", link Path.SignIn "Sign in" ]
         |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
@@ -895,7 +892,7 @@ viewSignInForm ceremony signIn attempt =
                 ]
             ]
         |> Card.footer [ class "text-sm text-muted-foreground" ]
-            [ text "New here?", link "/auth/signup" "Create an account" ]
+            [ text "New here?", link Path.SignUp "Create an account" ]
         |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
@@ -915,7 +912,7 @@ viewDashboard session =
                     )
                 |> Card.content [ class "text-sm text-muted-foreground" ]
                     [ text "Your dashboard is empty for now." ]
-                |> Card.footer [] [ link "/" "Server status" ]
+                |> Card.footer [] [ link Path.Home "Server status" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
         Unavailable message ->
@@ -1080,11 +1077,11 @@ viewVerification ceremony verification =
                             |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting) ]
                         ]
                     ]
-                |> Card.footer [] [ link "/dashboard" "Not now" ]
+                |> Card.footer [] [ link Path.Dashboard "Not now" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
         Refused reason ->
-            notice "This link didn't work" reason [ link "/auth/signup" "Sign up again" ]
+            notice "This link didn't work" reason [ link Path.SignUp "Sign up again" ]
 
 
 viewFound : Api.Verification -> Acceptance -> Html Msg

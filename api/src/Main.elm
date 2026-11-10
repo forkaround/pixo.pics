@@ -19,6 +19,7 @@ import Json.Encode as Encode
 import LinkToken exposing (LinkToken)
 import Neon
 import Origin exposing (Origin)
+import Path
 import SessionToken exposing (SessionToken)
 import SignUp
 import Task
@@ -893,12 +894,12 @@ bearer request =
 
 verifyUrl : Model -> LinkToken -> String
 verifyUrl model token =
-    Origin.toString model.origin ++ "/auth/verify#" ++ LinkToken.toString token
+    Origin.toString model.origin ++ Path.toString (Path.Verify (Just (LinkToken.toString token)))
 
 
 dashboardUrl : Model -> String
 dashboardUrl model =
-    Origin.toString model.origin ++ "/dashboard"
+    Origin.toString model.origin ++ Path.toString Path.Dashboard
 
 
 sessionSeconds : Int
