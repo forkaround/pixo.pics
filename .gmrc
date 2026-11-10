@@ -92,10 +92,11 @@
    * afterAllMigrations: actions executed once all migrations are complete.
    */
   "afterAllMigrations": [
+    "check-rls.sql",
     {
       "_": "command",
       "shadow": true,
-      "command": "pg_dump --schema-only --no-owner --no-privileges --exclude-schema=graphile_migrate --restrict-key=schema --file=migrations/schema.sql \"$GM_DBURL\"",
+      "command": "pg_dump --schema-only --no-owner --exclude-schema=graphile_migrate --restrict-key=schema --file=migrations/schema.sql \"$GM_DBURL\"",
     },
   ],
 
@@ -104,6 +105,7 @@
    * evaluated (i.e. in watch mode).
    */
   "afterCurrent": [
+    "check-rls.sql",
     // {
     //   "_": "command",
     //   "shadow": true,

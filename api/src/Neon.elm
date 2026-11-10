@@ -1,7 +1,7 @@
 module Neon exposing
     ( Connection, connect, withEndpoint, withTimeout, endpoint
     , Param, text, int, float, bool, json, null, nullable
-    , Query, select, selectOne, execute, map, run
+    , Query, select, selectOne, one, execute, map, run
     , Transaction, transaction, with, commit
     , Error(..), PostgresError, errorToString
     )
@@ -199,6 +199,29 @@ selectOne : String -> List Param -> Decoder a -> Query (Maybe a)
 selectOne sql params decoder =
     select sql params decoder
         |> map List.head
+
+
+one : String -> List Param -> Decoder a -> Query a
+one sql params decoder =
+    let
+        (Query q) =
+            select sql params decoder
+    in
+    Query
+        { sql = q.sql
+        , params = q.params
+        , toResult =
+            q.toResult
+                >> Result.andThen
+                    (\rows ->
+                        case rows of
+                            [ row ] ->
+                                Ok row
+
+                            _ ->
+                                Err ("Expected one row, got " ++ String.fromInt (List.length rows) ++ ".")
+                    )
+        }
 
 
 execute : String -> List Param -> Query Int

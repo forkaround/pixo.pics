@@ -51,8 +51,13 @@ database.
   ```
 
 - **Migrations**: write `migrations/current.sql` to rerun cleanly: undo, then redo (see
-  [Migrations](#migrations)), then `bun db commit`. Never edit `migrations/committed/`:
-  they are hash-signed.
+  [Migrations](#migrations)). Never edit `migrations/committed/`: they are hash-signed.
+- **Agents never commit a migration**: no `bun db commit`. Run `current.sql` with
+  `bun db watch --once`, then ask for a review: the user commits.
+- **Every table has row-level security**: `ENABLE` and `FORCE`, its policies and the
+  narrowest grants to `api`, right after its `CREATE TABLE` (see
+  [Row-level security](#row-level-security)). `migrations/check-rls.sql` fails the
+  migration otherwise.
 - **Keep the Elm projects apart**: the root `elm.json` never lists `api/` folders, so the
   database password can't reach the browser bundle. A package `shared/` imports goes in
   both `elm.json`s; server packages: `elm install` inside `api/`.
@@ -77,14 +82,36 @@ database.
 - **Vercel functions**: every `.ts` under `api/` becomes one unless its name or folder
   starts with `_`. Server TypeScript lives in `api/_ts`; `app.ts` uses Web APIs only.
 
+## Commits
+
+```
+<scope>: <description>
+
+[body]
+
+[trailers]
+```
+
+- The scope is the area the commit touches, not its kind: no `feat`, `fix` or `chore`.
+  Lower-case, one of `client`, `api`, `shared`, `db` (migrations), `docs`, `pkg`
+  (dependencies, build and tool config), `agents` (`.agents/`), `vercel`; or a module
+  inside one, as a path: `api/neon`, `client/ui`.
+- The description is imperative and lower-case, with no final period; the whole subject
+  fits in 72 characters: `db: add row-level security`.
+- Several areas: the scope that holds them all, else both (`api, client: ...`), else
+  `all`.
+- The body says why, when the diff doesn't. A ticket or issue goes in a trailer.
+- Reverts and merges keep Git's message.
+
 ## Environment
 
-| Variable              | Used by                                                  |
-| --------------------- | -------------------------------------------------------- |
-| `DATABASE_URL`        | Server, migrations, `dev:proxy`'s check                  |
-| `NEON_ENDPOINT`       | Server (local proxy instead of Neon), `dev:proxy`'s port |
-| `SHADOW_DATABASE_URL` | `bun db watch` and `commit`                              |
-| `ROOT_DATABASE_URL`   | `bun db reset`, the proxy's own connection               |
+| Variable                | Used by                                                      |
+| ----------------------- | ------------------------------------------------------------ |
+| `DATABASE_URL`          | Migrations, as the owner; the server takes host and database |
+| `API_DATABASE_PASSWORD` | Server: the password of `api`, the role it connects as       |
+| `NEON_ENDPOINT`         | Server (local proxy instead of Neon), `dev:proxy`'s port     |
+| `SHADOW_DATABASE_URL`   | `bun db watch` and `commit`                                  |
+| `ROOT_DATABASE_URL`     | `bun db reset`, the proxy's own connection                   |
 
 - Bun loads `.env`, then `.env.local`, then the shell wins, but only when it runs a file
   itself (`bun <file>`): that's why `dev:vite`, `preview` and `db` call
@@ -105,12 +132,17 @@ cp .env.example .env
 bun run dev:proxy
 psql postgres://postgres@localhost:5432/postgres \
   -c "SET scram_iterations = 1" \
-  -c "CREATE ROLE app LOGIN PASSWORD 'app'" \
+  -c "CREATE ROLE app LOGIN PASSWORD 'app' BYPASSRLS" \
+  -c "CREATE ROLE api LOGIN PASSWORD 'api'" \
+  -c "ALTER ROLE api SET search_path = public, pg_temp" \
   -c "CREATE DATABASE app OWNER app"
 bun db migrate
 ```
 
-- The proxy checks passwords, so the role needs one; one SCRAM iteration makes that ~9 ms
+- `app` owns the database and runs migrations; the server connects as `api` (see
+  [Row-level security](#row-level-security)). An `app` created before this needs
+  `ALTER ROLE app BYPASSRLS`.
+- The proxy checks passwords, so each role needs one; one SCRAM iteration makes that ~9 ms
   instead of ~100 ms. Local only.
 - `neon.sh` reuses any proxy container already on the port, or starts/creates
   `neon-http-proxy` (`--restart unless-stopped`). The proxy's own connection must be a
@@ -119,7 +151,7 @@ bun db migrate
   on a port clash, which stops `bun dev`; a failed `SELECT 1` only warns.
 - One proxy serves every database on that Postgres. It holds connections open, so
   `bun db reset --erase` needs `docker stop neon-http-proxy` first. ~50 ms per query.
-- The template has no migrations: `/api/health` needs no tables.
+- `bun db migrate` creates the tables in [Schema](#schema); `/api/health` needs none.
 
 ## Migrations
 
@@ -170,13 +202,100 @@ bun db migrate
   (`afterAllMigrations` in `.gmrc`); its diff shows what went missing.
 - An object that leaves the file stays in the local database: a rename, a removal, or a
   typo that ran on save. Keep its `DROP ... IF EXISTS`; elsewhere it does nothing. Agents
-  write the file with `watch` stopped, then run it with `bun db watch --once`.
+  write the file with `watch` stopped, run it with `bun db watch --once`, and stop there:
+  the user reviews it and runs `bun db commit`.
 - Previews run only committed migrations, so commit before pushing a branch that needs
   its schema. Each migration names the previous one's hash: if `main` gains a migration
   first, `bun db uncommit`, rebase, `bun db watch --once`, `bun db commit`. Git may merge
   two migrations without a conflict (different `-m` names) and every `migrate` then
   fails. The preview's Neon branch ran the old hash; reset it:
   `bunx neon@latest branches reset preview/<git> --parent`.
+
+## Schema
+
+`migrations/schema.sql`, written by `bun db commit`, is the whole schema. Login is by magic
+link or passkey.
+
+| Table                 | Holds                                                        |
+| --------------------- | ------------------------------------------------------------ |
+| `users`               | `email` and `username`: both unique, stored lower-case       |
+| `magic_links`         | `sha256` of the emailed token, its `email`, a new `username` |
+| `passkeys`            | A user's WebAuthn credentials                                |
+| `webauthn_challenges` | Challenges issued for a `registration` or `authentication`   |
+| `sessions`            | `sha256` of the session token; `id` names it to the user     |
+| `rate_limits`         | One row per key (see [Rate limiting](#rate-limiting))        |
+
+- A `users` row means a proven email: a link carries the `email`, and consuming it creates
+  the user. `users.username` is required, so a sign-up link carries the `username` too; a
+  sign-in link has none and creates nobody. Its format is server policy.
+- Consuming a sign-up link fails on `users_username_key` when the name was taken
+  meanwhile: the statement rolls back and the link stays. Two sign-up links for one email
+  consumed at the same instant fail the same way, so retry once before answering "taken".
+- Tokens are never stored: `token_hash` is `sha256(convert_to($1, 'UTF8'))`, computed by
+  Postgres from the token passed as a parameter.
+- WebAuthn values (`credential_id`, `public_key`, `challenge`) are unpadded base64url text,
+  as on the wire. `sign_count` is a `bigint`: it arrives as text.
+- The driver can't read, then decide, inside a transaction: every check-then-change is one
+  statement. A link or a challenge is used once by
+  `DELETE ... WHERE ... AND expires_at > now() RETURNING`; a passkey's counter moves by
+  `UPDATE ... WHERE $2 > sign_count OR ($2 = 0 AND sign_count = 0) RETURNING`.
+- `delete_expired()` removes expired links, challenges and sessions, and stale rate-limit
+  rows. Nothing schedules it yet.
+
+## Row-level security
+
+Migrations run as the database owner (`DATABASE_URL`), which is `BYPASSRLS`. The server
+connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
+`API_DATABASE_PASSWORD` into `DATABASE_URL`.
+
+| Table                        | `api` may                                     |
+| ---------------------------- | --------------------------------------------- |
+| `users`                      | `SELECT`                                      |
+| `passkeys`                   | `SELECT`, `INSERT`, `UPDATE (name)`, `DELETE` |
+| `webauthn_challenges`        | `SELECT`, `INSERT`, `DELETE`                  |
+| `sessions`                   | `SELECT` except `token_hash`, `DELETE`        |
+| `magic_links`, `rate_limits` | Nothing: functions only                       |
+
+- Each granted table has the policy `own_rows`: `USING` and `WITH CHECK` compare the row's
+  user to `(SELECT NULLIF(current_setting('app.user_id', true), '')::uuid)`. With nobody
+  signed in that is `NULL`: reads find no rows and writes fail with `42501`.
+- `authenticate(token)` finds the unexpired session and sets `app.user_id` until the
+  transaction ends. `Db.signedIn token` starts a `Neon.Transaction` with it and gives the
+  user's id, or `Nothing`. Under `Neon.run` the setting ends with its statement. Nothing
+  else sets `app.user_id`: the policies trust it.
+- Work before sign-in or across users is a function: `SECURITY DEFINER`,
+  `SET search_path = public, pg_temp`, `REVOKE EXECUTE ... FROM PUBLIC`,
+  `GRANT EXECUTE ... TO api`. It runs as the owner, past every policy, so it takes the
+  secret as an argument and filters by it. There are `authenticate`, `rate_limit` and
+  `delete_expired`; consuming a link, passkey sign-in and creating a session are not
+  written yet.
+- A new table: `ALTER TABLE t ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY`,
+  `CREATE POLICY`, `GRANT`, after its `CREATE TABLE` (`DROP TABLE ... CASCADE` drops them
+  too), and an index on its user column. Never grant `TRUNCATE`, `REFERENCES` or
+  `TRIGGER`. A view needs `WITH (security_invoker = true)`.
+- `migrations/check-rls.sql` runs after `migrate` and after `current.sql` (`.gmrc`). It
+  fails them over a table without `ENABLE` and `FORCE`, an `api` that is privileged or owns
+  a table, a `SECURITY DEFINER` function without `search_path` or open to `PUBLIC`, and an
+  owner without `BYPASSRLS`. `/api/health` fails when the server's role is exempt.
+- It can't tell a grant that is too wide: `migrations/schema.sql` lists every grant, so
+  read them in its diff.
+- Try policies as `api`, never as the owner, who skips them:
+  `psql postgres://api:api@localhost:5432/app`, then
+  `BEGIN; SELECT authenticate('<token>'); ...`.
+
+## Rate limiting
+
+`Db.rateLimit { key, limit, windowSeconds }` runs `rate_limit(key, limit, window_seconds)`
+and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
+
+- GCRA: `limit` hits at once, then one more every `window / limit`. A denied hit writes
+  nothing.
+- One policy per key: name it after what it limits and whom, like
+  `magic-link:email:<email>`. At most 512 bytes.
+- Several keys in one transaction (`Neon.commit`): always in the same order, or two
+  requests deadlock.
+- `rate_limits` is a logged table on purpose: Neon drops unlogged tables when the compute
+  suspends, which would reset every window.
 
 ## Browser app
 
@@ -226,12 +345,14 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   (restarting from `init`); `preview` runs `dist/server/app.js`.
 - Routes are real URLs under `/api`: entry points pass requests through unchanged.
 - Errors are `{ "error": "..." }` (`Api.encodeError`). JSON is `cache-control: no-store`.
-  Without `DATABASE_URL` the server starts anyway and the health check fails.
+  Without `DATABASE_URL` or `API_DATABASE_PASSWORD` the server starts anyway and the health
+  check fails.
 - Logging: `log Interop.Info|Warn|Error message`; `app.ts` calls `console[level]` with the
   message unchanged, which Vercel reads as the level. Database errors log at `error`.
-- `GET /api/health` (IETF health check draft, `application/health+json`) runs `SELECT 1`
+- `GET /api/health` (IETF health check draft, `application/health+json`) runs `Db.ping`
   with a 5 s `Neon.withTimeout`. It answers `pass` with 200, `warn` with 200 when slower
-  than `slowAfter` (1 s), and `fail` with 503. `output` is a short public reason; the full
+  than `slowAfter` (1 s), and `fail` with 503, also when the server's role is a superuser,
+  `BYPASSRLS` or a table owner. `output` is a short public reason; the full
   error is only logged, since Postgres messages can name roles and tables. Latency
   includes the hop to Neon and any cold start.
 - The report's `releaseId` (`VERCEL_GIT_COMMIT_SHA`, else `VERCEL_DEPLOYMENT_ID`),
@@ -247,6 +368,8 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   `double precision`, `json`, `jsonb` and arrays arrive as JSON; `NULL` as `null`;
   everything else (`bigint`, `numeric`, `timestamptz`...) as Postgres's text. Duplicate
   column names keep the last: use `AS`. Decode with the same decoders as the `Api` codecs.
+- `Neon.selectOne` gives a `Maybe`; `Neon.one` fails with `UnexpectedResult` unless exactly
+  one row comes back.
 - Parameters travel as text and Postgres converts them; `Neon.json` for `json`/`jsonb`.
 - The endpoint comes from the host (`ep-x.eu-central-1.aws.neon.tech` →
   `api.eu-central-1.aws.neon.tech`); `Neon.withEndpoint` overrides it (`NEON_ENDPOINT`).
@@ -273,6 +396,15 @@ manages the variables. `.vercel` and `.neon` are local links, not committed. Kee
 - Build: `DATABASE_URL="$DATABASE_URL_UNPOOLED" bun db migrate && bun run build`. Each
   deployment migrates its own branch, so a preview's migrations never reach `main`; a
   missing variable fails the build.
+- The `api` role is created once on Neon's `main`, in SQL as the owner, because a role made
+  in the console, CLI or API is `BYPASSRLS`:
+  `CREATE ROLE api LOGIN PASSWORD '<random>'; ALTER ROLE api SET search_path = public, pg_temp;`.
+  Its password is `API_DATABASE_PASSWORD`, a Vercel secret in Production and Preview. A
+  branch copies its parent's roles and passwords, so previews need nothing more, unless
+  `main` is a protected branch: its children get new passwords. A branch older than the
+  role fails its build at `GRANT ... TO api`: reset it as in [Migrations](#migrations).
+- The function's environment still holds the owner's `DATABASE_URL`: RLS contains the
+  server's queries, not a compromised process.
 - `build` runs the Elm steps one at a time: on a fresh machine, two processes filling
   `~/.elm` at once corrupt it ("PROBLEM BUILDING DEPENDENCIES"), and elm-ts-interop still
   exits 0. `types:api` must `cd api`, as elm-ts-interop uses the nearest `elm.json`.

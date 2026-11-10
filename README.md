@@ -22,6 +22,12 @@ gh repo create my-app --template ricardocasares/elm-neon-template --private --cl
 cd my-app
 bun install
 cp .env.example .env
+psql postgres://postgres@localhost:5432/postgres \
+  -c "SET scram_iterations = 1" \
+  -c "CREATE ROLE app LOGIN PASSWORD 'app' BYPASSRLS" \
+  -c "CREATE ROLE api LOGIN PASSWORD 'api'" \
+  -c "ALTER ROLE api SET search_path = public, pg_temp" \
+  -c "CREATE DATABASE app OWNER app"
 bun db migrate
 bun dev
 ```
@@ -46,16 +52,25 @@ Open http://localhost:5173. Then rename `name` in `package.json` and `<title>` i
 
 `.env.example` lists every variable. Copy it to `.env`.
 
-| Variable              | For                                                         |
-| --------------------- | ----------------------------------------------------------- |
-| `DATABASE_URL`        | The app's database                                          |
-| `NEON_ENDPOINT`       | The local proxy, `http://localhost:4445/sql`; not on Vercel |
-| `SHADOW_DATABASE_URL` | A scratch database for `bun db watch` and `commit`          |
-| `ROOT_DATABASE_URL`   | A superuser, for `bun db reset` and the proxy               |
+| Variable                | For                                                         |
+| ----------------------- | ----------------------------------------------------------- |
+| `DATABASE_URL`          | The app's database, as its owner: migrations                |
+| `API_DATABASE_PASSWORD` | The password of `api`, the role the server connects as      |
+| `NEON_ENDPOINT`         | The local proxy, `http://localhost:4445/sql`; not on Vercel |
+| `SHADOW_DATABASE_URL`   | A scratch database for `bun db watch` and `commit`          |
+| `ROOT_DATABASE_URL`     | A superuser, for `bun db reset` and the proxy               |
+
+## Row-level security
+
+Every table has row-level security. Migrations run as the owner; the server connects as
+`api`, which owns nothing and sees only the signed-in user's rows: `authenticate(token)`
+sets the user for one transaction, and `Db.signedIn` starts that transaction. On Neon,
+create `api` in SQL and set `API_DATABASE_PASSWORD` on Vercel: see
+[AGENTS.md](AGENTS.md#row-level-security).
 
 ## Health check
 
-`GET /api/health` runs `SELECT 1` and answers in the
+`GET /api/health` queries the database as `api` and answers in the
 [health check format](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check):
 `pass` (200), `warn` when slower than 1 s (200), or `fail` (503).
 

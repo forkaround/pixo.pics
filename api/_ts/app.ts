@@ -26,9 +26,18 @@ const commitUrl = () => {
     : null;
 };
 
+const databaseUrl = () => {
+  const { DATABASE_URL, API_DATABASE_PASSWORD } = process.env;
+  if (!DATABASE_URL || !API_DATABASE_PASSWORD || !URL.canParse(DATABASE_URL)) return null;
+  const url = new URL(DATABASE_URL);
+  url.username = "api";
+  url.password = API_DATABASE_PASSWORD;
+  return url.href;
+};
+
 const app = Elm.Main.init({
   flags: {
-    databaseUrl: process.env.DATABASE_URL ?? null,
+    databaseUrl: databaseUrl(),
     neonEndpoint: process.env.NEON_ENDPOINT ?? null,
     releaseId: process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || local,
     releaseUrl: commitUrl(),
