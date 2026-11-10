@@ -33,8 +33,8 @@ bun fmt-check           # report what bun fmt would change, and change nothing
 bun db <command>        # graphile-migrate: migrate, watch, commit, uncommit, status, reset --erase
 ```
 
-CI (`.github/workflows/ci.yml`) runs `bun fmt-check` and `bun run build`; it needs no
-database.
+CI (`.github/workflows/ci.yml`) runs `bun fmt-check`, `bun run test` and `bun run build`, on
+pull requests and on `main`; it needs no database.
 
 ## Rules
 
