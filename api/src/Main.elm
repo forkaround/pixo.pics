@@ -16,7 +16,9 @@ import InteropDefinitions as Interop exposing (Request, Response)
 import InteropPorts
 import Json.Decode as Decode
 import Json.Encode as Encode
+import LinkToken exposing (LinkToken)
 import Neon
+import SessionToken exposing (SessionToken)
 import SignUp
 import Task
 import Time
@@ -473,7 +475,7 @@ sendLink model resolver envelope email =
             respond resolver unavailable
 
 
-signInEmail : Model -> String -> Email.Layout.Email
+signInEmail : Model -> LinkToken -> Email.Layout.Email
 signInEmail model token =
     Email.SignIn.email
         { url = verifyUrl model token
@@ -816,7 +818,7 @@ askForLink model request parsed =
             Now unavailable
 
 
-withSession : Model -> Request -> (Neon.Connection -> String -> Interop.Resolver -> Effect) -> Reply
+withSession : Model -> Request -> (Neon.Connection -> SessionToken -> Interop.Resolver -> Effect) -> Reply
 withSession model request toEffect =
     case ( model.db, cookieToken request ) of
         ( Ok db, Just token ) ->
@@ -829,7 +831,7 @@ withSession model request toEffect =
             Now unavailable
 
 
-cookieToken : Request -> Maybe String
+cookieToken : Request -> Maybe SessionToken
 cookieToken request =
     Dict.get "cookie" request.headers
         |> Maybe.withDefault ""
@@ -838,17 +840,10 @@ cookieToken request =
         |> List.filter (String.startsWith "session=")
         |> List.head
         |> Maybe.map (String.dropLeft 8)
-        |> Maybe.andThen
-            (\token ->
-                if String.isEmpty token then
-                    Nothing
-
-                else
-                    Just token
-            )
+        |> Maybe.andThen SessionToken.fromString
 
 
-withLink : Model -> Request -> (Neon.Connection -> String -> Interop.Resolver -> Effect) -> Reply
+withLink : Model -> Request -> (Neon.Connection -> LinkToken -> Interop.Resolver -> Effect) -> Reply
 withLink model request toEffect =
     case ( model.db, bearer request ) of
         ( Ok db, Just token ) ->
@@ -865,7 +860,7 @@ withLink model request toEffect =
             Now unavailable
 
 
-bearer : Request -> Maybe String
+bearer : Request -> Maybe LinkToken
 bearer request =
     Dict.get "authorization" request.headers
         |> Maybe.andThen
@@ -876,19 +871,12 @@ bearer request =
                 else
                     Nothing
             )
-        |> Maybe.andThen
-            (\token ->
-                if String.isEmpty token then
-                    Nothing
-
-                else
-                    Just token
-            )
+        |> Maybe.andThen LinkToken.fromString
 
 
-verifyUrl : Model -> String -> String
+verifyUrl : Model -> LinkToken -> String
 verifyUrl model token =
-    model.origin ++ "/auth/verify#" ++ token
+    model.origin ++ "/auth/verify#" ++ LinkToken.toString token
 
 
 dashboardUrl : Model -> String
@@ -901,9 +889,9 @@ sessionSeconds =
     30 * 24 * 60 * 60
 
 
-sessionCookie : Model -> String -> String
+sessionCookie : Model -> SessionToken -> String
 sessionCookie model token =
-    cookie model token sessionSeconds
+    cookie model (SessionToken.toString token) sessionSeconds
 
 
 cookie : Model -> String -> Int -> String

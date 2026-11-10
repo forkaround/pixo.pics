@@ -467,6 +467,10 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
   reaches no server log. For the same reason the verify routes take it as
   `authorization: Bearer <token>`, and answer 401 without it.
+- The two secrets have their own types: a `SessionToken` comes from the `session` cookie
+  (`cookieToken`) or new from `Db`, a `LinkToken` from the bearer header (`bearer`) or new
+  from `Db`. Neither is ever empty, and `Db` takes each by its type, so one can't be passed
+  for the other.
 - `GET /api/auth/verify` (`Api.verification`) answers `{ email, username, newAccount }`
   for the link and changes nothing. `POST /api/auth/verify` (`Api.verify`) consumes it:
   200 with `{ email, username }` and the session in a cookie (`session`, `HttpOnly`,

@@ -4,7 +4,9 @@ import Api
 import EmailAddress exposing (EmailAddress)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
+import LinkToken exposing (LinkToken)
 import Neon
+import SessionToken exposing (SessionToken)
 import Username exposing (Username)
 import WebAuthn
 
@@ -45,12 +47,12 @@ ping =
         )
 
 
-signedIn : String -> (Maybe String -> a) -> Neon.Transaction a
+signedIn : SessionToken -> (Maybe String -> a) -> Neon.Transaction a
 signedIn token toResult =
     Neon.transaction toResult
         |> Neon.with
             (Neon.one "SELECT authenticate($1) AS user_id"
-                [ Neon.text token ]
+                [ Neon.text (SessionToken.toString token) ]
                 (Decode.field "user_id" (Decode.nullable Decode.string))
             )
 
@@ -83,13 +85,13 @@ rateLimitDecoder =
 
 
 type SignUpLink
-    = SignUpLink String
-    | SignInInstead String
+    = SignUpLink LinkToken
+    | SignInInstead LinkToken
     | UsernameTaken
 
 
 type SignInLink
-    = SignInLink String
+    = SignInLink LinkToken
     | NoAccount
 
 
@@ -114,10 +116,10 @@ signUpLinkDecoder =
             (\outcome ->
                 case outcome of
                     "sign-up" ->
-                        Decode.map SignUpLink (Decode.field "token" Decode.string)
+                        Decode.map SignUpLink (Decode.field "token" LinkToken.decoder)
 
                     "sign-in" ->
-                        Decode.map SignInInstead (Decode.field "token" Decode.string)
+                        Decode.map SignInInstead (Decode.field "token" LinkToken.decoder)
 
                     "username-taken" ->
                         Decode.succeed UsernameTaken
@@ -134,7 +136,7 @@ signInLinkDecoder =
             (\outcome ->
                 case outcome of
                     "sign-in" ->
-                        Decode.map SignInLink (Decode.field "token" Decode.string)
+                        Decode.map SignInLink (Decode.field "token" LinkToken.decoder)
 
                     "no-account" ->
                         Decode.succeed NoAccount
@@ -144,10 +146,10 @@ signInLinkDecoder =
             )
 
 
-magicLink : String -> Neon.Query (Maybe Api.Verification)
+magicLink : LinkToken -> Neon.Query (Maybe Api.Verification)
 magicLink token =
     Neon.selectOne "SELECT email, username, new_account FROM magic_link($1)"
-        [ Neon.text token ]
+        [ Neon.text (LinkToken.toString token) ]
         (Decode.map3 Api.Verification
             (Decode.field "email" Decode.string)
             (Decode.field "username" Decode.string)
@@ -156,15 +158,15 @@ magicLink token =
 
 
 type Consumed
-    = Verified { sessionToken : String, account : Api.Account }
+    = Verified { sessionToken : SessionToken, account : Api.Account }
     | InvalidLink
     | UsernameTakenMeanwhile
 
 
-consumeMagicLink : { token : String, sessionSeconds : Int } -> Neon.Query Consumed
+consumeMagicLink : { token : LinkToken, sessionSeconds : Int } -> Neon.Query Consumed
 consumeMagicLink { token, sessionSeconds } =
     Neon.one "SELECT outcome, session_token, email, username FROM consume_magic_link($1, $2)"
-        [ Neon.text token, Neon.int sessionSeconds ]
+        [ Neon.text (LinkToken.toString token), Neon.int sessionSeconds ]
         consumedDecoder
 
 
@@ -179,7 +181,7 @@ consumedDecoder =
                             (\sessionToken email username ->
                                 Verified { sessionToken = sessionToken, account = { email = email, username = username } }
                             )
-                            (Decode.field "session_token" Decode.string)
+                            (Decode.field "session_token" SessionToken.decoder)
                             (Decode.field "email" Decode.string)
                             (Decode.field "username" Decode.string)
 
@@ -194,7 +196,7 @@ consumedDecoder =
             )
 
 
-account : String -> Neon.Transaction (Maybe Api.Account)
+account : SessionToken -> Neon.Transaction (Maybe Api.Account)
 account token =
     signedIn token (\_ found -> found)
         |> Neon.with ownAccount
@@ -210,7 +212,7 @@ ownAccount =
         )
 
 
-passkeys : String -> Neon.Transaction (Maybe (List Api.Passkey))
+passkeys : SessionToken -> Neon.Transaction (Maybe (List Api.Passkey))
 passkeys token =
     signedIn token (\userId found -> Maybe.map (\_ -> found) userId)
         |> Neon.with
@@ -241,7 +243,7 @@ type alias Ceremony =
     }
 
 
-startPasskey : { token : String, ttlSeconds : Int } -> Neon.Transaction (Maybe Ceremony)
+startPasskey : { token : SessionToken, ttlSeconds : Int } -> Neon.Transaction (Maybe Ceremony)
 startPasskey { token, ttlSeconds } =
     signedIn token
         (\userId _ challenge found credentialIds ->
@@ -282,7 +284,7 @@ type Added
     | NotAdded
 
 
-addPasskey : { token : String, registration : WebAuthn.Registration, name : Maybe String } -> Neon.Transaction (Maybe Added)
+addPasskey : { token : SessionToken, registration : WebAuthn.Registration, name : Maybe String } -> Neon.Transaction (Maybe Added)
 addPasskey { token, registration, name } =
     signedIn token
         (\userId added found ->
@@ -323,7 +325,7 @@ type Removed
     | NotRemoved
 
 
-removePasskey : { token : String, id : String } -> Neon.Transaction (Maybe Removed)
+removePasskey : { token : SessionToken, id : String } -> Neon.Transaction (Maybe Removed)
 removePasskey { token, id } =
     signedIn token
         (\userId removed found ->
@@ -378,7 +380,7 @@ passkeyPublicKey credentialId =
 
 
 type PasskeySignIn
-    = PasskeySignedIn { sessionToken : String, account : Api.Account }
+    = PasskeySignedIn { sessionToken : SessionToken, account : Api.Account }
     | ChallengeSpent
     | PasskeyStale
 
@@ -406,7 +408,7 @@ signInWithPasskey { challenge, credentialId, signCount, backedUp, sessionSeconds
                                         , account = { email = email, username = username }
                                         }
                                 )
-                                (Decode.field "session_token" Decode.string)
+                                (Decode.field "session_token" SessionToken.decoder)
                                 (Decode.field "email" Decode.string)
                                 (Decode.field "username" Decode.string)
 
@@ -422,7 +424,7 @@ signInWithPasskey { challenge, credentialId, signCount, backedUp, sessionSeconds
         )
 
 
-signOut : String -> Neon.Query ()
+signOut : SessionToken -> Neon.Query ()
 signOut token =
-    Neon.execute "SELECT sign_out($1)" [ Neon.text token ]
+    Neon.execute "SELECT sign_out($1)" [ Neon.text (SessionToken.toString token) ]
         |> Neon.map (\_ -> ())
