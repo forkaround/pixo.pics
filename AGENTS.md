@@ -118,7 +118,7 @@ database.
   `bun node_modules/...`. Plain `vite`, `bunx` or `bun --bun <bin>` run as `node` without
   `.env`, and every database route answers 503. `bun run` doesn't pass `.env` to scripts,
   so `neon.sh` reads the files itself, in the same order.
-- `vercel env pull` writes `.env.local`, pointing local runs at Neon's `vercel-dev` branch.
+- Nothing comes from Vercel: its Development environment has no database variables.
 
 ## Local database
 
@@ -377,22 +377,30 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 
 ## Vercel
 
-The Vercel project `elm-neon-template` deploys from GitHub: a push to `main` deploys
-production, a push to any other branch a preview. `vercel.json` configures it. The Neon
-project `elm-neon` is attached through Neon's Vercel integration (installed from the Neon
-console, not `vercel integration add neon`, which would provision a new database), which
-manages the variables. `.vercel` and `.neon` are local links, not committed. Keep
+The Vercel project `pixo.pics` (team `forkaround`) deploys from GitHub: a push to `main`
+deploys production, a push to any other branch a preview. `vercel.json` configures it. The
+Neon project `pixo` (`small-lab-61985339`, `aws-eu-central-1`) was created from the Vercel
+Marketplace and is connected as the store `pixo`, which manages the variables. Keep
 `regions` next to Neon's region.
 
-| Vercel            | Neon branch                 | Variables                                  |
-| ----------------- | --------------------------- | ------------------------------------------ |
-| Production        | `main`                      | `DATABASE_URL`, `DATABASE_URL_UNPOOLED`    |
-| Preview (`<git>`) | `preview/<git>`, off `main` | same, scoped to the git branch             |
-| Development       | `vercel-dev`                | same, for `vercel env pull` (avoid, below) |
+| Vercel            | Neon branch                 | Variables                               |
+| ----------------- | --------------------------- | --------------------------------------- |
+| Production        | `main`                      | `DATABASE_URL`, `DATABASE_URL_UNPOOLED` |
+| Preview (`<git>`) | `preview/<git>`, off `main` | same, injected into each deployment     |
+| Development       | None: not connected         | None: local runs use `.env`             |
 
-- Each preview gets its own Neon branch: the integration cancels the first build, creates
-  the branch and its variables, then builds again. Pushing a commit that's already on
-  another branch triggers nothing.
+- A preview has its own Neon branch only because the store's connection has "Create
+  database branch for deployment" ticked for Preview, and not for Production. It is off by
+  default, and without it a preview build migrates `main`, which is production.
+- That option is in the dashboard only (Storage, `pixo`, Connect Project):
+  `vercel integration resource connect` can't set it, and changing it means removing the
+  connection and connecting again. To check it:
+  `vercel api "/v1/storage/stores?teamId=forkaround"` lists `preview` under
+  `projectsMetadata[].deployments.actions`.
+- A preview's variables override the project's for that deployment and don't show in the
+  project's settings. Its Neon branch goes when Vercel removes the deployment.
+- Previews sit behind Vercel Authentication: request them with `vercel curl <url>` from a
+  folder linked to the project.
 - Build: `DATABASE_URL="$DATABASE_URL_UNPOOLED" bun db migrate && bun run build`. Each
   deployment migrates its own branch, so a preview's migrations never reach `main`; a
   missing variable fails the build.
@@ -411,7 +419,7 @@ manages the variables. `.vercel` and `.neon` are local links, not committed. Kee
 - `dist/client` is served; `dist/server` is bundled into `api/index.ts`, which every
   `/api/*` rewrites to (Vercel keeps the original URL in `request.url`). Bun runtime
   (`"bunVersion": "1.x"`, beta).
-- Don't `vercel env pull`: it writes the `vercel-dev` connection into `.env.local`, which
-  overrides `.env` and points local runs at Neon instead of the local database.
-- `neon` CLI: `bunx neon@latest`. Use `--no-env-pull` with `neon link` or
-  `neon checkout`, or they write Neon's `DATABASE_URL` into `.env`.
+- Nothing is linked locally (`.vercel` and `.neon` are not committed): pass
+  `--scope forkaround --project pixo.pics` to `vercel` and
+  `--project-id small-lab-61985339` to `bunx neon@latest`. Use `--no-env-pull` with
+  `neon link` or `neon checkout`, or they write Neon's `DATABASE_URL` into `.env`.
