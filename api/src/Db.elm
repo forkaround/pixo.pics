@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Ceremony, Consumed(..), Link(..), PasskeySignIn(..), RateLimit(..), Removed(..), SignInChallenge(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
+module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), RateLimit(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
 import Json.Decode as Decode exposing (Decoder)
@@ -80,29 +80,33 @@ rateLimitDecoder =
             )
 
 
-type Link
+type SignUpLink
     = SignUpLink String
-    | SignInLink String
+    | SignInInstead String
     | UsernameTaken
+
+
+type SignInLink
+    = SignInLink String
     | NoAccount
 
 
-createSignInLink : { email : String, ttlSeconds : Int } -> Neon.Query Link
+createSignInLink : { email : String, ttlSeconds : Int } -> Neon.Query SignInLink
 createSignInLink { email, ttlSeconds } =
     Neon.one "SELECT outcome, token FROM create_sign_in_link($1, $2)"
         [ Neon.text email, Neon.int ttlSeconds ]
-        linkDecoder
+        signInLinkDecoder
 
 
-createSignUpLink : { email : String, username : String, ttlSeconds : Int } -> Neon.Query Link
+createSignUpLink : { email : String, username : String, ttlSeconds : Int } -> Neon.Query SignUpLink
 createSignUpLink { email, username, ttlSeconds } =
     Neon.one "SELECT outcome, token FROM create_sign_up_link($1, $2, $3)"
         [ Neon.text email, Neon.text username, Neon.int ttlSeconds ]
-        linkDecoder
+        signUpLinkDecoder
 
 
-linkDecoder : Decoder Link
-linkDecoder =
+signUpLinkDecoder : Decoder SignUpLink
+signUpLinkDecoder =
     Decode.field "outcome" Decode.string
         |> Decode.andThen
             (\outcome ->
@@ -111,16 +115,30 @@ linkDecoder =
                         Decode.map SignUpLink (Decode.field "token" Decode.string)
 
                     "sign-in" ->
-                        Decode.map SignInLink (Decode.field "token" Decode.string)
+                        Decode.map SignInInstead (Decode.field "token" Decode.string)
 
                     "username-taken" ->
                         Decode.succeed UsernameTaken
+
+                    _ ->
+                        Decode.fail ("Unknown sign-up link outcome: " ++ outcome)
+            )
+
+
+signInLinkDecoder : Decoder SignInLink
+signInLinkDecoder =
+    Decode.field "outcome" Decode.string
+        |> Decode.andThen
+            (\outcome ->
+                case outcome of
+                    "sign-in" ->
+                        Decode.map SignInLink (Decode.field "token" Decode.string)
 
                     "no-account" ->
                         Decode.succeed NoAccount
 
                     _ ->
-                        Decode.fail ("Unknown link outcome: " ++ outcome)
+                        Decode.fail ("Unknown sign-in link outcome: " ++ outcome)
             )
 
 

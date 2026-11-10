@@ -109,7 +109,8 @@ type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
     | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error () )
     | LinkLimited Interop.Resolver Ask (Result Neon.Error ( Db.RateLimit, Db.RateLimit ))
-    | LinkCreated Interop.Resolver Ask (Result Neon.Error Db.Link)
+    | SignUpLinkCreated Interop.Resolver Api.SignUp (Result Neon.Error Db.SignUpLink)
+    | SignInLinkCreated Interop.Resolver String (Result Neon.Error Db.SignInLink)
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | SessionFound Interop.Resolver (Result Neon.Error (Maybe Api.Account))
     | SessionEnded Interop.Resolver (Result Neon.Error ())
@@ -197,21 +198,25 @@ update msg model =
                     respond resolver (tooManyRequests seconds)
 
                 ( Nothing, Ok db ) ->
-                    Database
-                        (Neon.run db
-                            (case ask of
-                                SignUpAsked signUp ->
-                                    Db.createSignUpLink
+                    case ask of
+                        SignUpAsked signUp ->
+                            Database
+                                (Neon.run db
+                                    (Db.createSignUpLink
                                         { email = signUp.email
                                         , username = signUp.username
                                         , ttlSeconds = linkMinutes * 60
                                         }
+                                    )
+                                    (\result _ -> SignUpLinkCreated resolver signUp result)
+                                )
 
-                                SignInAsked email ->
-                                    Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 }
-                            )
-                            (\result _ -> LinkCreated resolver ask result)
-                        )
+                        SignInAsked email ->
+                            Database
+                                (Neon.run db
+                                    (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
+                                    (\result _ -> SignInLinkCreated resolver email result)
+                                )
 
                 ( Nothing, Err _ ) ->
                     respond resolver unavailable
@@ -225,48 +230,46 @@ update msg model =
                 ]
             )
 
-        LinkCreated resolver ask (Ok link) ->
+        SignUpLinkCreated resolver signUp (Ok link) ->
             ( model
-            , case ( link, ask, model.email ) of
-                ( Db.UsernameTaken, _, _ ) ->
+            , case link of
+                Db.UsernameTaken ->
                     respond resolver (error 409 "That username is taken.")
 
-                ( Db.NoAccount, _, _ ) ->
-                    respond resolver accepted
-
-                ( Db.SignUpLink token, SignUpAsked signUp, Ok mailer ) ->
-                    Email
-                        (Email.send mailer
-                            { to = signUp.email, tag = "sign-up" }
-                            (Email.SignUp.email
-                                { url = verifyUrl model token
-                                , username = signUp.username
-                                , expiresInMinutes = linkMinutes
-                                }
-                            )
-                            (LinkSent resolver)
+                Db.SignUpLink token ->
+                    sendLink model
+                        resolver
+                        { to = signUp.email, tag = "sign-up" }
+                        (Email.SignUp.email
+                            { url = verifyUrl model token
+                            , username = signUp.username
+                            , expiresInMinutes = linkMinutes
+                            }
                         )
 
-                ( Db.SignUpLink _, SignInAsked _, _ ) ->
-                    respond resolver unavailable
-
-                ( Db.SignInLink token, _, Ok mailer ) ->
-                    Email
-                        (Email.send mailer
-                            { to = askedBy ask, tag = "sign-in" }
-                            (Email.SignIn.email
-                                { url = verifyUrl model token
-                                , expiresInMinutes = linkMinutes
-                                }
-                            )
-                            (LinkSent resolver)
-                        )
-
-                ( _, _, Err _ ) ->
-                    respond resolver unavailable
+                Db.SignInInstead token ->
+                    sendLink model resolver { to = signUp.email, tag = "sign-in" } (signInEmail model token)
             )
 
-        LinkCreated resolver _ (Err problem) ->
+        SignUpLinkCreated resolver _ (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Magic link failed at its link: " ++ Neon.errorToString problem)
+                ]
+            )
+
+        SignInLinkCreated resolver email (Ok link) ->
+            ( model
+            , case link of
+                Db.NoAccount ->
+                    respond resolver accepted
+
+                Db.SignInLink token ->
+                    sendLink model resolver { to = email, tag = "sign-in" } (signInEmail model token)
+            )
+
+        SignInLinkCreated resolver _ (Err problem) ->
             ( model
             , Batch
                 [ respond resolver unavailable
@@ -561,6 +564,24 @@ update msg model =
 
         GotInterop (Err _) ->
             ( model, NoEffect )
+
+
+sendLink : Model -> Interop.Resolver -> { to : String, tag : String } -> Email.Layout.Email -> Effect
+sendLink model resolver envelope email =
+    case model.email of
+        Ok mailer ->
+            Email (Email.send mailer envelope email (LinkSent resolver))
+
+        Err _ ->
+            respond resolver unavailable
+
+
+signInEmail : Model -> String -> Email.Layout.Email
+signInEmail model token =
+    Email.SignIn.email
+        { url = verifyUrl model token
+        , expiresInMinutes = linkMinutes
+        }
 
 
 notify : Model -> Interop.Resolver -> Response -> { to : String, tag : String } -> Email.Layout.Email -> Effect

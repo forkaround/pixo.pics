@@ -265,6 +265,14 @@ suite =
                               , body = """{"error":"Not available right now. Try again later."}"""
                               }
                             ]
+            , test "answers 503 and logs when the database gives an outcome a sign-up can't have" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> signUp """{"email":"ada@example.com","username":"ada"}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
+                        |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
+                            ( [ "info", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/verify"
             [ test "says who asked for the link, without using it" <|
@@ -433,6 +441,14 @@ suite =
                               , body = """{"error":"Expected a JSON object with an email."}"""
                               }
                             ]
+            , test "answers 503 and logs when the database gives an outcome a sign-in can't have" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> signIn """{"email":"ada@example.com"}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
+                        |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
+                            ( [ "info", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/session"
             [ test "answers with the account of the session in the cookie" <|
