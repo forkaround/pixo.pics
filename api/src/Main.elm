@@ -11,6 +11,7 @@ import Email.PasskeyAdded
 import Email.PasskeyRemoved
 import Email.SignIn
 import Email.SignUp
+import EmailAddress exposing (EmailAddress)
 import InteropDefinitions as Interop exposing (Request, Response)
 import InteropPorts
 import Json.Decode as Decode
@@ -19,6 +20,7 @@ import Neon
 import SignUp
 import Task
 import Time
+import Username
 import WebAuthn
 
 
@@ -110,8 +112,8 @@ type Msg
     | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error () )
     | DatabaseFailed Interop.Resolver String Neon.Error
     | LinkLimited Interop.Resolver Ask ( Db.RateLimit, Db.RateLimit )
-    | SignUpLinkCreated Interop.Resolver Api.SignUp Db.SignUpLink
-    | SignInLinkCreated Interop.Resolver String Db.SignInLink
+    | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
+    | SignInLinkCreated Interop.Resolver EmailAddress Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | SessionFound Interop.Resolver (Maybe Api.Account)
     | SessionEnded Interop.Resolver
@@ -128,11 +130,11 @@ type Msg
 
 
 type Ask
-    = SignUpAsked Api.SignUp
-    | SignInAsked String
+    = SignUpAsked SignUp.SignUp
+    | SignInAsked EmailAddress
 
 
-askedBy : Ask -> String
+askedBy : Ask -> EmailAddress
 askedBy ask =
     case ask of
         SignUpAsked signUp ->
@@ -238,16 +240,16 @@ update msg model =
                 Db.SignUpLink token ->
                     sendLink model
                         resolver
-                        { to = signUp.email, tag = "sign-up" }
+                        { to = EmailAddress.toString signUp.email, tag = "sign-up" }
                         (Email.SignUp.email
                             { url = verifyUrl model token
-                            , username = signUp.username
+                            , username = Username.toString signUp.username
                             , expiresInMinutes = linkMinutes
                             }
                         )
 
                 Db.SignInInstead token ->
-                    sendLink model resolver { to = signUp.email, tag = "sign-in" } (signInEmail model token)
+                    sendLink model resolver { to = EmailAddress.toString signUp.email, tag = "sign-in" } (signInEmail model token)
             )
 
         SignInLinkCreated resolver email link ->
@@ -257,7 +259,7 @@ update msg model =
                     respond resolver accepted
 
                 Db.SignInLink token ->
-                    sendLink model resolver { to = email, tag = "sign-in" } (signInEmail model token)
+                    sendLink model resolver { to = EmailAddress.toString email, tag = "sign-in" } (signInEmail model token)
             )
 
         LinkSent resolver (Ok _) ->
@@ -608,7 +610,7 @@ handle model request r =
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signUp) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email and a username.")
-                    |> Result.andThen (SignUp.validate >> Result.mapError (error 422))
+                    |> Result.andThen (SignUp.parse >> Result.mapError (error 422))
                     |> Result.map SignUpAsked
                 )
 
@@ -617,7 +619,7 @@ handle model request r =
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signIn) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email.")
-                    |> Result.andThen (.email >> SignUp.validateEmail >> Result.mapError (error 422))
+                    |> Result.andThen (.email >> EmailAddress.parse >> Result.mapError (error 422))
                     |> Result.map SignInAsked
                 )
 
@@ -798,7 +800,7 @@ askForLink model request parsed =
                                 )
                             |> Neon.with
                                 (Db.rateLimit
-                                    { key = "magic-link:email:" ++ askedBy ask
+                                    { key = "magic-link:email:" ++ EmailAddress.toString (askedBy ask)
                                     , limit = 3
                                     , windowSeconds = 900
                                     }

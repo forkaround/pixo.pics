@@ -1,24 +1,26 @@
 module SignUpTest exposing (suite)
 
+import EmailAddress
 import Expect
 import SignUp
 import Test exposing (Test, describe, test)
+import Username
 
 
 suite : Test
 suite =
     describe "SignUp"
-        [ describe "validate"
+        [ describe "parse"
             [ test "trims and lower-cases the email and the username" <|
                 \() ->
-                    SignUp.validate { email = " Ada@Example.COM ", username = " Ada_99 " }
+                    parsed { email = " Ada@Example.COM ", username = " Ada_99 " }
                         |> Expect.equal (Ok { email = "ada@example.com", username = "ada_99" })
             , describe "refuses an email"
                 (List.map
                     (\email ->
                         test ("like " ++ Debug.toString email) <|
                             \() ->
-                                SignUp.validate { email = email, username = "ada" }
+                                parsed { email = email, username = "ada" }
                                     |> Expect.equal (Err "Enter a valid email address.")
                     )
                     [ ""
@@ -39,7 +41,7 @@ suite =
                     (\username ->
                         test ("like " ++ Debug.toString username) <|
                             \() ->
-                                SignUp.validate { email = "ada@example.com", username = username }
+                                parsed { email = "ada@example.com", username = username }
                                     |> Expect.equal (Err "A username has 3 to 20 characters: letters, digits and underscores.")
                     )
                     [ ""
@@ -54,3 +56,14 @@ suite =
                 )
             ]
         ]
+
+
+parsed : { email : String, username : String } -> Result String { email : String, username : String }
+parsed =
+    SignUp.parse
+        >> Result.map
+            (\signUp ->
+                { email = EmailAddress.toString signUp.email
+                , username = Username.toString signUp.username
+                }
+            )

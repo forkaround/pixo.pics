@@ -456,11 +456,14 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - `GET /api/auth/session` (`Api.session`) answers the account of the `session` cookie,
   read through `Db.account` (`Db.signedIn`, then the user's own row), or 401.
   `DELETE /api/auth/session` (`Api.signOut`) runs `Db.signOut` and clears the cookie.
-- Sign-up answers 400 (not that JSON), 422 (`SignUp.validate`: the email's shape; a username
+- Sign-up answers 400 (not that JSON), 422 (`SignUp.parse`: the email's shape; a username
   of 3 to 20 of `a-z`, `0-9`, `_`; both trimmed and lower-cased), 409 (username taken),
   429 with `retry-after`, 502 (Brevo failed; the link stays until it expires) and 503 (no
   database or email, or the database failed). An email that has an account gets 202 and
   a sign-in link instead.
+- `SignUp.parse` gives an `EmailAddress` and a `Username`, and `EmailAddress.parse` checks a
+  sign-in's email: the only way to make either. `Db.createSignUpLink` and
+  `Db.createSignInLink` take nothing else, so an unchecked address doesn't compile.
 - Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
   reaches no server log. For the same reason the verify routes take it as
   `authorization: Bearer <token>`, and answer 401 without it.
