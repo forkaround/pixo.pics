@@ -495,6 +495,17 @@ suite =
                         |> session "GET" []
                         |> expectResponses
                             [ { resolve = "first", status = 401, headers = jsonHeaders, body = """{"error":"Not signed in."}""" } ]
+            , test "answers 503 and logs why when the database fails" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
+                        |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
+                            ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "error", "Session lookup failed: Could not reach Neon." )
+                              ]
+                            , [ 503 ]
+                            )
             ]
         , describe "DELETE /api/auth/session"
             [ test "ends the session and clears the cookie" <|
@@ -523,6 +534,17 @@ suite =
                     start (Just databaseUrl)
                         |> session "DELETE" []
                         |> expectSent (responses >> List.map .status) [ 200 ]
+            , test "answers 503 and logs why when the database fails" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "DELETE" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
+                        |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
+                            ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "error", "Sign-out failed: Could not reach Neon." )
+                              ]
+                            , [ 503 ]
+                            )
             ]
         , describe "GET /api/auth/passkeys"
             [ test "lists the passkeys of the session's account" <|

@@ -108,22 +108,23 @@ respond resolver response =
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
     | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error () )
-    | LinkLimited Interop.Resolver Ask (Result Neon.Error ( Db.RateLimit, Db.RateLimit ))
-    | SignUpLinkCreated Interop.Resolver Api.SignUp (Result Neon.Error Db.SignUpLink)
-    | SignInLinkCreated Interop.Resolver String (Result Neon.Error Db.SignInLink)
+    | DatabaseFailed Interop.Resolver String Neon.Error
+    | LinkLimited Interop.Resolver Ask ( Db.RateLimit, Db.RateLimit )
+    | SignUpLinkCreated Interop.Resolver Api.SignUp Db.SignUpLink
+    | SignInLinkCreated Interop.Resolver String Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
-    | SessionFound Interop.Resolver (Result Neon.Error (Maybe Api.Account))
-    | SessionEnded Interop.Resolver (Result Neon.Error ())
-    | VerificationFound Interop.Resolver (Result Neon.Error (Maybe Api.Verification))
-    | VerificationConsumed Interop.Resolver (Result Neon.Error Db.Consumed)
-    | PasskeysFound Interop.Resolver (Result Neon.Error (Maybe (List Api.Passkey)))
-    | PasskeyStarted Interop.Resolver (Result Neon.Error (Maybe Db.Ceremony))
-    | PasskeyAdded Interop.Resolver (Result Neon.Error (Maybe Db.Added))
-    | PasskeyRemoved Interop.Resolver (Result Neon.Error (Maybe Db.Removed))
+    | SessionFound Interop.Resolver (Maybe Api.Account)
+    | SessionEnded Interop.Resolver
+    | VerificationFound Interop.Resolver (Maybe Api.Verification)
+    | VerificationConsumed Interop.Resolver Db.Consumed
+    | PasskeysFound Interop.Resolver (Maybe (List Api.Passkey))
+    | PasskeyStarted Interop.Resolver (Maybe Db.Ceremony)
+    | PasskeyAdded Interop.Resolver (Maybe Db.Added)
+    | PasskeyRemoved Interop.Resolver (Maybe Db.Removed)
     | Notified Interop.Resolver Response (Result Brevo.Error Brevo.Sent)
-    | SignInStarted Interop.Resolver (Result Neon.Error Db.SignInChallenge)
-    | KeyFound Interop.Resolver { signed : String, signature : String, signIn : Interop.SignIn } (Result Neon.Error (Maybe String))
-    | PasskeySignedIn Interop.Resolver (Result Neon.Error Db.PasskeySignIn)
+    | SignInStarted Interop.Resolver Db.SignInChallenge
+    | KeyFound Interop.Resolver { signed : String, signature : String, signIn : Interop.SignIn } (Maybe String)
+    | PasskeySignedIn Interop.Resolver Db.PasskeySignIn
 
 
 type Ask
@@ -150,16 +151,14 @@ update : Msg -> Model -> ( Model, Effect )
 update msg model =
     case msg of
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
-            let
-                ( next, reply ) =
-                    route model request
-            in
-            case reply of
+            ( model
+            , case route model request of
                 Now response ->
-                    ( next, respond resolver response )
+                    respond resolver response
 
                 Later toEffect ->
-                    ( next, toEffect resolver )
+                    toEffect resolver
+            )
 
         DatabaseChecked resolver ( latency, Ok () ) ->
             if latency > slowAfter then
@@ -191,7 +190,15 @@ update msg model =
                 ]
             )
 
-        LinkLimited resolver ask (Ok ( byAddress, byEmail )) ->
+        DatabaseFailed resolver step problem ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error (step ++ ": " ++ Neon.errorToString problem)
+                ]
+            )
+
+        LinkLimited resolver ask ( byAddress, byEmail ) ->
             ( model
             , case ( retryAfter [ byAddress, byEmail ], model.db ) of
                 ( Just seconds, _ ) ->
@@ -200,37 +207,29 @@ update msg model =
                 ( Nothing, Ok db ) ->
                     case ask of
                         SignUpAsked signUp ->
-                            Database
-                                (Neon.run db
-                                    (Db.createSignUpLink
-                                        { email = signUp.email
-                                        , username = signUp.username
-                                        , ttlSeconds = linkMinutes * 60
-                                        }
-                                    )
-                                    (\result _ -> SignUpLinkCreated resolver signUp result)
+                            query db
+                                resolver
+                                "Magic link failed at its link"
+                                (Db.createSignUpLink
+                                    { email = signUp.email
+                                    , username = signUp.username
+                                    , ttlSeconds = linkMinutes * 60
+                                    }
                                 )
+                                (SignUpLinkCreated resolver signUp)
 
                         SignInAsked email ->
-                            Database
-                                (Neon.run db
-                                    (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
-                                    (\result _ -> SignInLinkCreated resolver email result)
-                                )
+                            query db
+                                resolver
+                                "Magic link failed at its link"
+                                (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
+                                (SignInLinkCreated resolver email)
 
                 ( Nothing, Err _ ) ->
                     respond resolver unavailable
             )
 
-        LinkLimited resolver _ (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Magic link failed at its rate limits: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        SignUpLinkCreated resolver signUp (Ok link) ->
+        SignUpLinkCreated resolver signUp link ->
             ( model
             , case link of
                 Db.UsernameTaken ->
@@ -251,15 +250,7 @@ update msg model =
                     sendLink model resolver { to = signUp.email, tag = "sign-in" } (signInEmail model token)
             )
 
-        SignUpLinkCreated resolver _ (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Magic link failed at its link: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        SignInLinkCreated resolver email (Ok link) ->
+        SignInLinkCreated resolver email link ->
             ( model
             , case link of
                 Db.NoAccount ->
@@ -267,14 +258,6 @@ update msg model =
 
                 Db.SignInLink token ->
                     sendLink model resolver { to = email, tag = "sign-in" } (signInEmail model token)
-            )
-
-        SignInLinkCreated resolver _ (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Magic link failed at its link: " ++ Neon.errorToString problem)
-                ]
             )
 
         LinkSent resolver (Ok _) ->
@@ -288,46 +271,22 @@ update msg model =
                 ]
             )
 
-        SessionFound resolver (Ok (Just account)) ->
+        SessionFound resolver (Just account) ->
             ( model, respond resolver (json 200 (Api.encodeResponse Api.session account)) )
 
-        SessionFound resolver (Ok Nothing) ->
+        SessionFound resolver Nothing ->
             ( model, respond resolver notSignedIn )
 
-        SessionFound resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Session lookup failed: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        SessionEnded resolver (Ok ()) ->
+        SessionEnded resolver ->
             ( model, respond resolver (signedOut model) )
 
-        SessionEnded resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Sign-out failed: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        VerificationFound resolver (Ok (Just found)) ->
+        VerificationFound resolver (Just found) ->
             ( model, respond resolver (json 200 (Api.encodeResponse Api.verification found)) )
 
-        VerificationFound resolver (Ok Nothing) ->
+        VerificationFound resolver Nothing ->
             ( model, respond resolver invalidLink )
 
-        VerificationFound resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Verification failed at its link: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        VerificationConsumed resolver (Ok (Db.Verified { sessionToken, account })) ->
+        VerificationConsumed resolver (Db.Verified { sessionToken, account }) ->
             let
                 response =
                     json 200 (Api.encodeResponse Api.verify account)
@@ -337,35 +296,19 @@ update msg model =
                 { response | headers = ( "set-cookie", sessionCookie model sessionToken ) :: response.headers }
             )
 
-        VerificationConsumed resolver (Ok Db.InvalidLink) ->
+        VerificationConsumed resolver Db.InvalidLink ->
             ( model, respond resolver invalidLink )
 
-        VerificationConsumed resolver (Ok Db.UsernameTakenMeanwhile) ->
+        VerificationConsumed resolver Db.UsernameTakenMeanwhile ->
             ( model, respond resolver (error 409 "That username was taken in the meantime. Sign up again with another.") )
 
-        VerificationConsumed resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Verification failed at its session: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        PasskeysFound resolver (Ok (Just found)) ->
+        PasskeysFound resolver (Just found) ->
             ( model, respond resolver (json 200 (Api.encodeResponse Api.passkeys found)) )
 
-        PasskeysFound resolver (Ok Nothing) ->
+        PasskeysFound resolver Nothing ->
             ( model, respond resolver notSignedIn )
 
-        PasskeysFound resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey list failed: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        PasskeyStarted resolver (Ok (Just ceremony)) ->
+        PasskeyStarted resolver (Just ceremony) ->
             ( model
             , respond resolver
                 (json 200
@@ -384,18 +327,10 @@ update msg model =
                 )
             )
 
-        PasskeyStarted resolver (Ok Nothing) ->
+        PasskeyStarted resolver Nothing ->
             ( model, respond resolver notSignedIn )
 
-        PasskeyStarted resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey failed at its challenge: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        PasskeyAdded resolver (Ok (Just (Db.Added passkey account))) ->
+        PasskeyAdded resolver (Just (Db.Added passkey account)) ->
             ( model
             , notify model
                 resolver
@@ -409,21 +344,13 @@ update msg model =
                 )
             )
 
-        PasskeyAdded resolver (Ok (Just Db.NotAdded)) ->
+        PasskeyAdded resolver (Just Db.NotAdded) ->
             ( model, respond resolver (error 409 "This passkey request expired or was used already. Try again.") )
 
-        PasskeyAdded resolver (Ok Nothing) ->
+        PasskeyAdded resolver Nothing ->
             ( model, respond resolver notSignedIn )
 
-        PasskeyAdded resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey failed at its credential: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        PasskeyRemoved resolver (Ok (Just (Db.Removed { name, account }))) ->
+        PasskeyRemoved resolver (Just (Db.Removed { name, account })) ->
             ( model
             , notify model
                 resolver
@@ -437,19 +364,11 @@ update msg model =
                 )
             )
 
-        PasskeyRemoved resolver (Ok (Just Db.NotRemoved)) ->
+        PasskeyRemoved resolver (Just Db.NotRemoved) ->
             ( model, respond resolver (error 404 "This account has no such passkey.") )
 
-        PasskeyRemoved resolver (Ok Nothing) ->
+        PasskeyRemoved resolver Nothing ->
             ( model, respond resolver notSignedIn )
-
-        PasskeyRemoved resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey removal failed: " ++ Neon.errorToString problem)
-                ]
-            )
 
         Notified resolver response (Ok _) ->
             ( model, respond resolver response )
@@ -462,24 +381,16 @@ update msg model =
                 ]
             )
 
-        SignInStarted resolver (Ok (Db.SignInChallenge challenge)) ->
+        SignInStarted resolver (Db.SignInChallenge challenge) ->
             ( model
             , respond resolver
                 (json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = rpId model }))
             )
 
-        SignInStarted resolver (Ok (Db.TooManyChallenges limited)) ->
+        SignInStarted resolver (Db.TooManyChallenges limited) ->
             ( model, respond resolver (tooManyRequests limited.retryAfter) )
 
-        SignInStarted resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey sign-in failed at its challenge: " ++ Neon.errorToString problem)
-                ]
-            )
-
-        KeyFound resolver assertion (Ok (Just publicKey)) ->
+        KeyFound resolver assertion (Just publicKey) ->
             ( model
             , case
                 WebAuthn.key publicKey
@@ -503,33 +414,25 @@ update msg model =
                     refuse resolver problem
             )
 
-        KeyFound resolver _ (Ok Nothing) ->
+        KeyFound resolver _ Nothing ->
             ( model, refuse resolver "No passkey has this credential id." )
-
-        KeyFound resolver _ (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey sign-in failed at its key: " ++ Neon.errorToString problem)
-                ]
-            )
 
         GotInterop (Ok (Interop.SignatureChecked resolver signIn valid)) ->
             ( model
             , case ( valid, model.db ) of
                 ( True, Ok db ) ->
-                    Database
-                        (Neon.run db
-                            (Db.signInWithPasskey
-                                { challenge = signIn.challenge
-                                , credentialId = signIn.credentialId
-                                , signCount = signIn.signCount
-                                , backedUp = signIn.backedUp
-                                , sessionSeconds = sessionSeconds
-                                }
-                            )
-                            (\result _ -> PasskeySignedIn resolver result)
+                    query db
+                        resolver
+                        "Passkey sign-in failed at its session"
+                        (Db.signInWithPasskey
+                            { challenge = signIn.challenge
+                            , credentialId = signIn.credentialId
+                            , signCount = signIn.signCount
+                            , backedUp = signIn.backedUp
+                            , sessionSeconds = sessionSeconds
+                            }
                         )
+                        (PasskeySignedIn resolver)
 
                 ( True, Err _ ) ->
                     respond resolver unavailable
@@ -538,7 +441,7 @@ update msg model =
                     refuse resolver "The signature does not match the passkey."
             )
 
-        PasskeySignedIn resolver (Ok (Db.PasskeySignedIn { sessionToken, account })) ->
+        PasskeySignedIn resolver (Db.PasskeySignedIn { sessionToken, account }) ->
             let
                 response =
                     json 200 (Api.encodeResponse Api.passkeySignIn account)
@@ -548,19 +451,11 @@ update msg model =
                 { response | headers = ( "set-cookie", sessionCookie model sessionToken ) :: response.headers }
             )
 
-        PasskeySignedIn resolver (Ok Db.ChallengeSpent) ->
+        PasskeySignedIn resolver Db.ChallengeSpent ->
             ( model, refuse resolver "The challenge is expired, used or unknown." )
 
-        PasskeySignedIn resolver (Ok Db.PasskeyStale) ->
+        PasskeySignedIn resolver Db.PasskeyStale ->
             ( model, refuse resolver "The passkey is gone, or its counter did not move forward." )
-
-        PasskeySignedIn resolver (Err problem) ->
-            ( model
-            , Batch
-                [ respond resolver unavailable
-                , log Interop.Error ("Passkey sign-in failed at its session: " ++ Neon.errorToString problem)
-                ]
-            )
 
         GotInterop (Err _) ->
             ( model, NoEffect )
@@ -582,6 +477,26 @@ signInEmail model token =
         { url = verifyUrl model token
         , expiresInMinutes = linkMinutes
         }
+
+
+query : Neon.Connection -> Interop.Resolver -> String -> Neon.Query a -> (a -> Msg) -> Effect
+query db resolver step wanted toMsg =
+    Database (Neon.run db wanted (\result _ -> answered resolver step toMsg result))
+
+
+transact : Neon.Connection -> Interop.Resolver -> String -> Neon.Transaction a -> (a -> Msg) -> Effect
+transact db resolver step wanted toMsg =
+    Database (Neon.commit db wanted (\result _ -> answered resolver step toMsg result))
+
+
+answered : Interop.Resolver -> String -> (a -> Msg) -> Result Neon.Error a -> Msg
+answered resolver step toMsg result =
+    case result of
+        Ok value ->
+            toMsg value
+
+        Err problem ->
+            DatabaseFailed resolver step problem
 
 
 notify : Model -> Interop.Resolver -> Response -> { to : String, tag : String } -> Email.Layout.Email -> Effect
@@ -648,36 +563,33 @@ perform effect =
 -- ROUTES
 
 
-route : Model -> Request -> ( Model, Reply )
+route : Model -> Request -> Reply
 route model request =
     case Api.parse request.method request.path of
         Ok r ->
             handle model request r
 
         Err Api.NotFound ->
-            ( model, Now (error 404 "Not found.") )
+            Now (error 404 "Not found.")
 
         Err (Api.MethodNotAllowed allowed) ->
             let
                 response =
                     error 405 "Method not allowed."
             in
-            ( model
-            , Now
+            Now
                 { response
                     | headers =
                         ( "allow", String.join ", " (List.map Api.methodToString allowed) )
                             :: response.headers
                 }
-            )
 
 
-handle : Model -> Request -> Api.Route -> ( Model, Reply )
+handle : Model -> Request -> Api.Route -> Reply
 handle model request r =
     case r of
         Api.GetHealth ->
-            ( model
-            , case model.db of
+            case model.db of
                 Ok db ->
                     Later
                         (\resolver ->
@@ -690,46 +602,38 @@ handle model request r =
 
                 Err problem ->
                     Now (health model { status = Api.Fail, latencyMs = Nothing, output = Just ("Not configured: " ++ problem) })
-            )
 
         Api.PostSignUp ->
-            ( model
-            , askForLink model
+            askForLink model
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signUp) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email and a username.")
                     |> Result.andThen (SignUp.validate >> Result.mapError (error 422))
                     |> Result.map SignUpAsked
                 )
-            )
 
         Api.PostSignIn ->
-            ( model
-            , askForLink model
+            askForLink model
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signIn) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email.")
                     |> Result.andThen (.email >> SignUp.validateEmail >> Result.mapError (error 422))
                     |> Result.map SignInAsked
                 )
-            )
 
         Api.GetSession ->
-            ( model
-            , withSession model
+            withSession model
                 request
                 (\db token resolver ->
-                    Database (Neon.commit db (Db.account token) (\result _ -> SessionFound resolver result))
+                    transact db resolver "Session lookup failed" (Db.account token) (SessionFound resolver)
                 )
-            )
 
         Api.DeleteSession ->
-            ( model
-            , case ( model.db, cookieToken request ) of
+            case ( model.db, cookieToken request ) of
                 ( Ok db, Just token ) ->
                     Later
                         (\resolver ->
-                            Database (Neon.run db (Db.signOut token) (\result _ -> SessionEnded resolver result))
+                            query db resolver "Sign-out failed" (Db.signOut token) (\() -> SessionEnded resolver)
                         )
 
                 ( Ok _, Nothing ) ->
@@ -737,55 +641,45 @@ handle model request r =
 
                 ( Err _, _ ) ->
                     Now unavailable
-            )
 
         Api.GetVerification ->
-            ( model
-            , withLink model
+            withLink model
                 request
                 (\db token resolver ->
-                    Database (Neon.run db (Db.magicLink token) (\result _ -> VerificationFound resolver result))
+                    query db resolver "Verification failed at its link" (Db.magicLink token) (VerificationFound resolver)
                 )
-            )
 
         Api.PostVerification ->
-            ( model
-            , withLink model
+            withLink model
                 request
                 (\db token resolver ->
-                    Database
-                        (Neon.run db
-                            (Db.consumeMagicLink { token = token, sessionSeconds = sessionSeconds })
-                            (\result _ -> VerificationConsumed resolver result)
-                        )
+                    query db
+                        resolver
+                        "Verification failed at its session"
+                        (Db.consumeMagicLink { token = token, sessionSeconds = sessionSeconds })
+                        (VerificationConsumed resolver)
                 )
-            )
 
         Api.GetPasskeys ->
-            ( model
-            , withSession model
+            withSession model
                 request
                 (\db token resolver ->
-                    Database (Neon.commit db (Db.passkeys token) (\result _ -> PasskeysFound resolver result))
+                    transact db resolver "Passkey list failed" (Db.passkeys token) (PasskeysFound resolver)
                 )
-            )
 
         Api.PostPasskeyOptions ->
-            ( model
-            , withSession model
+            withSession model
                 request
                 (\db token resolver ->
-                    Database
-                        (Neon.commit db
-                            (Db.startPasskey { token = token, ttlSeconds = challengeSeconds })
-                            (\result _ -> PasskeyStarted resolver result)
-                        )
+                    transact db
+                        resolver
+                        "Passkey failed at its challenge"
+                        (Db.startPasskey { token = token, ttlSeconds = challengeSeconds })
+                        (PasskeyStarted resolver)
                 )
-            )
 
         Api.PostPasskey ->
-            ( model
-            , withSession model
+            withSession model
                 request
                 (\db token resolver ->
                     case
@@ -797,16 +691,16 @@ handle model request r =
                                 )
                     of
                         Ok registration ->
-                            Database
-                                (Neon.commit db
-                                    (Db.addPasskey
-                                        { token = token
-                                        , registration = registration
-                                        , name = Aaguid.name registration.aaguid
-                                        }
-                                    )
-                                    (\result _ -> PasskeyAdded resolver result)
+                            transact db
+                                resolver
+                                "Passkey failed at its credential"
+                                (Db.addPasskey
+                                    { token = token
+                                    , registration = registration
+                                    , name = Aaguid.name registration.aaguid
+                                    }
                                 )
+                                (PasskeyAdded resolver)
 
                         Err Nothing ->
                             respond resolver
@@ -818,68 +712,60 @@ handle model request r =
                                 , log Interop.Warn ("Passkey refused: " ++ String.left 200 problem)
                                 ]
                 )
-            )
 
         Api.DeletePasskey id ->
-            ( model
-            , withSession model
+            withSession model
                 request
                 (\db token resolver ->
-                    Database
-                        (Neon.commit db
-                            (Db.removePasskey { token = token, id = id })
-                            (\result _ -> PasskeyRemoved resolver result)
-                        )
+                    transact db
+                        resolver
+                        "Passkey removal failed"
+                        (Db.removePasskey { token = token, id = id })
+                        (PasskeyRemoved resolver)
                 )
-            )
 
         Api.PostPasskeySignInOptions ->
-            ( model
-            , case model.db of
+            case model.db of
                 Ok db ->
                     Later
                         (\resolver ->
-                            Database
-                                (Neon.run db
-                                    (Db.signInChallenge
-                                        { key = "passkey:ip:" ++ clientAddress request
-                                        , limit = 20
-                                        , windowSeconds = 900
-                                        , ttlSeconds = challengeSeconds
-                                        }
-                                    )
-                                    (\result _ -> SignInStarted resolver result)
+                            query db
+                                resolver
+                                "Passkey sign-in failed at its challenge"
+                                (Db.signInChallenge
+                                    { key = "passkey:ip:" ++ clientAddress request
+                                    , limit = 20
+                                    , windowSeconds = 900
+                                    , ttlSeconds = challengeSeconds
+                                    }
                                 )
+                                (SignInStarted resolver)
                         )
 
                 Err _ ->
                     Now unavailable
-            )
 
         Api.PostPasskeySignIn ->
-            ( model
-            , case ( model.db, Decode.decodeString (Api.bodyDecoder Api.passkeySignIn) request.body ) of
+            case ( model.db, Decode.decodeString (Api.bodyDecoder Api.passkeySignIn) request.body ) of
                 ( Ok db, Ok assertion ) ->
                     Later
                         (\resolver ->
                             case WebAuthn.authenticate { origin = model.origin, rpId = rpId model } assertion of
                                 Ok authentication ->
-                                    Database
-                                        (Neon.run db
-                                            (Db.passkeyPublicKey assertion.id)
-                                            (\result _ ->
-                                                KeyFound resolver
-                                                    { signed = authentication.signed
-                                                    , signature = assertion.signature
-                                                    , signIn =
-                                                        { challenge = authentication.challenge
-                                                        , credentialId = assertion.id
-                                                        , signCount = authentication.signCount
-                                                        , backedUp = authentication.backedUp
-                                                        }
-                                                    }
-                                                    result
-                                            )
+                                    query db
+                                        resolver
+                                        "Passkey sign-in failed at its key"
+                                        (Db.passkeyPublicKey assertion.id)
+                                        (KeyFound resolver
+                                            { signed = authentication.signed
+                                            , signature = assertion.signature
+                                            , signIn =
+                                                { challenge = authentication.challenge
+                                                , credentialId = assertion.id
+                                                , signCount = authentication.signCount
+                                                , backedUp = authentication.backedUp
+                                                }
+                                            }
                                         )
 
                                 Err problem ->
@@ -891,7 +777,6 @@ handle model request r =
 
                 ( Err _, _ ) ->
                     Now unavailable
-            )
 
 
 askForLink : Model -> Request -> Result Response Ask -> Reply
@@ -900,26 +785,26 @@ askForLink model request parsed =
         ( Ok db, Ok _, Ok ask ) ->
             Later
                 (\resolver ->
-                    Database
-                        (Neon.commit db
-                            (Neon.transaction Tuple.pair
-                                |> Neon.with
-                                    (Db.rateLimit
-                                        { key = "magic-link:ip:" ++ clientAddress request
-                                        , limit = 10
-                                        , windowSeconds = 900
-                                        }
-                                    )
-                                |> Neon.with
-                                    (Db.rateLimit
-                                        { key = "magic-link:email:" ++ askedBy ask
-                                        , limit = 3
-                                        , windowSeconds = 900
-                                        }
-                                    )
-                            )
-                            (\result _ -> LinkLimited resolver ask result)
+                    transact db
+                        resolver
+                        "Magic link failed at its rate limits"
+                        (Neon.transaction Tuple.pair
+                            |> Neon.with
+                                (Db.rateLimit
+                                    { key = "magic-link:ip:" ++ clientAddress request
+                                    , limit = 10
+                                    , windowSeconds = 900
+                                    }
+                                )
+                            |> Neon.with
+                                (Db.rateLimit
+                                    { key = "magic-link:email:" ++ askedBy ask
+                                    , limit = 3
+                                    , windowSeconds = 900
+                                    }
+                                )
                         )
+                        (LinkLimited resolver ask)
                 )
 
         ( Ok _, Ok _, Err response ) ->
