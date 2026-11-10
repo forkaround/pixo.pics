@@ -193,6 +193,12 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ text "Sign in" ]
                         |> ProgramTest.clickLink "Dashboard" "/dashboard"
                         |> ProgramTest.expectViewHas [ text "Welcome, ada" ]
+            , test "doesn't take a failed check for being signed out" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" Test.Http.networkError
+                        |> ProgramTest.ensureViewHasNot [ text "Create an account" ]
+                        |> ProgramTest.expectViewHas [ text "Can't check who is signed in." ]
             ]
         , describe "Dashboard"
             [ test "welcomes the signed-in account" <|
@@ -217,6 +223,28 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Create an account" ]
                         |> ProgramTest.clickLink "Sign in" "/auth/signin"
                         |> ProgramTest.expectViewHas [ text "We'll email you a link. No password needed." ]
+            , test "stays put and says why when the session can't be checked" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET"
+                            "/api/auth/session"
+                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/dashboard")
+                        |> ProgramTest.expectViewHas [ text "Not available right now. Try again later." ]
+            , test "checks the session again on request" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET"
+                            "/api/auth/session"
+                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                        |> ProgramTest.simulateHttpResponse "GET"
+                            "/api/auth/passkeys"
+                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                        |> ProgramTest.clickButton "Try again"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.ensureViewHas [ text "Welcome, ada" ]
+                        |> ProgramTest.expectViewHas [ text "Apple Passwords" ]
             ]
         , describe "Passkeys"
             [ test "lists the account's passkeys on the dashboard" <|

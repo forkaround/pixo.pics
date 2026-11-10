@@ -67,6 +67,7 @@ type Ceremony
 
 type Session
     = Unknown
+    | Unavailable String
     | SignedOut
     | SignedIn Api.Account
 
@@ -206,7 +207,7 @@ isDark model =
 
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
-    | GotHealth (Result String Api.Health)
+    | GotHealth (Result ApiClient.Error Api.Health)
     | CheckHealth
     | ThemeSelected Theme
     | UrlRequested Browser.UrlRequest
@@ -214,27 +215,28 @@ type Msg
     | EmailChanged String
     | UsernameChanged String
     | SignUpSubmitted
-    | GotSignUp (Result String ())
-    | GotVerification (Result String Api.Verification)
+    | GotSignUp (Result ApiClient.Error ())
+    | GotVerification (Result ApiClient.Error Api.Verification)
     | VerificationAccepted
-    | GotAccount (Result String Api.Account)
-    | GotSession (Result String Api.Account)
+    | GotAccount (Result ApiClient.Error Api.Account)
+    | GotSession (Result ApiClient.Error Api.Account)
+    | SessionRetried
     | SignInEmailChanged String
     | SignInSubmitted
-    | GotSignIn (Result String ())
+    | GotSignIn (Result ApiClient.Error ())
     | SignOutClicked
-    | GotSignOut (Result String ())
-    | GotPasskeys (Result String (List Api.Passkey))
+    | GotSignOut (Result ApiClient.Error ())
+    | GotPasskeys (Result ApiClient.Error (List Api.Passkey))
     | PasskeyRequested
-    | GotPasskeyOptions (Result String Api.PasskeyOptions)
-    | GotPasskey (Result String Api.Passkey)
+    | GotPasskeyOptions (Result ApiClient.Error Api.PasskeyOptions)
+    | GotPasskey (Result ApiClient.Error Api.Passkey)
     | PasskeyRemoveRequested String
     | PasskeyRemoveCancelled
     | PasskeyRemoveConfirmed String
-    | GotPasskeyRemoved String (Result String ())
+    | GotPasskeyRemoved String (Result ApiClient.Error ())
     | PasskeySignInRequested
-    | GotSignInOptions (Result String Api.SignInOptions)
-    | GotPasskeySignIn (Result String Api.Account)
+    | GotSignInOptions (Result ApiClient.Error Api.SignInOptions)
+    | GotPasskeySignIn (Result ApiClient.Error Api.Account)
 
 
 update : Msg -> Model -> ( Model, Effect )
@@ -280,8 +282,8 @@ update msg model =
         GotHealth (Ok health) ->
             ( { model | health = Checked health }, NoEffect )
 
-        GotHealth (Err message) ->
-            ( { model | health = Unreachable message }, NoEffect )
+        GotHealth (Err error) ->
+            ( { model | health = Unreachable (ApiClient.errorToString error) }, NoEffect )
 
         CheckHealth ->
             ( { model | health = Checking (lastReport model.health) }, checkHealth )
@@ -326,8 +328,8 @@ update msg model =
                         Ok () ->
                             { signUp | state = Sent }
 
-                        Err message ->
-                            { signUp | state = Editing (Just message) }
+                        Err error ->
+                            { signUp | state = Editing (Just (ApiClient.errorToString error)) }
                 )
                 model
             , NoEffect
@@ -342,8 +344,8 @@ update msg model =
                                 Ok found ->
                                     Verify (Found token found Nothing)
 
-                                Err message ->
-                                    Verify (Refused message)
+                                Err error ->
+                                    Verify (Refused (ApiClient.errorToString error))
                       }
                     , NoEffect
                     )
@@ -373,8 +375,8 @@ update msg model =
                     else
                         ( { model | session = SignedIn account }, PushUrl "/dashboard" )
 
-                ( Verify (Accepting _ _), Err message ) ->
-                    ( { model | page = Verify (Refused message) }, NoEffect )
+                ( Verify (Accepting _ _), Err error ) ->
+                    ( { model | page = Verify (Refused (ApiClient.errorToString error)) }, NoEffect )
 
                 _ ->
                     ( model, NoEffect )
@@ -382,12 +384,12 @@ update msg model =
         GotSession (Ok account) ->
             ( { model | session = SignedIn account }, NoEffect )
 
-        GotSession (Err _) ->
-            case model.session of
-                SignedIn _ ->
+        GotSession (Err error) ->
+            case ( model.session, error ) of
+                ( SignedIn _, _ ) ->
                     ( model, NoEffect )
 
-                _ ->
+                ( _, ApiClient.Unauthorized _ ) ->
                     ( { model | session = SignedOut }
                     , if model.page == Dashboard then
                         PushUrl "/auth/signin"
@@ -395,6 +397,21 @@ update msg model =
                       else
                         NoEffect
                     )
+
+                ( _, ApiClient.Failed message ) ->
+                    ( { model | session = Unavailable message }, NoEffect )
+
+        SessionRetried ->
+            if model.page == Dashboard then
+                ( { model | session = Unknown, passkeys = Loading }
+                , Batch
+                    [ Request (ApiClient.request Api.session () GotSession)
+                    , Request (ApiClient.request Api.passkeys () GotPasskeys)
+                    ]
+                )
+
+            else
+                ( { model | session = Unknown }, Request (ApiClient.request Api.session () GotSession) )
 
         SignInEmailChanged email ->
             ( editSignIn (\signIn -> { signIn | email = email }) model, NoEffect )
@@ -420,8 +437,8 @@ update msg model =
                         Ok () ->
                             { signIn | state = Sent }
 
-                        Err message ->
-                            { signIn | state = Editing (Just message) }
+                        Err error ->
+                            { signIn | state = Editing (Just (ApiClient.errorToString error)) }
                 )
                 model
             , NoEffect
@@ -439,8 +456,8 @@ update msg model =
         GotPasskeys (Ok found) ->
             ( { model | passkeys = Loaded found }, NoEffect )
 
-        GotPasskeys (Err message) ->
-            ( { model | passkeys = NotLoaded message }, NoEffect )
+        GotPasskeys (Err error) ->
+            ( { model | passkeys = NotLoaded (ApiClient.errorToString error) }, NoEffect )
 
         PasskeyRequested ->
             if model.ceremony == Waiting then
@@ -454,8 +471,8 @@ update msg model =
         GotPasskeyOptions (Ok options) ->
             ( model, SendToJs (Interop.CreatePasskey options) )
 
-        GotPasskeyOptions (Err message) ->
-            ( { model | ceremony = Resting (Just message) }, NoEffect )
+        GotPasskeyOptions (Err error) ->
+            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         GotPasskey (Ok passkey) ->
             ( { model
@@ -475,8 +492,8 @@ update msg model =
                 NoEffect
             )
 
-        GotPasskey (Err message) ->
-            ( { model | ceremony = Resting (Just message) }, NoEffect )
+        GotPasskey (Err error) ->
+            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         PasskeyRemoveRequested id ->
             ( { model | confirming = Just id }, NoEffect )
@@ -503,8 +520,8 @@ update msg model =
             , NoEffect
             )
 
-        GotPasskeyRemoved _ (Err message) ->
-            ( { model | ceremony = Resting (Just message) }, NoEffect )
+        GotPasskeyRemoved _ (Err error) ->
+            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         PasskeySignInRequested ->
             if model.ceremony == Waiting then
@@ -518,14 +535,14 @@ update msg model =
         GotSignInOptions (Ok options) ->
             ( model, SendToJs (Interop.GetPasskey options) )
 
-        GotSignInOptions (Err message) ->
-            ( { model | ceremony = Resting (Just message) }, NoEffect )
+        GotSignInOptions (Err error) ->
+            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         GotPasskeySignIn (Ok account) ->
             ( { model | session = SignedIn account }, PushUrl "/dashboard" )
 
-        GotPasskeySignIn (Err message) ->
-            ( { model | ceremony = Resting (Just message) }, NoEffect )
+        GotPasskeySignIn (Err error) ->
+            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         ThemeSelected theme ->
             ( { model | theme = theme }
@@ -678,6 +695,11 @@ viewPage model =
                     Unknown ->
                         [ Skeleton.view [ class "h-4 w-40", attribute "aria-hidden" "true" ] ]
 
+                    Unavailable _ ->
+                        [ span [ class "text-sm text-muted-foreground" ] [ text "Can't check who is signed in." ]
+                        , retry
+                        ]
+
                     SignedOut ->
                         [ link "/auth/signup" "Create an account"
                         , link "/auth/signin" "Sign in"
@@ -729,6 +751,15 @@ notice heading body actions =
                 Card.footer [] actions
            )
         |> Card.toHtml [ class "w-full max-w-sm" ]
+
+
+retry : Html Msg
+retry =
+    Button.new
+        |> Button.text "Try again"
+        |> Button.outline
+        |> Button.small
+        |> Button.toHtml [ onClick SessionRetried ]
 
 
 viewSignUp : SignUpForm -> Html Msg
@@ -891,6 +922,9 @@ viewDashboard session =
                     [ text "Your dashboard is empty for now." ]
                 |> Card.footer [] [ link "/" "Server status" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
+
+        Unavailable message ->
+            notice "Can't check who is signed in" message [ retry ]
 
         _ ->
             Card.new

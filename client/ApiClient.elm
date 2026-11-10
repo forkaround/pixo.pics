@@ -1,4 +1,4 @@
-module ApiClient exposing (Request, request, send, withToken)
+module ApiClient exposing (Error(..), Request, errorToString, request, send, withToken)
 
 import Api exposing (Endpoint)
 import Http
@@ -15,7 +15,22 @@ type alias Request msg =
     }
 
 
-request : Endpoint body response -> body -> (Result String response -> msg) -> Request msg
+type Error
+    = Unauthorized String
+    | Failed String
+
+
+errorToString : Error -> String
+errorToString error =
+    case error of
+        Unauthorized message ->
+            message
+
+        Failed message ->
+            message
+
+
+request : Endpoint body response -> body -> (Result Error response -> msg) -> Request msg
 request endpoint body toMsg =
     let
         route =
@@ -63,32 +78,43 @@ merge result =
             value
 
 
-fromResponse : Decode.Decoder a -> Http.Response String -> Result String a
+fromResponse : Decode.Decoder a -> Http.Response String -> Result Error a
 fromResponse decoder response =
     case response of
         Http.BadUrl_ url ->
-            Err ("Bad URL: " ++ url)
+            Err (Failed ("Bad URL: " ++ url))
 
         Http.Timeout_ ->
-            Err "The server took too long to answer."
+            Err (Failed "The server took too long to answer.")
 
         Http.NetworkError_ ->
-            Err "Could not reach the server. Start both apps with `bun dev`."
+            Err (Failed "Could not reach the server. Start both apps with `bun dev`.")
 
         Http.BadStatus_ metadata body ->
             case Decode.decodeString Api.errorDecoder body of
                 Ok message ->
-                    Err message
+                    Err (refusal metadata.statusCode message)
 
                 Err _ ->
                     Decode.decodeString decoder body
                         |> Result.mapError
                             (\_ ->
-                                "The server answered with status "
-                                    ++ String.fromInt metadata.statusCode
-                                    ++ ". Is it running? Start both apps with `bun dev`."
+                                refusal metadata.statusCode
+                                    ("The server answered with status "
+                                        ++ String.fromInt metadata.statusCode
+                                        ++ ". Is it running? Start both apps with `bun dev`."
+                                    )
                             )
 
         Http.GoodStatus_ _ body ->
             Decode.decodeString decoder body
-                |> Result.mapError (\error -> "Unexpected response: " ++ Decode.errorToString error)
+                |> Result.mapError (\error -> Failed ("Unexpected response: " ++ Decode.errorToString error))
+
+
+refusal : Int -> String -> Error
+refusal status message =
+    if status == 401 then
+        Unauthorized message
+
+    else
+        Failed message

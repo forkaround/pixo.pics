@@ -354,13 +354,17 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
 - Calls the server only through `ApiClient.request` with an `Api.Endpoint`, wrapped in the
   `Request` effect; `ApiClient.send` is its `Cmd`. On an error status it decodes
   `Api.errorDecoder`, then the endpoint's response (the health report comes with a 503).
+  A failure is an `ApiClient.Error`: `Unauthorized` for a 401, `Failed` for anything else,
+  each with the text to show (`ApiClient.errorToString`).
 - A `Browser.application` without the `Navigation.Key` in its model: `main` keeps it
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
   `open` picks the `Page` from the URL: `/`, `/auth/signup`, `/auth/signin`,
   `/auth/verify`, `/dashboard`, else `NotFound`. A new page outside `/auth/` needs its
   rewrite in `vercel.json`. `open` also ends a passkey ceremony left unfinished.
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
-  or `SignedIn account`. `/dashboard` shows the account, a sign-out button and the
+  (only on a 401), `SignedIn account`, or `Unavailable reason` when the check failed some
+  other way: the page then says so and offers "Try again" (`SessionRetried`), and sends
+  nobody to `/auth/signin`. `/dashboard` shows the account, a sign-out button and the
   Passkeys card (`Api.passkeys`, "Add a passkey", and a bin on each row that asks
   "Remove ...?" before `Api.deletePasskey`: `model.confirming` holds the id meanwhile), and
   sends a signed-out visitor to `/auth/signin`.
