@@ -479,6 +479,9 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   meanwhile.
   `origin` comes from `app.ts`: `VERCEL_PROJECT_PRODUCTION_URL` in production,
   `VERCEL_URL` in a preview, else `http://localhost:5173`; never from the request.
+- `init` parses `origin` once into an `Origin`: the URL, its host as the passkeys' `rpId`,
+  and whether it is https (the cookie's `Secure`). One that is no URL logs `Bad origin` at
+  `error` and leaves the server as broken flags do: no database, so those routes answer 503.
 - The passkey routes read the `session` cookie and answer 401 without a session.
   `GET /api/auth/passkeys` (`Api.passkeys`) lists the account's passkeys: `id` (the
   credential id) and `createdAt` (ISO 8601, UTC).

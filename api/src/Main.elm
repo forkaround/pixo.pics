@@ -18,6 +18,7 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import LinkToken exposing (LinkToken)
 import Neon
+import Origin exposing (Origin)
 import SessionToken exposing (SessionToken)
 import SignUp
 import Task
@@ -48,7 +49,7 @@ main =
 type alias Model =
     { db : Result String Neon.Connection
     , email : Result String Email.Mailer
-    , origin : String
+    , origin : Origin
     , release : Api.Release
     }
 
@@ -58,41 +59,57 @@ init flags =
     case InteropPorts.decodeFlags flags of
         Ok config ->
             let
-                db =
-                    Db.connect config
-
-                email =
-                    Email.configure config
+                release =
+                    { releaseId = config.releaseId, releaseUrl = config.releaseUrl, region = config.region }
             in
-            ( { db = db
-              , email = email
-              , origin = config.origin
-              , release = { releaseId = config.releaseId, releaseUrl = config.releaseUrl, region = config.region }
-              }
-            , Batch
-                [ case db of
-                    Ok connection ->
-                        log Interop.Info ("Sending queries to " ++ Neon.endpoint connection)
+            case Origin.parse config.origin of
+                Ok origin ->
+                    let
+                        db =
+                            Db.connect config
 
-                    Err problem ->
-                        log Interop.Warn ("No database, so database routes answer 503: " ++ problem)
-                , case email of
-                    Ok _ ->
-                        NoEffect
+                        email =
+                            Email.configure config
+                    in
+                    ( { db = db
+                      , email = email
+                      , origin = origin
+                      , release = release
+                      }
+                    , Batch
+                        [ case db of
+                            Ok connection ->
+                                log Interop.Info ("Sending queries to " ++ Neon.endpoint connection)
 
-                    Err problem ->
-                        log Interop.Warn ("No email, so nothing is sent: " ++ problem)
-                ]
-            )
+                            Err problem ->
+                                log Interop.Warn ("No database, so database routes answer 503: " ++ problem)
+                        , case email of
+                            Ok _ ->
+                                NoEffect
+
+                            Err problem ->
+                                log Interop.Warn ("No email, so nothing is sent: " ++ problem)
+                        ]
+                    )
+
+                Err problem ->
+                    ( broken problem release
+                    , log Interop.Error ("Bad origin: " ++ problem)
+                    )
 
         Err problem ->
-            ( { db = Err "The server's flags did not decode."
-              , email = Err "The server's flags did not decode."
-              , origin = ""
-              , release = { releaseId = Nothing, releaseUrl = Nothing, region = Nothing }
-              }
+            ( broken "The server's flags did not decode." { releaseId = Nothing, releaseUrl = Nothing, region = Nothing }
             , log Interop.Error ("Bad flags: " ++ Decode.errorToString problem)
             )
+
+
+broken : String -> Api.Release -> Model
+broken problem release =
+    { db = Err problem
+    , email = Err problem
+    , origin = Origin.local
+    , release = release
+    }
 
 
 log : Interop.Level -> String -> Effect
@@ -318,7 +335,7 @@ update msg model =
                 (json 200
                     (Api.encodeResponse Api.passkeyOptions
                         { challenge = ceremony.challenge
-                        , rp = { id = rpId model, name = "pixo" }
+                        , rp = { id = Origin.rpId model.origin, name = "pixo" }
                         , user =
                             { id = ceremony.userId
                             , name = ceremony.account.email
@@ -388,7 +405,7 @@ update msg model =
         SignInStarted resolver (Db.SignInChallenge challenge) ->
             ( model
             , respond resolver
-                (json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = rpId model }))
+                (json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId model.origin }))
             )
 
         SignInStarted resolver (Db.TooManyChallenges limited) ->
@@ -690,7 +707,7 @@ handle model request r =
                         Decode.decodeString (Api.bodyDecoder Api.addPasskey) request.body
                             |> Result.mapError (\_ -> Nothing)
                             |> Result.andThen
-                                (WebAuthn.register { origin = model.origin, rpId = rpId model }
+                                (WebAuthn.register { origin = Origin.toString model.origin, rpId = Origin.rpId model.origin }
                                     >> Result.mapError Just
                                 )
                     of
@@ -754,7 +771,7 @@ handle model request r =
                 ( Ok db, Ok assertion ) ->
                     Later
                         (\resolver ->
-                            case WebAuthn.authenticate { origin = model.origin, rpId = rpId model } assertion of
+                            case WebAuthn.authenticate { origin = Origin.toString model.origin, rpId = Origin.rpId model.origin } assertion of
                                 Ok authentication ->
                                     query db
                                         resolver
@@ -876,12 +893,12 @@ bearer request =
 
 verifyUrl : Model -> LinkToken -> String
 verifyUrl model token =
-    model.origin ++ "/auth/verify#" ++ LinkToken.toString token
+    Origin.toString model.origin ++ "/auth/verify#" ++ LinkToken.toString token
 
 
 dashboardUrl : Model -> String
 dashboardUrl model =
-    model.origin ++ "/dashboard"
+    Origin.toString model.origin ++ "/dashboard"
 
 
 sessionSeconds : Int
@@ -904,7 +921,7 @@ cookie model token maxAge =
               , "HttpOnly"
               , "SameSite=Lax"
               ]
-            , if String.startsWith "https://" model.origin then
+            , if Origin.isSecure model.origin then
                 [ "Secure" ]
 
               else
@@ -921,12 +938,6 @@ linkMinutes =
 challengeSeconds : Int
 challengeSeconds =
     300
-
-
-rpId : Model -> String
-rpId model =
-    WebAuthn.rpId model.origin
-        |> Maybe.withDefault ""
 
 
 clientAddress : Request -> String

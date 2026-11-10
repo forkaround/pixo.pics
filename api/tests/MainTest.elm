@@ -256,7 +256,7 @@ suite =
                             ( [ "info", "error" ], [ 503 ] )
             , test "answers 503 at once when email isn't configured" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics" }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -668,7 +668,7 @@ suite =
                             ( [ "info", "error" ], [ added ] )
             , test "answers 201 without an email when email isn't configured" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics" }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> expectResponses [ added ]
@@ -917,11 +917,19 @@ suite =
         , describe "init"
             [ test "warns when email isn't configured" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics" }
                         |> expectSent logs
                             [ ( "info", "Sending queries to " ++ endpoint )
                             , ( "warn", "No email, so nothing is sent: BREVO_API_KEY and EMAIL_FROM must both be set." )
                             ]
+            , test "answers 503 and logs why when the origin is not a URL" <|
+                \() ->
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", origin = "pixo.pics" }
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
+                            ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
+                            , [ 503 ]
+                            )
             ]
         , describe "routing"
             [ test "answers 404 at an unknown path" <|
@@ -1235,10 +1243,10 @@ jsonHeaders =
 
 start : Maybe String -> App
 start url =
-    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret" }
+    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", origin = "https://pixo.pics" }
 
 
-startWith : { databaseUrl : Maybe String, brevoApiKey : Maybe String } -> App
+startWith : { databaseUrl : Maybe String, brevoApiKey : Maybe String, origin : String } -> App
 startWith config =
     ProgramTest.createWorker
         { init = Main.init
@@ -1252,7 +1260,7 @@ startWith config =
                 , ( "neonEndpoint", Encode.null )
                 , ( "brevoApiKey", Maybe.withDefault Encode.null (Maybe.map Encode.string config.brevoApiKey) )
                 , ( "emailFrom", Encode.string "hello@pixo.pics" )
-                , ( "origin", Encode.string "https://pixo.pics" )
+                , ( "origin", Encode.string config.origin )
                 , ( "releaseId", Encode.string "0641607" )
                 , ( "releaseUrl", Encode.null )
                 , ( "region", Encode.string "arn1" )
