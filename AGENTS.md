@@ -50,9 +50,9 @@ database.
   Neon.execute "UPDATE users SET name = $1" [ Neon.text name ]    -- safe
   ```
 
-- **Migrations**: edit `migrations/current.sql` under `bun db watch`, idempotent
-  (`IF NOT EXISTS`) since it reruns on save, then `bun db commit`. Never edit
-  `migrations/committed/`: they are hash-signed.
+- **Migrations**: write `migrations/current.sql` to rerun cleanly: undo, then redo (see
+  [Migrations](#migrations)), then `bun db commit`. Never edit `migrations/committed/`:
+  they are hash-signed.
 - **Keep the Elm projects apart**: the root `elm.json` never lists `api/` folders, so the
   database password can't reach the browser bundle. A package `shared/` imports goes in
   both `elm.json`s; server packages: `elm install` inside `api/`.
@@ -120,6 +120,63 @@ bun db migrate
 - One proxy serves every database on that Postgres. It holds connections open, so
   `bun db reset --erase` needs `docker stop neon-http-proxy` first. ~50 ms per query.
 - The template has no migrations: `/api/health` needs no tables.
+
+## Migrations
+
+- `current.sql` runs whole, again and again: `bun db watch` reruns it on every save that
+  changes more than comments or whitespace, each run in one transaction (a failed run
+  changes nothing), and `bun db commit` replays every committed migration on an empty
+  shadow database, then runs the new one once more locally. Each run must end in the same
+  state, whether the database has none of the file, all of it, or an earlier draft.
+- Undo, then redo. `CREATE ... IF NOT EXISTS` is not enough: once the object exists, edits
+  to its definition are skipped, and the local database drifts from what `commit` builds.
+
+  ```sql
+  DROP TABLE IF EXISTS notes CASCADE;
+  CREATE TABLE notes (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    body text NOT NULL
+  );
+  ```
+
+  - New table, view or type: `DROP ... IF EXISTS ... CASCADE`, then `CREATE`.
+  - Column on an earlier table: `ALTER TABLE t DROP COLUMN IF EXISTS c CASCADE`, then
+    `ADD COLUMN`.
+  - Function: `CREATE OR REPLACE FUNCTION` for a new body; new arguments or return type
+    need `DROP FUNCTION IF EXISTS f(args) CASCADE` first.
+  - Trigger, policy, index: `DROP TRIGGER IF EXISTS x ON t`, `DROP POLICY IF EXISTS x ON t`,
+    `DROP INDEX IF EXISTS x`, then `CREATE`.
+  - Enum value: `ALTER TYPE t ADD VALUE IF NOT EXISTS 'v'`. Values can't be dropped, nor
+    used in the transaction that adds them: commit it alone, then use it.
+  - Renames and anything else without `IF EXISTS`: a `DO` block that checks first
+    (`information_schema`; enums only in `pg_catalog.pg_enum`).
+
+    ```sql
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'username'
+      ) THEN
+        ALTER TABLE users RENAME COLUMN username TO name;
+      END IF;
+    END $$;
+    ```
+
+- The undo also runs once in every other database: undo only what this migration adds. A
+  `DROP TABLE` of an earlier migration's table empties it in production.
+- `CASCADE` also drops dependents elsewhere (views, foreign keys, triggers, policies):
+  recreate them after the redo. `commit` dumps the shadow schema to `migrations/schema.sql`
+  (`afterAllMigrations` in `.gmrc`); its diff shows what went missing.
+- An object that leaves the file stays in the local database: a rename, a removal, or a
+  typo that ran on save. Keep its `DROP ... IF EXISTS`; elsewhere it does nothing. Agents
+  write the file with `watch` stopped, then run it with `bun db watch --once`.
+- Previews run only committed migrations, so commit before pushing a branch that needs
+  its schema. Each migration names the previous one's hash: if `main` gains a migration
+  first, `bun db uncommit`, rebase, `bun db watch --once`, `bun db commit`. Git may merge
+  two migrations without a conflict (different `-m` names) and every `migrate` then
+  fails. The preview's Neon branch ran the old hash; reset it:
+  `bunx neon@latest branches reset preview/<git> --parent`.
 
 ## Browser app
 
