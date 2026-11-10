@@ -43,7 +43,9 @@ Open http://localhost:5173. Then rename `name` in `package.json` and `<title>` i
 | `bun run preview`   | Serves the build on :4173                                                 |
 | `bun run types`     | Regenerates the TypeScript types of both Elm programs                     |
 | `bun check`         | Type-checks the browser app and the server                                |
-| `bun fmt`           | Formats everything; `--check` only reports                                |
+| `bun run test`      | Runs the Elm tests of the browser app, then the server's                  |
+| `bun fmt`           | Formats everything, Elm with elm-format                                   |
+| `bun fmt-check`     | Reports what `bun fmt` would change                                       |
 | `bun db <command>`  | Graphile Migrate: `migrate`, `watch`, `commit`, `status`, `reset --erase` |
 
 ## Environment

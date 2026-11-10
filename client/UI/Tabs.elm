@@ -1,12 +1,19 @@
 module UI.Tabs exposing
-    ( Tabs, Ready, NeedsId, NeedsHandler
+    ( NeedsHandler
+    , NeedsId
+    , Ready
+    , Tab
+    , Tabs
+    , disabled
+    , id
+    , line
     , new
-    , id, onSelect
-    , Tab, tab, disabled
+    , onSelect
+    , tab
     , tabs
-    , value
-    , line, vertical
     , toHtml
+    , value
+    , vertical
     )
 
 import Html exposing (Attribute, Html)
@@ -171,7 +178,6 @@ toHtml attrs (Tabs config) =
             , attribute "aria-orientation" orientation
             , attribute "data-slot" "tabs-list"
             , attribute "data-variant" (variantName config.variant)
-
             , attribute "focusgroup"
                 (case config.orientation of
                     Horizontal ->

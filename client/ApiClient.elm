@@ -1,61 +1,87 @@
-module ApiClient exposing (request)
+module ApiClient exposing (Request, request, send)
 
 import Api exposing (Endpoint)
 import Http
 import Json.Decode as Decode
+import Json.Encode as Encode
 
 
-request : Endpoint body response -> body -> (Result String response -> msg) -> Cmd msg
+type alias Request msg =
+    { method : String
+    , url : String
+    , body : Maybe Encode.Value
+    , onResponse : Http.Response String -> msg
+    }
+
+
+request : Endpoint body response -> body -> (Result String response -> msg) -> Request msg
 request endpoint body toMsg =
     let
         route =
             Api.route endpoint
     in
+    { method = Api.methodToString (Api.method route)
+    , url = Api.toString route
+    , body = Api.encodeBody endpoint body
+    , onResponse = toMsg << fromResponse (Api.responseDecoder endpoint)
+    }
+
+
+send : Request msg -> Cmd msg
+send { method, url, body, onResponse } =
     Http.request
-        { method = Api.methodToString (Api.method route)
+        { method = method
         , headers = []
-        , url = Api.toString route
+        , url = url
         , body =
-            case Api.encodeBody endpoint body of
+            case body of
                 Just value ->
                     Http.jsonBody value
 
                 Nothing ->
                     Http.emptyBody
-        , expect = expect toMsg (Api.responseDecoder endpoint)
+        , expect = Http.expectStringResponse merge (onResponse >> Ok)
         , timeout = Nothing
         , tracker = Nothing
         }
 
 
-expect : (Result String a -> msg) -> Decode.Decoder a -> Http.Expect msg
-expect toMsg decoder =
-    Http.expectStringResponse toMsg <|
-        \response ->
-            case response of
-                Http.BadUrl_ url ->
-                    Err ("Bad URL: " ++ url)
+merge : Result a a -> a
+merge result =
+    case result of
+        Ok value ->
+            value
 
-                Http.Timeout_ ->
-                    Err "The server took too long to answer."
+        Err value ->
+            value
 
-                Http.NetworkError_ ->
-                    Err "Could not reach the server. Start both apps with `bun dev`."
 
-                Http.BadStatus_ metadata body ->
-                    case Decode.decodeString Api.errorDecoder body of
-                        Ok message ->
-                            Err message
+fromResponse : Decode.Decoder a -> Http.Response String -> Result String a
+fromResponse decoder response =
+    case response of
+        Http.BadUrl_ url ->
+            Err ("Bad URL: " ++ url)
 
-                        Err _ ->
-                            Decode.decodeString decoder body
-                                |> Result.mapError
-                                    (\_ ->
-                                        "The server answered with status "
-                                            ++ String.fromInt metadata.statusCode
-                                            ++ ". Is it running? Start both apps with `bun dev`."
-                                    )
+        Http.Timeout_ ->
+            Err "The server took too long to answer."
 
-                Http.GoodStatus_ _ body ->
+        Http.NetworkError_ ->
+            Err "Could not reach the server. Start both apps with `bun dev`."
+
+        Http.BadStatus_ metadata body ->
+            case Decode.decodeString Api.errorDecoder body of
+                Ok message ->
+                    Err message
+
+                Err _ ->
                     Decode.decodeString decoder body
-                        |> Result.mapError (\error -> "Unexpected response: " ++ Decode.errorToString error)
+                        |> Result.mapError
+                            (\_ ->
+                                "The server answered with status "
+                                    ++ String.fromInt metadata.statusCode
+                                    ++ ". Is it running? Start both apps with `bun dev`."
+                            )
+
+        Http.GoodStatus_ _ body ->
+            Decode.decodeString decoder body
+                |> Result.mapError (\error -> "Unexpected response: " ++ Decode.errorToString error)
