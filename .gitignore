@@ -6,4 +6,5 @@ dist/
 .env
 .env*.local
 .neon
+.agents/settings.local.json
 .DS_Store
