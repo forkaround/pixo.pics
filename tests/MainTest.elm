@@ -361,6 +361,18 @@ suite =
                             "/api/auth/passkeys"
                             (response 422 """{"error":"This passkey could not be verified. Try again."}""")
                         |> ProgramTest.expectViewHas [ text "This passkey could not be verified. Try again." ]
+            , test "keeps adding a passkey when a removal finishes meanwhile" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.clickButton "Add a passkey"
+                        |> ProgramTest.clickButton "Remove Apple Passwords"
+                        |> ProgramTest.clickButton "Remove"
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/passkeys/oKGio6SlpqeoqaqrrK2urw" "{}"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyCreated
+                        |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/passkeys"
             ]
         , describe "Verify"
             [ test "asks who the link is for, with the token from the fragment" <|

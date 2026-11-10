@@ -366,8 +366,9 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   other way: the page then says so and offers "Try again" (`SessionRetried`), and sends
   nobody to `/auth/signin`. `/dashboard` shows the account, a sign-out button and the
   Passkeys card (`Api.passkeys`, "Add a passkey", and a bin on each row that asks
-  "Remove ...?" before `Api.deletePasskey`: `model.confirming` holds the id meanwhile), and
-  sends a signed-out visitor to `/auth/signin`.
+  "Remove ...?" before `Api.deletePasskey`: the `Dashboard` page holds the list, the id
+  being confirmed and why a removal failed, and a removal never touches `model.ceremony`),
+  and sends a signed-out visitor to `/auth/signin`.
 - `/auth/signup` and `/auth/signin` post `Api.signUp` and `Api.signIn`, then say to
   check the inbox. `/auth/signin` also has "Sign in with a passkey": post
   `Api.passkeySignInOptions`, the `GetPasskey` port (`navigator.credentials.get`, any
@@ -377,7 +378,7 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   only on the button's click posts `Api.verify`. Both send the token with
   `ApiClient.withToken`, as a bearer token. A sign-in then goes to `/dashboard`; a new
   account is first offered a passkey ("Not now" skips it).
-- A passkey takes three steps, `model.ceremony` being `Creating` meanwhile: post
+- A passkey takes three steps, `model.ceremony` being `Waiting` meanwhile: post
   `Api.passkeyOptions`, send them to `main.ts` through the `CreatePasskey` port
   (`navigator.credentials.create`), and post what comes back in `PasskeyCreated` to
   `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`

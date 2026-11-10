@@ -47,9 +47,7 @@ type alias Model =
     , systemDark : Bool
     , health : Health
     , session : Session
-    , passkeys : Passkeys
     , ceremony : Ceremony
-    , confirming : Maybe String
     , page : Page
     }
 
@@ -58,6 +56,13 @@ type Passkeys
     = Loading
     | Loaded (List Api.Passkey)
     | NotLoaded String
+
+
+type alias DashboardState =
+    { passkeys : Passkeys
+    , confirming : Maybe String
+    , removalProblem : Maybe String
+    }
 
 
 type Ceremony
@@ -77,7 +82,7 @@ type Page
     | SignUp SignUpForm
     | SignIn SignInForm
     | Verify Verification
-    | Dashboard
+    | Dashboard DashboardState
     | NotFound
 
 
@@ -95,17 +100,25 @@ type alias SignInForm =
 
 
 type FormState
+    = Open Attempt
+    | Sent
+
+
+type Attempt
     = Editing (Maybe String)
     | Submitting
-    | Sent
 
 
 type Verification
     = Looking String
-    | Found String Api.Verification (Maybe String)
-    | Accepting String Api.Verification
+    | Found String Api.Verification Acceptance
     | Accepted
     | Refused String
+
+
+type Acceptance
+    = Asking
+    | Accepting
 
 
 type Health
@@ -126,9 +139,7 @@ init flags url =
         , systemDark = systemDark
         , health = Checking Nothing
         , session = Unknown
-        , passkeys = Loading
         , ceremony = Resting Nothing
-        , confirming = Nothing
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
@@ -138,20 +149,20 @@ open : Url -> Model -> ( Model, Effect )
 open url opened =
     let
         model =
-            { opened | ceremony = Resting Nothing, confirming = Nothing }
+            { opened | ceremony = Resting Nothing }
     in
     case ( url.path, url.fragment ) of
         ( "/", _ ) ->
             ( { model | page = Home, health = Checking (lastReport model.health) }, checkHealth )
 
         ( "/auth/signup", _ ) ->
-            ( { model | page = SignUp { email = "", username = "", state = Editing Nothing } }, NoEffect )
+            ( { model | page = SignUp { email = "", username = "", state = Open (Editing Nothing) } }, NoEffect )
 
         ( "/auth/signin", _ ) ->
-            ( { model | page = SignIn { email = "", state = Editing Nothing } }, NoEffect )
+            ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
 
         ( "/dashboard", _ ) ->
-            ( { model | page = Dashboard, passkeys = Loading }
+            ( { model | page = Dashboard { passkeys = Loading, confirming = Nothing, removalProblem = Nothing } }
             , if model.session == SignedOut then
                 PushUrl "/auth/signin"
 
@@ -306,11 +317,11 @@ update msg model =
         SignUpSubmitted ->
             case model.page of
                 SignUp signUp ->
-                    if signUp.state == Submitting then
+                    if signUp.state == Open Submitting then
                         ( model, NoEffect )
 
                     else
-                        ( { model | page = SignUp { signUp | state = Submitting } }
+                        ( { model | page = SignUp { signUp | state = Open Submitting } }
                         , Request
                             (ApiClient.request Api.signUp
                                 { email = signUp.email, username = signUp.username }
@@ -329,7 +340,7 @@ update msg model =
                             { signUp | state = Sent }
 
                         Err error ->
-                            { signUp | state = Editing (Just (ApiClient.errorToString error)) }
+                            { signUp | state = Open (Editing (Just (ApiClient.errorToString error))) }
                 )
                 model
             , NoEffect
@@ -342,7 +353,7 @@ update msg model =
                         | page =
                             case result of
                                 Ok found ->
-                                    Verify (Found token found Nothing)
+                                    Verify (Found token found Asking)
 
                                 Err error ->
                                     Verify (Refused (ApiClient.errorToString error))
@@ -355,8 +366,8 @@ update msg model =
 
         VerificationAccepted ->
             case model.page of
-                Verify (Found token found _) ->
-                    ( { model | page = Verify (Accepting token found) }
+                Verify (Found token found Asking) ->
+                    ( { model | page = Verify (Found token found Accepting) }
                     , Request
                         (ApiClient.request Api.verify () GotAccount
                             |> ApiClient.withToken token
@@ -368,14 +379,14 @@ update msg model =
 
         GotAccount result ->
             case ( model.page, result ) of
-                ( Verify (Accepting _ found), Ok account ) ->
+                ( Verify (Found _ found Accepting), Ok account ) ->
                     if found.newAccount then
                         ( { model | session = SignedIn account, page = Verify Accepted }, NoEffect )
 
                     else
                         ( { model | session = SignedIn account }, PushUrl "/dashboard" )
 
-                ( Verify (Accepting _ _), Err error ) ->
+                ( Verify (Found _ _ Accepting), Err error ) ->
                     ( { model | page = Verify (Refused (ApiClient.errorToString error)) }, NoEffect )
 
                 _ ->
@@ -391,27 +402,29 @@ update msg model =
 
                 ( _, ApiClient.Unauthorized _ ) ->
                     ( { model | session = SignedOut }
-                    , if model.page == Dashboard then
-                        PushUrl "/auth/signin"
+                    , case model.page of
+                        Dashboard _ ->
+                            PushUrl "/auth/signin"
 
-                      else
-                        NoEffect
+                        _ ->
+                            NoEffect
                     )
 
                 ( _, ApiClient.Failed message ) ->
                     ( { model | session = Unavailable message }, NoEffect )
 
         SessionRetried ->
-            if model.page == Dashboard then
-                ( { model | session = Unknown, passkeys = Loading }
-                , Batch
-                    [ Request (ApiClient.request Api.session () GotSession)
-                    , Request (ApiClient.request Api.passkeys () GotPasskeys)
-                    ]
-                )
+            case model.page of
+                Dashboard dashboard ->
+                    ( { model | session = Unknown, page = Dashboard { dashboard | passkeys = Loading } }
+                    , Batch
+                        [ Request (ApiClient.request Api.session () GotSession)
+                        , Request (ApiClient.request Api.passkeys () GotPasskeys)
+                        ]
+                    )
 
-            else
-                ( { model | session = Unknown }, Request (ApiClient.request Api.session () GotSession) )
+                _ ->
+                    ( { model | session = Unknown }, Request (ApiClient.request Api.session () GotSession) )
 
         SignInEmailChanged email ->
             ( editSignIn (\signIn -> { signIn | email = email }) model, NoEffect )
@@ -419,11 +432,11 @@ update msg model =
         SignInSubmitted ->
             case model.page of
                 SignIn signIn ->
-                    if signIn.state == Submitting then
+                    if signIn.state == Open Submitting then
                         ( model, NoEffect )
 
                     else
-                        ( { model | page = SignIn { signIn | state = Submitting } }
+                        ( { model | page = SignIn { signIn | state = Open Submitting } }
                         , Request (ApiClient.request Api.signIn { email = signIn.email } GotSignIn)
                         )
 
@@ -438,7 +451,7 @@ update msg model =
                             { signIn | state = Sent }
 
                         Err error ->
-                            { signIn | state = Editing (Just (ApiClient.errorToString error)) }
+                            { signIn | state = Open (Editing (Just (ApiClient.errorToString error))) }
                 )
                 model
             , NoEffect
@@ -454,10 +467,12 @@ update msg model =
             ( model, NoEffect )
 
         GotPasskeys (Ok found) ->
-            ( { model | passkeys = Loaded found }, NoEffect )
+            ( editDashboard (\dashboard -> { dashboard | passkeys = Loaded found }) model, NoEffect )
 
         GotPasskeys (Err error) ->
-            ( { model | passkeys = NotLoaded (ApiClient.errorToString error) }, NoEffect )
+            ( editDashboard (\dashboard -> { dashboard | passkeys = NotLoaded (ApiClient.errorToString error) }) model
+            , NoEffect
+            )
 
         PasskeyRequested ->
             if model.ceremony == Waiting then
@@ -475,16 +490,16 @@ update msg model =
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         GotPasskey (Ok passkey) ->
-            ( { model
-                | ceremony = Resting Nothing
-                , passkeys =
-                    case model.passkeys of
-                        Loaded found ->
-                            Loaded (found ++ [ passkey ])
+            ( { model | ceremony = Resting Nothing }
+                |> editDashboard
+                    (\dashboard ->
+                        case dashboard.passkeys of
+                            Loaded found ->
+                                { dashboard | passkeys = Loaded (found ++ [ passkey ]) }
 
-                        _ ->
-                            model.passkeys
-              }
+                            _ ->
+                                dashboard
+                    )
             , if model.page == Verify Accepted then
                 PushUrl "/dashboard"
 
@@ -496,32 +511,34 @@ update msg model =
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         PasskeyRemoveRequested id ->
-            ( { model | confirming = Just id }, NoEffect )
+            ( editDashboard (\dashboard -> { dashboard | confirming = Just id }) model, NoEffect )
 
         PasskeyRemoveCancelled ->
-            ( { model | confirming = Nothing }, NoEffect )
+            ( editDashboard (\dashboard -> { dashboard | confirming = Nothing }) model, NoEffect )
 
         PasskeyRemoveConfirmed id ->
-            ( { model | confirming = Nothing }
+            ( editDashboard (\dashboard -> { dashboard | confirming = Nothing, removalProblem = Nothing }) model
             , Request (ApiClient.request (Api.deletePasskey id) () (GotPasskeyRemoved id))
             )
 
         GotPasskeyRemoved id (Ok ()) ->
-            ( { model
-                | ceremony = Resting Nothing
-                , passkeys =
-                    case model.passkeys of
+            ( editDashboard
+                (\dashboard ->
+                    case dashboard.passkeys of
                         Loaded found ->
-                            Loaded (List.filter (\passkey -> passkey.id /= id) found)
+                            { dashboard | passkeys = Loaded (List.filter (\passkey -> passkey.id /= id) found) }
 
                         _ ->
-                            model.passkeys
-              }
+                            dashboard
+                )
+                model
             , NoEffect
             )
 
         GotPasskeyRemoved _ (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
+            ( editDashboard (\dashboard -> { dashboard | removalProblem = Just (ApiClient.errorToString error) }) model
+            , NoEffect
+            )
 
         PasskeySignInRequested ->
             if model.ceremony == Waiting then
@@ -604,6 +621,16 @@ editSignUp edit model =
             model
 
 
+editDashboard : (DashboardState -> DashboardState) -> Model -> Model
+editDashboard edit model =
+    case model.page of
+        Dashboard dashboard ->
+            { model | page = Dashboard (edit dashboard) }
+
+        _ ->
+            model
+
+
 
 -- EFFECTS
 
@@ -675,7 +702,7 @@ title page =
         SignIn _ ->
             "Sign in · pixo"
 
-        Dashboard ->
+        Dashboard _ ->
             "Dashboard · pixo"
 
         Verify _ ->
@@ -716,10 +743,10 @@ viewPage model =
         SignIn signIn ->
             [ viewSignIn model.ceremony signIn ]
 
-        Dashboard ->
+        Dashboard dashboard ->
             case model.session of
                 SignedIn _ ->
-                    [ viewDashboard model.session, viewPasskeys model ]
+                    [ viewDashboard model.session, viewPasskeys model.ceremony dashboard ]
 
                 _ ->
                     [ viewDashboard model.session ]
@@ -770,15 +797,12 @@ viewSignUp signUp =
                 ("We sent a link to " ++ String.trim signUp.email ++ ". It works once and expires in 15 minutes.")
                 []
 
-        Editing problem ->
-            viewSignUpForm signUp False problem
-
-        Submitting ->
-            viewSignUpForm signUp True Nothing
+        Open attempt ->
+            viewSignUpForm signUp attempt
 
 
-viewSignUpForm : SignUpForm -> Bool -> Maybe String -> Html Msg
-viewSignUpForm signUp busy problem =
+viewSignUpForm : SignUpForm -> Attempt -> Html Msg
+viewSignUpForm signUp attempt =
     Card.new
         |> Card.title [ text "Create your account" ]
         |> Card.description [ text "We'll email you a link to confirm it's you. No password needed." ]
@@ -810,21 +834,8 @@ viewSignUpForm signUp busy problem =
                             ]
                         , Field.description [] [ text "3 to 20 letters, digits or underscores." ]
                         ]
-                    , case problem of
-                        Just reason ->
-                            Field.error [] [ text reason ]
-
-                        Nothing ->
-                            text ""
-                    , Button.new
-                        |> Button.text
-                            (if busy then
-                                "Sending the link…"
-
-                             else
-                                "Email me a link"
-                            )
-                        |> Button.toHtml [ type_ "submit", disabled busy ]
+                    , viewAttemptProblem attempt
+                    , viewSubmit attempt
                     ]
                 ]
             ]
@@ -841,15 +852,12 @@ viewSignIn ceremony signIn =
                 ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It works once and expires in 15 minutes.")
                 []
 
-        Editing problem ->
-            viewSignInForm ceremony signIn False problem
-
-        Submitting ->
-            viewSignInForm ceremony signIn True Nothing
+        Open attempt ->
+            viewSignInForm ceremony signIn attempt
 
 
-viewSignInForm : Ceremony -> SignInForm -> Bool -> Maybe String -> Html Msg
-viewSignInForm ceremony signIn busy problem =
+viewSignInForm : Ceremony -> SignInForm -> Attempt -> Html Msg
+viewSignInForm ceremony signIn attempt =
     Card.new
         |> Card.title [ text "Sign in" ]
         |> Card.description [ text "We'll email you a link. No password needed." ]
@@ -868,21 +876,8 @@ viewSignInForm ceremony signIn busy problem =
                             , onInput SignInEmailChanged
                             ]
                         ]
-                    , case problem of
-                        Just reason ->
-                            Field.error [] [ text reason ]
-
-                        Nothing ->
-                            text ""
-                    , Button.new
-                        |> Button.text
-                            (if busy then
-                                "Sending the link…"
-
-                             else
-                                "Email me a link"
-                            )
-                        |> Button.toHtml [ type_ "submit", disabled busy ]
+                    , viewAttemptProblem attempt
+                    , viewSubmit attempt
                     , Field.separator [ class "*:data-[slot=field-separator-content]:bg-card" ] [ text "Or" ]
                     , viewProblem ceremony
                     , Button.new
@@ -938,8 +933,8 @@ viewDashboard session =
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewPasskeys : Model -> Html Msg
-viewPasskeys { passkeys, ceremony, confirming } =
+viewPasskeys : Ceremony -> DashboardState -> Html Msg
+viewPasskeys ceremony { passkeys, confirming, removalProblem } =
     Card.new
         |> Card.title [ text "Passkeys" ]
         |> Card.description [ text "Your fingerprint, face or screen lock, instead of an emailed link." ]
@@ -965,6 +960,12 @@ viewPasskeys { passkeys, ceremony, confirming } =
                     NotLoaded message ->
                         p [ class "text-sm text-muted-foreground" ] [ text message ]
                 , viewProblem ceremony
+                , case removalProblem of
+                    Just reason ->
+                        Field.error [] [ text reason ]
+
+                    Nothing ->
+                        text ""
                 ]
             ]
         |> Card.toHtml [ class "w-full max-w-sm" ]
@@ -1018,6 +1019,30 @@ viewProblem ceremony =
             text ""
 
 
+viewAttemptProblem : Attempt -> Html Msg
+viewAttemptProblem attempt =
+    case attempt of
+        Editing (Just reason) ->
+            Field.error [] [ text reason ]
+
+        _ ->
+            text ""
+
+
+viewSubmit : Attempt -> Html Msg
+viewSubmit attempt =
+    Button.new
+        |> Button.text
+            (case attempt of
+                Submitting ->
+                    "Sending the link…"
+
+                Editing _ ->
+                    "Email me a link"
+            )
+        |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting) ]
+
+
 viewVerification : Ceremony -> Verification -> Html Msg
 viewVerification ceremony verification =
     case verification of
@@ -1033,11 +1058,8 @@ viewVerification ceremony verification =
                     ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
-        Found _ found problem ->
-            viewFound found False problem
-
-        Accepting _ found ->
-            viewFound found True Nothing
+        Found _ found acceptance ->
+            viewFound found acceptance
 
         Accepted ->
             Card.new
@@ -1065,8 +1087,8 @@ viewVerification ceremony verification =
             notice "This link didn't work" reason [ link "/auth/signup" "Sign up again" ]
 
 
-viewFound : Api.Verification -> Bool -> Maybe String -> Html Msg
-viewFound found busy problem =
+viewFound : Api.Verification -> Acceptance -> Html Msg
+viewFound found acceptance =
     Card.new
         |> Card.title
             [ text
@@ -1086,12 +1108,6 @@ viewFound found busy problem =
                     , dt [ class "text-muted-foreground" ] [ text "Email" ]
                     , dd [ class "font-medium break-all" ] [ text found.email ]
                     ]
-                , case problem of
-                    Just reason ->
-                        Field.error [] [ text reason ]
-
-                    Nothing ->
-                        text ""
                 , Button.new
                     |> Button.text
                         (if found.newAccount then
@@ -1100,7 +1116,7 @@ viewFound found busy problem =
                          else
                             "Sign in"
                         )
-                    |> Button.toHtml [ onClick VerificationAccepted, disabled busy ]
+                    |> Button.toHtml [ onClick VerificationAccepted, disabled (acceptance == Accepting) ]
                 , p [ class "text-sm text-muted-foreground" ]
                     [ text "Not you? Close this page: nothing happens until you accept." ]
                 ]
