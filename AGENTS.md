@@ -11,7 +11,8 @@ on Postgres (Neon), deployed to Vercel.
 | `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs)                  |
 | `tests/`           | elm-test suites for `client/` and `shared/` (see [Tests](#tests))          |
 | `api/tests/`       | elm-test suites for the server                                             |
-| `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon` driver                   |
+| `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon` driver, `Brevo` client   |
+| `api/src/Email/`   | Email templates (see [Email](#email))                                      |
 | `api/_ts/`         | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin) |
 | `api/index.ts`     | The only Vercel Function                                                   |
 | `migrations/`      | Graphile Migrate (`.gmrc`)                                                 |
@@ -122,6 +123,8 @@ pull requests and on `main`; it needs no database.
 | `DATABASE_URL`          | Migrations, as the owner; the server takes host and database |
 | `API_DATABASE_PASSWORD` | Server: the password of `api`, the role it connects as       |
 | `NEON_ENDPOINT`         | Server (local proxy instead of Neon), `dev:proxy`'s port     |
+| `BREVO_API_KEY`         | Server: Brevo's API key; empty locally, so nothing is sent   |
+| `EMAIL_FROM`            | Server: the sender's address, verified in Brevo              |
 | `SHADOW_DATABASE_URL`   | `bun db watch` and `commit`                                  |
 | `ROOT_DATABASE_URL`     | `bun db reset`, the proxy's own connection                   |
 
@@ -240,11 +243,24 @@ link or passkey.
 - A `users` row means a proven email: a link carries the `email`, and consuming it creates
   the user. `users.username` is required, so a sign-up link carries the `username` too; a
   sign-in link has none and creates nobody. Its format is server policy.
-- Consuming a sign-up link fails on `users_username_key` when the name was taken
-  meanwhile: the statement rolls back and the link stays. Two sign-up links for one email
-  consumed at the same instant fail the same way, so retry once before answering "taken".
+- `create_sign_in_link(email, ttl_seconds)` does the same for an email that has a user
+  (`sign-in`), and nothing for one that has none (`no-account`).
+- `sign_out(token)` deletes the session of that token: `api` can't filter `sessions` by
+  `token_hash`, which it may not read.
+- `magic_link(token)` reads an unexpired link without using it: its `email`, the
+  `username` (the account's, when the email has one) and `new_account`.
+- `consume_magic_link(token, session_seconds)` deletes the link, creates the user of a
+  sign-up link (`ON CONFLICT DO NOTHING`), starts a session and returns its token once,
+  with an `outcome`: `verified`, `invalid` (used, expired or unknown) or `username-taken`
+  (taken since the link was made: the link is spent, as its username can't change). A
+  second sign-up link for an email that now has a user signs that user in.
 - Tokens are never stored: `token_hash` is `sha256(convert_to($1, 'UTF8'))`, computed by
   Postgres from the token passed as a parameter.
+- `create_sign_up_link(email, username, ttl_seconds)` makes the token (two random UUIDs,
+  as unpadded base64url), stores its hash and returns it once, with an `outcome`:
+  `username-taken` (no link), `sign-in` (the email has a user: a link without a
+  username) or `sign-up`. The username is checked first, so the answer never tells
+  whether an email has an account.
 - WebAuthn values (`credential_id`, `public_key`, `challenge`) are unpadded base64url text,
   as on the wire. `sign_count` is a `bigint`: it arrives as text.
 - The driver can't read, then decide, inside a transaction: every check-then-change is one
@@ -278,9 +294,10 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
 - Work before sign-in or across users is a function: `SECURITY DEFINER`,
   `SET search_path = public, pg_temp`, `REVOKE EXECUTE ... FROM PUBLIC`,
   `GRANT EXECUTE ... TO api`. It runs as the owner, past every policy, so it takes the
-  secret as an argument and filters by it. There are `authenticate`, `rate_limit` and
-  `delete_expired`; consuming a link, passkey sign-in and creating a session are not
-  written yet.
+  secret as an argument and filters by it. There are `authenticate`, `rate_limit`,
+  `create_sign_up_link`, `create_sign_in_link`, `magic_link`, `consume_magic_link`,
+  `sign_out` and `delete_expired`; passkey sign-in is not written yet. `new_token()` is
+  theirs alone: `api` may not execute it.
 - A new table: `ALTER TABLE t ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY`,
   `CREATE POLICY`, `GRANT`, after its `CREATE TABLE` (`DROP TABLE ... CASCADE` drops them
   too), and an index on its user column. Never grant `TRUNCATE`, `REFERENCES` or
@@ -318,8 +335,21 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
 - Calls the server only through `ApiClient.request` with an `Api.Endpoint`, wrapped in the
   `Request` effect; `ApiClient.send` is its `Cmd`. On an error status it decodes
   `Api.errorDecoder`, then the endpoint's response (the health report comes with a 503).
-- The page: the Server card (one row per `Api.checks`, release and region in the
-  footer) and a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
+- A `Browser.application` without the `Navigation.Key` in its model: `main` keeps it
+  beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
+  `open` picks the `Page` from the URL: `/`, `/auth/signup`, `/auth/signin`,
+  `/auth/verify`, `/dashboard`, else `NotFound`. A new page outside `/auth/` needs its
+  rewrite in `vercel.json`.
+- `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
+  or `SignedIn account`. `/dashboard` shows the account and a sign-out button, and sends
+  a signed-out visitor to `/auth/signin`.
+- `/auth/signup` and `/auth/signin` post `Api.signUp` and `Api.signIn`, then say to
+  check the inbox. `/auth/verify#<token>`
+  asks `Api.verification` who the link is for, shows the username and the email, and
+  only on the button's click posts `Api.verify`, then goes to `/dashboard`. Both send
+  the token with `ApiClient.withToken`, as a bearer token.
+- Home: the Server card (one row per `Api.checks`, release and region in the
+  footer) and links to sign up and sign in, or to the dashboard. Every page: a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
   `WriteToLocalStorage` port, read back from the flags).
 - No layout shift while loading: rows come from `Api.checkNames` with `UI.Skeleton`s,
   refreshes keep the last report, an empty footer keeps its height. Name checks only in
@@ -356,8 +386,8 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   request carries its Promise's `resolve` into Elm, which sends it back with the
   response. The Vercel Function and the `app:api` plugin (`dev.ts`) serve `handle`.
 - `init` and `update` return a `Main.Effect`, never a `Cmd`: `Batch`, `SendToJs` (a
-  response or a log) and `Database`, a `Neon.Request` whose message also takes the
-  latency in ms. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
+  response or a log), `Database`, a `Neon.Request` whose message also takes the
+  latency in ms, and `Email`, a `Brevo.Request`. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
   (see [Tests](#tests)).
 - `dev.ts` reloads the server on any `.elm`/`.ts` change in `api/` or `shared/`
   (restarting from `init`); `preview` runs `dist/server/app.js`.
@@ -373,6 +403,33 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   `BYPASSRLS` or a table owner. `output` is a short public reason; the full
   error is only logged, since Postgres messages can name roles and tables. Latency
   includes the hop to Neon and any cold start.
+- `POST /api/auth/signup` (`Api.signUp`, `{ "email", "username" }`) starts a sign-up: it
+  answers 202 with `{}` once the magic link is emailed, and the user exists only when the
+  link is consumed. Three steps, each a `Msg`: both rate limits in one transaction
+  (`magic-link:ip:<x-real-ip>` 10 and `magic-link:email:<email>` 3 per 15 minutes, in that
+  order), `Db.createSignUpLink` (15 minutes), then the `Email` effect.
+- `POST /api/auth/signin` (`Api.signIn`, `{ "email" }`) runs the same steps (`Ask` tells
+  them apart) with `Db.createSignInLink`. An email without an account gets 202 and no
+  email, so the answer doesn't tell; it does come back sooner, without the Brevo call.
+- `GET /api/auth/session` (`Api.session`) answers the account of the `session` cookie,
+  read through `Db.account` (`Db.signedIn`, then the user's own row), or 401.
+  `DELETE /api/auth/session` (`Api.signOut`) runs `Db.signOut` and clears the cookie.
+- Sign-up answers 400 (not that JSON), 422 (`SignUp.validate`: the email's shape; a username
+  of 3 to 20 of `a-z`, `0-9`, `_`; both trimmed and lower-cased), 409 (username taken),
+  429 with `retry-after`, 502 (Brevo failed; the link stays until it expires) and 503 (no
+  database or email, or the database failed). An email that has an account gets 202 and
+  a sign-in link instead.
+- Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
+  reaches no server log. For the same reason the verify routes take it as
+  `authorization: Bearer <token>`, and answer 401 without it.
+- `GET /api/auth/verify` (`Api.verification`) answers `{ email, username, newAccount }`
+  for the link and changes nothing. `POST /api/auth/verify` (`Api.verify`) consumes it:
+  200 with `{ email, username }` and the session in a cookie (`session`, `HttpOnly`,
+  `SameSite=Lax`, 30 days, `Secure` when `origin` is https). Both answer 404 to a link
+  that is used, expired or unknown; the `POST` answers 409 when the username was taken
+  meanwhile.
+  `origin` comes from `app.ts`: `VERCEL_PROJECT_PRODUCTION_URL` in production,
+  `VERCEL_URL` in a preview, else `http://localhost:5173`; never from the request.
 - The report's `releaseId` (`VERCEL_GIT_COMMIT_SHA`, else `VERCEL_DEPLOYMENT_ID`),
   `region` (`VERCEL_REGION`, our own field) and `links.release` (GitHub commit URL from
   `VERCEL_GIT_*`) come from `app.ts`. Off Vercel they are `local`.
@@ -395,6 +452,30 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   `api.eu-central-1.aws.neon.tech`); `Neon.withEndpoint` overrides it (`NEON_ENDPOINT`).
 - The connection string holds the password: server only.
 
+## Email
+
+- `Brevo.elm` posts one transactional email to `https://api.brevo.com/v3/smtp/email`, as
+  Brevo's SDK does: `Brevo.email client message toMsg` returns a `Brevo.Request`, the same
+  record as a `Neon.Request`; `Brevo.send` is its `Task`. `Brevo.client` takes the API
+  key, sent as the `api-key` header: server only.
+- A `Message` has `from`, `to`, `replyTo`, `tags` and `content`: a template's `subject`,
+  `html` and `text`, always sent together. No Brevo-hosted templates, attachments,
+  scheduling or batches.
+- Any 2xx is `Ok { messageId }`. An error status with Brevo's `{ "code", "message" }` is
+  `Rejected { status, code, message }`, anything else `ServerError`. Nothing is retried.
+- A template is a module in `api/src/Email/` with one `email` function from its values
+  to an `Email.Layout.Email`. It lists `Layout` blocks (`Heading`, `Paragraph`, `Button`,
+  `Footnote`) and `Layout.render` writes the HTML and the text from them, escaping every
+  value: never build HTML in a template.
+- Templates: `Email.SignIn` and `Email.SignUp`, for the two kinds of magic link.
+- `Email.configure` (`api/src/Email.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
+  an address verified as a sender in Brevo; its name is `pixo`. Without either the server
+  starts anyway, warns, and `model.email` is an `Err`.
+- `Email.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient,
+  with a 10 s timeout; wrap it in the `Email` effect. The tag names the template
+  (`sign-in`) and shows in Brevo's logs.
+- `POST /api/auth/signup` sends `Email.SignUp`, or `Email.SignIn` (see [Server](#server)).
+
 ## Tests
 
 `bun run test` runs [elm-test](https://github.com/rtfeldman/node-test-runner) in both Elm
@@ -409,20 +490,24 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
 - `simulateEffects` there mirrors `Main.perform`, and `simulateSubscriptions` mirrors
   `main`'s `subscriptions`. Both match `Main.Effect` without a wildcard, so a new variant
   doesn't compile until `perform` and `simulateEffects` handle it.
-- A new endpoint, query or `FromElm` variant needs no new simulation: reuse `Request`,
-  `Database` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
+- A new endpoint, query, email or `FromElm` variant needs no new simulation: reuse
+  `Request`, `Database`, `Email` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
 - Write response bodies and port values as the JSON on the wire, not with the `Api` or
   `Interop` encoders: the test then pins the format the other side relies on.
-- Browser: act as a user does. `clickButton` by its text (the `sr-only` label on an
-  icon-only control), then look for text in the view.
+- Browser: act as a user does. `startAt "/auth/signup"` opens a page; `fillIn` a field by
+  its id and label, `clickButton` by its text (the `sr-only` label on an icon-only
+  control), `clickLink`, then look for text in the view.
 - Server: `request "first" "GET" [ "api", "health" ]` sends a request in through the port.
   Its first argument stands for the Promise's `resolve` and comes back in the response.
-  Neon is the only HTTP call: answer it with `simulateHttpOk "POST" endpoint` and the rows.
+  Neon and Brevo are the only HTTP calls: answer Neon with
+  `simulateHttpOk "POST" endpoint` and the rows, Brevo at `Brevo.endpoint`.
   `advanceTime` moves the clock that `Database` measures latency with.
 - A passing check of outgoing port values clears them: look at logs and responses in one
   `expectSent`, not one after the other.
 - `api/tests/NeonTest.elm` needs no program: a `Neon.Request` is a record, so `.body` is
   what would be sent and `.onResponse` decodes an `Http.Response`.
+- `api/tests/BrevoTest.elm` works the same way; `api/tests/EmailTest.elm` covers `Email`
+  and renders the templates. A new template gets a test that its values reach the HTML and the text.
 - `tests/ApiTest.elm` checks `Api.parse` against `Api.method` and `Api.path` for each
   route in its `routes`: add a new route there.
 
@@ -458,7 +543,8 @@ Marketplace and is connected as the store `pixo`, which manages the variables. K
 - The `api` role is created once on Neon's `main`, in SQL as the owner, because a role made
   in the console, CLI or API is `BYPASSRLS`:
   `CREATE ROLE api LOGIN PASSWORD '<random>'; ALTER ROLE api SET search_path = public, pg_temp;`.
-  Its password is `API_DATABASE_PASSWORD`, a Vercel secret in Production and Preview. A
+  Its password is `API_DATABASE_PASSWORD`, a Vercel secret in Production and Preview, as
+  are `BREVO_API_KEY` and `EMAIL_FROM` (not a secret). A
   branch copies its parent's roles and passwords, so previews need nothing more, unless
   `main` is a protected branch: its children get new passwords. A branch older than the
   role fails its build at `GRANT ... TO api`: reset it as in [Migrations](#migrations).
@@ -468,7 +554,8 @@ Marketplace and is connected as the store `pixo`, which manages the variables. K
   `~/.elm` at once corrupt it ("PROBLEM BUILDING DEPENDENCIES"), and elm-ts-interop still
   exits 0. `types:api` must `cd api`, as elm-ts-interop uses the nearest `elm.json`.
 - `dist/client` is served; `dist/server` is bundled into `api/index.ts`, which every
-  `/api/*` rewrites to (Vercel keeps the original URL in `request.url`). Bun runtime
+  `/api/*` rewrites to (Vercel keeps the original URL in `request.url`). `/auth/*`
+  and `/dashboard` rewrite to `index.html`, for the browser app's pages. Bun runtime
   (`"bunVersion": "1.x"`, beta).
 - Nothing is linked locally (`.vercel` and `.neon` are not committed): pass
   `--scope forkaround --project pixo.pics` to `vercel` and

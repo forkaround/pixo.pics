@@ -1,12 +1,18 @@
 module Main exposing (Effect(..), Model, Msg(..), init, main, update)
 
 import Api
+import Brevo
 import Db
+import Dict
+import Email
+import Email.SignIn
+import Email.SignUp
 import InteropDefinitions as Interop exposing (Request, Response)
 import InteropPorts
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Neon
+import SignUp
 import Task
 import Time
 
@@ -32,6 +38,8 @@ main =
 
 type alias Model =
     { db : Result String Neon.Connection
+    , email : Result String Email.Mailer
+    , origin : String
     , release : Api.Release
     }
 
@@ -43,20 +51,35 @@ init flags =
             let
                 db =
                     Db.connect config
+
+                email =
+                    Email.configure config
             in
             ( { db = db
+              , email = email
+              , origin = config.origin
               , release = { releaseId = config.releaseId, releaseUrl = config.releaseUrl, region = config.region }
               }
-            , case db of
-                Ok connection ->
-                    log Interop.Info ("Sending queries to " ++ Neon.endpoint connection)
+            , Batch
+                [ case db of
+                    Ok connection ->
+                        log Interop.Info ("Sending queries to " ++ Neon.endpoint connection)
 
-                Err problem ->
-                    log Interop.Warn ("No database, so database routes answer 503: " ++ problem)
+                    Err problem ->
+                        log Interop.Warn ("No database, so database routes answer 503: " ++ problem)
+                , case email of
+                    Ok _ ->
+                        NoEffect
+
+                    Err problem ->
+                        log Interop.Warn ("No email, so nothing is sent: " ++ problem)
+                ]
             )
 
         Err problem ->
             ( { db = Err "The server's flags did not decode."
+              , email = Err "The server's flags did not decode."
+              , origin = ""
               , release = { releaseId = Nothing, releaseUrl = Nothing, region = Nothing }
               }
             , log Interop.Error ("Bad flags: " ++ Decode.errorToString problem)
@@ -80,6 +103,28 @@ respond resolver response =
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
     | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error () )
+    | LinkLimited Interop.Resolver Ask (Result Neon.Error ( Db.RateLimit, Db.RateLimit ))
+    | LinkCreated Interop.Resolver Ask (Result Neon.Error Db.Link)
+    | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
+    | SessionFound Interop.Resolver (Result Neon.Error (Maybe Api.Account))
+    | SessionEnded Interop.Resolver (Result Neon.Error ())
+    | VerificationFound Interop.Resolver (Result Neon.Error (Maybe Api.Verification))
+    | VerificationConsumed Interop.Resolver (Result Neon.Error Db.Consumed)
+
+
+type Ask
+    = SignUpAsked Api.SignUp
+    | SignInAsked String
+
+
+askedBy : Ask -> String
+askedBy ask =
+    case ask of
+        SignUpAsked signUp ->
+            signUp.email
+
+        SignInAsked email ->
+            email
 
 
 type Reply
@@ -132,6 +177,164 @@ update msg model =
                 ]
             )
 
+        LinkLimited resolver ask (Ok ( byAddress, byEmail )) ->
+            ( model
+            , case ( retryAfter [ byAddress, byEmail ], model.db ) of
+                ( Just seconds, _ ) ->
+                    respond resolver (tooManyRequests seconds)
+
+                ( Nothing, Ok db ) ->
+                    Database
+                        (Neon.run db
+                            (case ask of
+                                SignUpAsked signUp ->
+                                    Db.createSignUpLink
+                                        { email = signUp.email
+                                        , username = signUp.username
+                                        , ttlSeconds = linkMinutes * 60
+                                        }
+
+                                SignInAsked email ->
+                                    Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 }
+                            )
+                            (\result _ -> LinkCreated resolver ask result)
+                        )
+
+                ( Nothing, Err _ ) ->
+                    respond resolver unavailable
+            )
+
+        LinkLimited resolver _ (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Magic link failed at its rate limits: " ++ Neon.errorToString problem)
+                ]
+            )
+
+        LinkCreated resolver ask (Ok link) ->
+            ( model
+            , case ( link, ask, model.email ) of
+                ( Db.UsernameTaken, _, _ ) ->
+                    respond resolver (error 409 "That username is taken.")
+
+                ( Db.NoAccount, _, _ ) ->
+                    respond resolver accepted
+
+                ( Db.SignUpLink token, SignUpAsked signUp, Ok mailer ) ->
+                    Email
+                        (Email.send mailer
+                            { to = signUp.email, tag = "sign-up" }
+                            (Email.SignUp.email
+                                { url = verifyUrl model token
+                                , username = signUp.username
+                                , expiresInMinutes = linkMinutes
+                                }
+                            )
+                            (LinkSent resolver)
+                        )
+
+                ( Db.SignUpLink _, SignInAsked _, _ ) ->
+                    respond resolver unavailable
+
+                ( Db.SignInLink token, _, Ok mailer ) ->
+                    Email
+                        (Email.send mailer
+                            { to = askedBy ask, tag = "sign-in" }
+                            (Email.SignIn.email
+                                { url = verifyUrl model token
+                                , expiresInMinutes = linkMinutes
+                                }
+                            )
+                            (LinkSent resolver)
+                        )
+
+                ( _, _, Err _ ) ->
+                    respond resolver unavailable
+            )
+
+        LinkCreated resolver _ (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Magic link failed at its link: " ++ Neon.errorToString problem)
+                ]
+            )
+
+        LinkSent resolver (Ok _) ->
+            ( model, respond resolver accepted )
+
+        LinkSent resolver (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver (error 502 "The email could not be sent. Try again.")
+                , log Interop.Error ("Magic link failed at its email: " ++ Brevo.errorToString problem)
+                ]
+            )
+
+        SessionFound resolver (Ok (Just account)) ->
+            ( model, respond resolver (json 200 (Api.encodeResponse Api.session account)) )
+
+        SessionFound resolver (Ok Nothing) ->
+            ( model, respond resolver notSignedIn )
+
+        SessionFound resolver (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Session lookup failed: " ++ Neon.errorToString problem)
+                ]
+            )
+
+        SessionEnded resolver (Ok ()) ->
+            ( model, respond resolver (signedOut model) )
+
+        SessionEnded resolver (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Sign-out failed: " ++ Neon.errorToString problem)
+                ]
+            )
+
+        VerificationFound resolver (Ok (Just found)) ->
+            ( model, respond resolver (json 200 (Api.encodeResponse Api.verification found)) )
+
+        VerificationFound resolver (Ok Nothing) ->
+            ( model, respond resolver invalidLink )
+
+        VerificationFound resolver (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Verification failed at its link: " ++ Neon.errorToString problem)
+                ]
+            )
+
+        VerificationConsumed resolver (Ok (Db.Verified { sessionToken, account })) ->
+            let
+                response =
+                    json 200 (Api.encodeResponse Api.verify account)
+            in
+            ( model
+            , respond resolver
+                { response | headers = ( "set-cookie", sessionCookie model sessionToken ) :: response.headers }
+            )
+
+        VerificationConsumed resolver (Ok Db.InvalidLink) ->
+            ( model, respond resolver invalidLink )
+
+        VerificationConsumed resolver (Ok Db.UsernameTakenMeanwhile) ->
+            ( model, respond resolver (error 409 "That username was taken in the meantime. Sign up again with another.") )
+
+        VerificationConsumed resolver (Err problem) ->
+            ( model
+            , Batch
+                [ respond resolver unavailable
+                , log Interop.Error ("Verification failed at its session: " ++ Neon.errorToString problem)
+                ]
+            )
+
         GotInterop (Err _) ->
             ( model, NoEffect )
 
@@ -145,6 +348,7 @@ type Effect
     | Batch (List Effect)
     | SendToJs Interop.FromElm
     | Database (Neon.Request (Int -> Msg))
+    | Email (Brevo.Request Msg)
 
 
 perform : Effect -> Cmd Msg
@@ -170,6 +374,10 @@ perform effect =
                                         |> Task.map (\end -> toMsg (Time.posixToMillis end - Time.posixToMillis start))
                                 )
                     )
+                |> Task.perform identity
+
+        Email request ->
+            Brevo.send request
                 |> Task.perform identity
 
 
@@ -202,7 +410,7 @@ route model request =
 
 
 handle : Model -> Request -> Api.Route -> ( Model, Reply )
-handle model _ r =
+handle model request r =
     case r of
         Api.GetHealth ->
             ( model
@@ -220,6 +428,241 @@ handle model _ r =
                 Err problem ->
                     Now (health model { status = Api.Fail, latencyMs = Nothing, output = Just ("Not configured: " ++ problem) })
             )
+
+        Api.PostSignUp ->
+            ( model
+            , askForLink model
+                request
+                (Decode.decodeString (Api.bodyDecoder Api.signUp) request.body
+                    |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email and a username.")
+                    |> Result.andThen (SignUp.validate >> Result.mapError (error 422))
+                    |> Result.map SignUpAsked
+                )
+            )
+
+        Api.PostSignIn ->
+            ( model
+            , askForLink model
+                request
+                (Decode.decodeString (Api.bodyDecoder Api.signIn) request.body
+                    |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email.")
+                    |> Result.andThen (.email >> SignUp.validateEmail >> Result.mapError (error 422))
+                    |> Result.map SignInAsked
+                )
+            )
+
+        Api.GetSession ->
+            ( model
+            , case ( model.db, cookieToken request ) of
+                ( Ok db, Just token ) ->
+                    Later
+                        (\resolver ->
+                            Database (Neon.commit db (Db.account token) (\result _ -> SessionFound resolver result))
+                        )
+
+                ( Ok _, Nothing ) ->
+                    Now notSignedIn
+
+                ( Err _, _ ) ->
+                    Now unavailable
+            )
+
+        Api.DeleteSession ->
+            ( model
+            , case ( model.db, cookieToken request ) of
+                ( Ok db, Just token ) ->
+                    Later
+                        (\resolver ->
+                            Database (Neon.run db (Db.signOut token) (\result _ -> SessionEnded resolver result))
+                        )
+
+                ( Ok _, Nothing ) ->
+                    Now (signedOut model)
+
+                ( Err _, _ ) ->
+                    Now unavailable
+            )
+
+        Api.GetVerification ->
+            ( model
+            , withLink model
+                request
+                (\db token resolver ->
+                    Database (Neon.run db (Db.magicLink token) (\result _ -> VerificationFound resolver result))
+                )
+            )
+
+        Api.PostVerification ->
+            ( model
+            , withLink model
+                request
+                (\db token resolver ->
+                    Database
+                        (Neon.run db
+                            (Db.consumeMagicLink { token = token, sessionSeconds = sessionSeconds })
+                            (\result _ -> VerificationConsumed resolver result)
+                        )
+                )
+            )
+
+
+askForLink : Model -> Request -> Result Response Ask -> Reply
+askForLink model request parsed =
+    case ( model.db, model.email, parsed ) of
+        ( Ok db, Ok _, Ok ask ) ->
+            Later
+                (\resolver ->
+                    Database
+                        (Neon.commit db
+                            (Neon.transaction Tuple.pair
+                                |> Neon.with
+                                    (Db.rateLimit
+                                        { key = "magic-link:ip:" ++ clientAddress request
+                                        , limit = 10
+                                        , windowSeconds = 900
+                                        }
+                                    )
+                                |> Neon.with
+                                    (Db.rateLimit
+                                        { key = "magic-link:email:" ++ askedBy ask
+                                        , limit = 3
+                                        , windowSeconds = 900
+                                        }
+                                    )
+                            )
+                            (\result _ -> LinkLimited resolver ask result)
+                        )
+                )
+
+        ( Ok _, Ok _, Err response ) ->
+            Now response
+
+        _ ->
+            Now unavailable
+
+
+cookieToken : Request -> Maybe String
+cookieToken request =
+    Dict.get "cookie" request.headers
+        |> Maybe.withDefault ""
+        |> String.split ";"
+        |> List.map String.trim
+        |> List.filter (String.startsWith "session=")
+        |> List.head
+        |> Maybe.map (String.dropLeft 8)
+        |> Maybe.andThen
+            (\token ->
+                if String.isEmpty token then
+                    Nothing
+
+                else
+                    Just token
+            )
+
+
+withLink : Model -> Request -> (Neon.Connection -> String -> Interop.Resolver -> Effect) -> Reply
+withLink model request toEffect =
+    case ( model.db, bearer request ) of
+        ( Ok db, Just token ) ->
+            Later (toEffect db token)
+
+        ( Ok _, Nothing ) ->
+            let
+                response =
+                    error 401 "Send the link's token as a bearer token."
+            in
+            Now { response | headers = ( "www-authenticate", "Bearer" ) :: response.headers }
+
+        ( Err _, _ ) ->
+            Now unavailable
+
+
+bearer : Request -> Maybe String
+bearer request =
+    Dict.get "authorization" request.headers
+        |> Maybe.andThen
+            (\value ->
+                if String.toLower (String.left 7 value) == "bearer " then
+                    Just (String.trim (String.dropLeft 7 value))
+
+                else
+                    Nothing
+            )
+        |> Maybe.andThen
+            (\token ->
+                if String.isEmpty token then
+                    Nothing
+
+                else
+                    Just token
+            )
+
+
+verifyUrl : Model -> String -> String
+verifyUrl model token =
+    model.origin ++ "/auth/verify#" ++ token
+
+
+sessionSeconds : Int
+sessionSeconds =
+    30 * 24 * 60 * 60
+
+
+sessionCookie : Model -> String -> String
+sessionCookie model token =
+    cookie model token sessionSeconds
+
+
+cookie : Model -> String -> Int -> String
+cookie model token maxAge =
+    String.join "; "
+        (List.concat
+            [ [ "session=" ++ token
+              , "Path=/"
+              , "Max-Age=" ++ String.fromInt maxAge
+              , "HttpOnly"
+              , "SameSite=Lax"
+              ]
+            , if String.startsWith "https://" model.origin then
+                [ "Secure" ]
+
+              else
+                []
+            ]
+        )
+
+
+linkMinutes : Int
+linkMinutes =
+    15
+
+
+clientAddress : Request -> String
+clientAddress request =
+    case Dict.get "x-real-ip" request.headers of
+        Just address ->
+            String.trim address
+
+        Nothing ->
+            Dict.get "x-forwarded-for" request.headers
+                |> Maybe.andThen (String.split "," >> List.head)
+                |> Maybe.map String.trim
+                |> Maybe.withDefault "unknown"
+
+
+retryAfter : List Db.RateLimit -> Maybe Int
+retryAfter limits =
+    limits
+        |> List.filterMap
+            (\limit ->
+                case limit of
+                    Db.Allowed _ ->
+                        Nothing
+
+                    Db.Limited limited ->
+                        Just limited.retryAfter
+            )
+        |> List.maximum
 
 
 healthTimeout : Float
@@ -285,6 +728,44 @@ health model check =
     , headers = [ ( "content-type", "application/health+json" ), ( "cache-control", "no-store" ) ]
     , body = Encode.encode 0 (Api.encodeResponse Api.health report)
     }
+
+
+unavailable : Response
+unavailable =
+    error 503 "Not available right now. Try again later."
+
+
+accepted : Response
+accepted =
+    json 202 (Api.encodeResponse Api.signUp ())
+
+
+notSignedIn : Response
+notSignedIn =
+    error 401 "Not signed in."
+
+
+signedOut : Model -> Response
+signedOut model =
+    let
+        response =
+            json 200 (Api.encodeResponse Api.signOut ())
+    in
+    { response | headers = ( "set-cookie", cookie model "" 0 ) :: response.headers }
+
+
+invalidLink : Response
+invalidLink =
+    error 404 "This link is not valid any more. Sign up again to get a new one."
+
+
+tooManyRequests : Int -> Response
+tooManyRequests seconds =
+    let
+        response =
+            error 429 "Too many attempts. Try again later."
+    in
+    { response | headers = ( "retry-after", String.fromInt seconds ) :: response.headers }
 
 
 error : Int -> String -> Response

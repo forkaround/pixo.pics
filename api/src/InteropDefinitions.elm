@@ -36,6 +36,9 @@ type Level
 type alias Flags =
     { databaseUrl : Maybe String
     , neonEndpoint : Maybe String
+    , brevoApiKey : Maybe String
+    , emailFrom : Maybe String
+    , origin : String
     , releaseId : Maybe String
     , releaseUrl : Maybe String
     , region : Maybe String
@@ -153,9 +156,12 @@ resolverEncoder =
 
 flags : Decoder Flags
 flags =
-    TsDecode.map5 Flags
+    TsDecode.map8 Flags
         (TsDecode.field "databaseUrl" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "neonEndpoint" (TsDecode.nullable TsDecode.string))
+        (TsDecode.field "brevoApiKey" (TsDecode.nullable TsDecode.string))
+        (TsDecode.field "emailFrom" (TsDecode.nullable TsDecode.string))
+        (TsDecode.field "origin" TsDecode.string)
         (TsDecode.field "releaseId" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "releaseUrl" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "region" (TsDecode.nullable TsDecode.string))

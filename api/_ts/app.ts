@@ -35,10 +35,19 @@ const databaseUrl = () => {
   return url.href;
 };
 
+const origin = () => {
+  const { VERCEL_ENV, VERCEL_PROJECT_PRODUCTION_URL, VERCEL_URL } = process.env;
+  const host = VERCEL_ENV === "production" ? VERCEL_PROJECT_PRODUCTION_URL : VERCEL_URL;
+  return host ? `https://${host}` : "http://localhost:5173";
+};
+
 const app = Elm.Main.init({
   flags: {
     databaseUrl: databaseUrl(),
     neonEndpoint: process.env.NEON_ENDPOINT ?? null,
+    brevoApiKey: process.env.BREVO_API_KEY || null,
+    emailFrom: process.env.EMAIL_FROM || null,
+    origin: origin(),
     releaseId: process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || local,
     releaseUrl: commitUrl(),
     region: process.env.VERCEL_REGION || local,

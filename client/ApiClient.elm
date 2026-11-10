@@ -1,4 +1,4 @@
-module ApiClient exposing (Request, request, send)
+module ApiClient exposing (Request, request, send, withToken)
 
 import Api exposing (Endpoint)
 import Http
@@ -8,6 +8,7 @@ import Json.Encode as Encode
 
 type alias Request msg =
     { method : String
+    , headers : List ( String, String )
     , url : String
     , body : Maybe Encode.Value
     , onResponse : Http.Response String -> msg
@@ -21,17 +22,23 @@ request endpoint body toMsg =
             Api.route endpoint
     in
     { method = Api.methodToString (Api.method route)
+    , headers = []
     , url = Api.toString route
     , body = Api.encodeBody endpoint body
     , onResponse = toMsg << fromResponse (Api.responseDecoder endpoint)
     }
 
 
+withToken : String -> Request msg -> Request msg
+withToken token request_ =
+    { request_ | headers = ( "authorization", "Bearer " ++ token ) :: request_.headers }
+
+
 send : Request msg -> Cmd msg
-send { method, url, body, onResponse } =
+send { method, headers, url, body, onResponse } =
     Http.request
         { method = method
-        , headers = []
+        , headers = List.map (\( name, value ) -> Http.header name value) headers
         , url = url
         , body =
             case body of

@@ -1,12 +1,17 @@
 module Api exposing
-    ( Check
+    ( Account
+    , Check
     , Endpoint
     , Health
     , Method(..)
     , Problem(..)
     , Release
     , Route(..)
+    , SignIn
+    , SignUp
     , Status(..)
+    , Verification
+    , bodyDecoder
     , checkNames
     , checks
     , encodeBody
@@ -21,7 +26,13 @@ module Api exposing
     , path
     , responseDecoder
     , route
+    , session
+    , signIn
+    , signOut
+    , signUp
     , toString
+    , verification
+    , verify
     )
 
 import Json.Decode as Decode exposing (Decoder)
@@ -35,11 +46,18 @@ import Url
 
 type Route
     = GetHealth
+    | PostSignUp
+    | PostSignIn
+    | GetSession
+    | DeleteSession
+    | GetVerification
+    | PostVerification
 
 
 type Method
     = Get
     | Post
+    | Delete
 
 
 type Problem
@@ -53,6 +71,24 @@ method r =
         GetHealth ->
             Get
 
+        PostSignUp ->
+            Post
+
+        PostSignIn ->
+            Post
+
+        GetSession ->
+            Get
+
+        DeleteSession ->
+            Delete
+
+        GetVerification ->
+            Get
+
+        PostVerification ->
+            Post
+
 
 path : Route -> List String
 path r =
@@ -64,6 +100,24 @@ segments r =
     case r of
         GetHealth ->
             [ "health" ]
+
+        PostSignUp ->
+            [ "auth", "signup" ]
+
+        PostSignIn ->
+            [ "auth", "signin" ]
+
+        GetSession ->
+            [ "auth", "session" ]
+
+        DeleteSession ->
+            [ "auth", "session" ]
+
+        GetVerification ->
+            [ "auth", "verify" ]
+
+        PostVerification ->
+            [ "auth", "verify" ]
 
 
 toString : Route -> String
@@ -79,6 +133,9 @@ methodToString m =
 
         Post ->
             "POST"
+
+        Delete ->
+            "DELETE"
 
 
 parse : String -> List String -> Result Problem Route
@@ -109,6 +166,18 @@ routesAt rest =
     case rest of
         [ "health" ] ->
             [ GetHealth ]
+
+        [ "auth", "signup" ] ->
+            [ PostSignUp ]
+
+        [ "auth", "signin" ] ->
+            [ PostSignIn ]
+
+        [ "auth", "session" ] ->
+            [ GetSession, DeleteSession ]
+
+        [ "auth", "verify" ] ->
+            [ GetVerification, PostVerification ]
 
         _ ->
             []
@@ -142,6 +211,36 @@ health =
     Endpoint { route = GetHealth, body = NoBody (), response = healthCodec }
 
 
+signUp : Endpoint SignUp ()
+signUp =
+    Endpoint { route = PostSignUp, body = JsonBody signUpCodec, response = emptyCodec }
+
+
+signIn : Endpoint SignIn ()
+signIn =
+    Endpoint { route = PostSignIn, body = JsonBody signInCodec, response = emptyCodec }
+
+
+session : Endpoint () Account
+session =
+    Endpoint { route = GetSession, body = NoBody (), response = accountCodec }
+
+
+signOut : Endpoint () ()
+signOut =
+    Endpoint { route = DeleteSession, body = NoBody (), response = emptyCodec }
+
+
+verification : Endpoint () Verification
+verification =
+    Endpoint { route = GetVerification, body = NoBody (), response = verificationCodec }
+
+
+verify : Endpoint () Account
+verify =
+    Endpoint { route = PostVerification, body = NoBody (), response = accountCodec }
+
+
 route : Endpoint body response -> Route
 route (Endpoint e) =
     e.route
@@ -155,6 +254,16 @@ encodeBody (Endpoint e) value =
 
         JsonBody codec ->
             Just (codec.encode value)
+
+
+bodyDecoder : Endpoint body response -> Decoder body
+bodyDecoder (Endpoint e) =
+    case e.body of
+        NoBody value ->
+            Decode.succeed value
+
+        JsonBody codec ->
+            codec.decoder
 
 
 encodeResponse : Endpoint body response -> response -> Encode.Value
@@ -179,6 +288,91 @@ errorDecoder =
 
 
 -- PAYLOADS
+
+
+type alias SignUp =
+    { email : String
+    , username : String
+    }
+
+
+signUpCodec : Codec SignUp
+signUpCodec =
+    { encode =
+        \s ->
+            Encode.object
+                [ ( "email", Encode.string s.email )
+                , ( "username", Encode.string s.username )
+                ]
+    , decoder =
+        Decode.map2 SignUp
+            (Decode.field "email" Decode.string)
+            (Decode.field "username" Decode.string)
+    }
+
+
+type alias SignIn =
+    { email : String
+    }
+
+
+signInCodec : Codec SignIn
+signInCodec =
+    { encode = \s -> Encode.object [ ( "email", Encode.string s.email ) ]
+    , decoder = Decode.map SignIn (Decode.field "email" Decode.string)
+    }
+
+
+type alias Verification =
+    { email : String
+    , username : String
+    , newAccount : Bool
+    }
+
+
+verificationCodec : Codec Verification
+verificationCodec =
+    { encode =
+        \v ->
+            Encode.object
+                [ ( "email", Encode.string v.email )
+                , ( "username", Encode.string v.username )
+                , ( "newAccount", Encode.bool v.newAccount )
+                ]
+    , decoder =
+        Decode.map3 Verification
+            (Decode.field "email" Decode.string)
+            (Decode.field "username" Decode.string)
+            (Decode.field "newAccount" Decode.bool)
+    }
+
+
+type alias Account =
+    { email : String
+    , username : String
+    }
+
+
+accountCodec : Codec Account
+accountCodec =
+    { encode =
+        \a ->
+            Encode.object
+                [ ( "email", Encode.string a.email )
+                , ( "username", Encode.string a.username )
+                ]
+    , decoder =
+        Decode.map2 Account
+            (Decode.field "email" Decode.string)
+            (Decode.field "username" Decode.string)
+    }
+
+
+emptyCodec : Codec ()
+emptyCodec =
+    { encode = \() -> Encode.object []
+    , decoder = Decode.succeed ()
+    }
 
 
 type Status

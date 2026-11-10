@@ -14,7 +14,6 @@ const getStoredTheme = () => {
 //-- INIT
 
 const app = Elm.Main.init({
-  node: document.getElementById("app"),
   flags: {
     theme: getStoredTheme(),
     systemDark: media.matches,
