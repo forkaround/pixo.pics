@@ -621,7 +621,9 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   No test checks a real signature: `MainTest` answers `VerifySignature` itself, with
   `SignatureChecked`.
 - `tests/ApiTest.elm` checks `Api.parse` against `Api.method` and `Api.path` for each
-  route in its `routes`: add a new route there.
+  route its `next` reaches, starting at `GetHealth`. `next` matches `Api.Route` without a
+  wildcard, so a new route doesn't compile there until it is named: chain it after the
+  last one.
 
 ## Vercel
 

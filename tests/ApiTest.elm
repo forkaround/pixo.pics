@@ -151,21 +151,63 @@ suite =
 
 routes : List Api.Route
 routes =
-    [ Api.GetHealth
-    , Api.PostSignUp
-    , Api.PostSignIn
-    , Api.GetVerification
-    , Api.PostVerification
-    , Api.GetSession
-    , Api.DeleteSession
-    , Api.GetPasskeys
-    , Api.PostPasskey
-    , Api.PostPasskeyOptions
-    , Api.DeletePasskey "oKGio6SlpqeoqaqrrK2urw"
-    , Api.DeletePasskey "options"
-    , Api.PostPasskeySignIn
-    , Api.PostPasskeySignInOptions
-    ]
+    collect (Just Api.GetHealth) []
+
+
+collect : Maybe Api.Route -> List Api.Route -> List Api.Route
+collect route found =
+    case route of
+        Just current ->
+            collect (next current) (current :: found)
+
+        Nothing ->
+            List.reverse found
+
+
+next : Api.Route -> Maybe Api.Route
+next route =
+    case route of
+        Api.GetHealth ->
+            Just Api.PostSignUp
+
+        Api.PostSignUp ->
+            Just Api.PostSignIn
+
+        Api.PostSignIn ->
+            Just Api.GetVerification
+
+        Api.GetVerification ->
+            Just Api.PostVerification
+
+        Api.PostVerification ->
+            Just Api.GetSession
+
+        Api.GetSession ->
+            Just Api.DeleteSession
+
+        Api.DeleteSession ->
+            Just Api.GetPasskeys
+
+        Api.GetPasskeys ->
+            Just Api.PostPasskey
+
+        Api.PostPasskey ->
+            Just Api.PostPasskeyOptions
+
+        Api.PostPasskeyOptions ->
+            Just (Api.DeletePasskey "oKGio6SlpqeoqaqrrK2urw")
+
+        Api.DeletePasskey "oKGio6SlpqeoqaqrrK2urw" ->
+            Just (Api.DeletePasskey "options")
+
+        Api.DeletePasskey _ ->
+            Just Api.PostPasskeySignIn
+
+        Api.PostPasskeySignIn ->
+            Just Api.PostPasskeySignInOptions
+
+        Api.PostPasskeySignInOptions ->
+            Nothing
 
 
 assertion : Api.Assertion
