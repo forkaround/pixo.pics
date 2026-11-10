@@ -118,6 +118,54 @@ suite =
                             "/api/auth/signin"
                             (response 429 """{"error":"Too many attempts. Try again later."}""")
                         |> ProgramTest.expectViewHas [ text "Too many attempts. Try again later." ]
+            , test "signs in with a passkey: a challenge, the browser, then the dashboard" <|
+                \() ->
+                    startAt "/auth/signin" defaultFlags
+                        |> ProgramTest.clickButton "Sign in with a passkey"
+                        |> ProgramTest.simulateHttpOk "POST"
+                            "/api/auth/signin/passkey/options"
+                            """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map3 (\tag challenge rpId -> ( tag, challenge, rpId ))
+                                (Decode.field "tag" Decode.string)
+                                (Decode.at [ "data", "challenge" ] Decode.string)
+                                (Decode.at [ "data", "rpId" ] Decode.string)
+                            )
+                            (Expect.equal [ ( "GetPasskey", "Y2hhbGxlbmdl", "pixo.pics" ) ])
+                        |> ProgramTest.ensureViewHas [ text "Waiting for your device…" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyUsed
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "/api/auth/signin/passkey"
+                            (.body
+                                >> Expect.equal
+                                    """{"id":"oKGio6SlpqeoqaqrrK2urw","clientDataJSON":"eyJ0eXBlIjo","authenticatorData":"hc4asGtQ","signature":"MEQCIQCA"}"""
+                            )
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/signin/passkey" account
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/dashboard")
+                        |> ProgramTest.expectViewHas [ text "Welcome, ada" ]
+            , test "says so when no passkey is used" <|
+                \() ->
+                    startAt "/auth/signin" defaultFlags
+                        |> ProgramTest.clickButton "Sign in with a passkey"
+                        |> ProgramTest.simulateHttpOk "POST"
+                            "/api/auth/signin/passkey/options"
+                            """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
+                        |> ProgramTest.ensureViewHas [ text "No passkey was used. Try again when you're ready." ]
+                        |> ProgramTest.expectViewHas [ text "Sign in with a passkey" ]
+            , test "shows why the server refused the passkey" <|
+                \() ->
+                    startAt "/auth/signin" defaultFlags
+                        |> ProgramTest.clickButton "Sign in with a passkey"
+                        |> ProgramTest.simulateHttpOk "POST"
+                            "/api/auth/signin/passkey/options"
+                            """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyUsed
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "/api/auth/signin/passkey"
+                            (response 401 """{"error":"This passkey could not be verified. Try again, or sign in with an emailed link."}""")
+                        |> ProgramTest.expectViewHas
+                            [ text "This passkey could not be verified. Try again, or sign in with an emailed link." ]
             , test "links to sign-up, and back" <|
                 \() ->
                     startAt "/auth/signin" defaultFlags
@@ -170,6 +218,122 @@ suite =
                         |> ProgramTest.clickLink "Sign in" "/auth/signin"
                         |> ProgramTest.expectViewHas [ text "We'll email you a link. No password needed." ]
             ]
+        , describe "Passkeys"
+            [ test "lists the account's passkeys on the dashboard" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.ensureViewHas [ text "Apple Passwords" ]
+                        |> ProgramTest.expectViewHas [ text "Added 2026-11-10" ]
+            , test "calls a passkey just that when nothing says what made it" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET"
+                            "/api/auth/passkeys"
+                            """[{"id":"oKGio6SlpqeoqaqrrK2urw","name":null,"createdAt":"2026-11-10T09:30:00Z"}]"""
+                        |> ProgramTest.expectViewHas [ text "Passkey" ]
+            , test "removes a passkey once that is confirmed" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.clickButton "Remove Apple Passwords"
+                        |> ProgramTest.ensureViewHas [ text "Remove Apple Passwords?" ]
+                        |> ProgramTest.ensureHttpRequests "DELETE"
+                            "/api/auth/passkeys/oKGio6SlpqeoqaqrrK2urw"
+                            (List.length >> Expect.equal 0)
+                        |> ProgramTest.clickButton "Remove"
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/passkeys/oKGio6SlpqeoqaqrrK2urw" "{}"
+                        |> ProgramTest.expectViewHas [ text "No passkeys yet." ]
+            , test "keeps a passkey when its removal is cancelled" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.clickButton "Remove Apple Passwords"
+                        |> ProgramTest.clickButton "Cancel"
+                        |> ProgramTest.ensureViewHas [ text "Added 2026-11-10" ]
+                        |> ProgramTest.expectHttpRequests "DELETE"
+                            "/api/auth/passkeys/oKGio6SlpqeoqaqrrK2urw"
+                            (List.length >> Expect.equal 0)
+            , test "keeps a passkey the server did not remove, and says why" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.clickButton "Remove Apple Passwords"
+                        |> ProgramTest.clickButton "Remove"
+                        |> ProgramTest.simulateHttpResponse "DELETE"
+                            "/api/auth/passkeys/oKGio6SlpqeoqaqrrK2urw"
+                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                        |> ProgramTest.ensureViewHas [ text "Not available right now. Try again later." ]
+                        |> ProgramTest.expectViewHas [ text "Added 2026-11-10" ]
+            , test "says so when the account has none" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" "[]"
+                        |> ProgramTest.expectViewHas [ text "No passkeys yet." ]
+            , test "asks the server for options, the browser for a passkey, then saves it" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" "[]"
+                        |> ProgramTest.clickButton "Add a passkey"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            passkeyRequest
+                            (Expect.equal
+                                [ { tag = "CreatePasskey"
+                                  , challenge = "Y2hhbGxlbmdl"
+                                  , rp = "pixo.pics"
+                                  , user = ( "7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11", "ada@example.com", "ada" )
+                                  , algorithms = [ -8, -7, -257 ]
+                                  , excludeCredentials = [ "b2xkZXI" ]
+                                  }
+                                ]
+                            )
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyCreated
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "/api/auth/passkeys"
+                            (.body
+                                >> Expect.equal
+                                    """{"clientDataJSON":"eyJ0eXBlIjo","attestationObject":"o2NmbXRkbm9uZQ","transports":["internal","hybrid"]}"""
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/passkeys" (response 201 passkey)
+                        |> ProgramTest.ensureViewHasNot [ text "No passkeys yet." ]
+                        |> ProgramTest.expectViewHas [ text "Added 2026-11-10" ]
+            , test "says so when the passkey is not created" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickButton "Add a passkey"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
+                        |> ProgramTest.ensureViewHas [ text "The passkey was not created. Try again when you're ready." ]
+                        |> ProgramTest.expectHttpRequests "POST" "/api/auth/passkeys" (List.length >> Expect.equal 0)
+            , test "says so when the device already has one" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickButton "Add a passkey"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "InvalidStateError")
+                        |> ProgramTest.expectViewHas [ text "This device already has a passkey for this account." ]
+            , test "shows why the server refused the passkey" <|
+                \() ->
+                    startAt "/dashboard" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickButton "Add a passkey"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyCreated
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "/api/auth/passkeys"
+                            (response 422 """{"error":"This passkey could not be verified. Try again."}""")
+                        |> ProgramTest.expectViewHas [ text "This passkey could not be verified. Try again." ]
+            ]
         , describe "Verify"
             [ test "asks who the link is for, with the token from the fragment" <|
                 \() ->
@@ -194,10 +358,38 @@ suite =
                             "/api/auth/verify"
                             (.headers >> Expect.equal [ ( "authorization", "Bearer Zm9vYmFy" ) ])
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/verify" account
+                        |> ProgramTest.ensureViewHas [ text "Your account is ready" ]
+                        |> ProgramTest.clickLink "Not now" "/dashboard"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/dashboard")
                         |> ProgramTest.ensureViewHas [ text "Welcome, ada" ]
                         |> ProgramTest.expectViewHas [ text "Signed in as ada@example.com" ]
-            , test "offers to sign in when the email has an account" <|
+            , test "offers a passkey to a new account, then opens the dashboard" <|
+                \() ->
+                    startAt "/auth/verify#Zm9vYmFy" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/verify" newAccount
+                        |> ProgramTest.clickButton "Create my account"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/verify" account
+                        |> ProgramTest.clickButton "Create a passkey"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.ensureViewHas [ text "Waiting for your device…" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyCreated
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/passkeys" (response 201 passkey)
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/dashboard")
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.expectViewHas [ text "Added 2026-11-10" ]
+            , test "lets a new account try again when the passkey is not created" <|
+                \() ->
+                    startAt "/auth/verify#Zm9vYmFy" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/verify" newAccount
+                        |> ProgramTest.clickButton "Create my account"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/verify" account
+                        |> ProgramTest.clickButton "Create a passkey"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
+                        |> ProgramTest.ensureViewHas [ text "The passkey was not created. Try again when you're ready." ]
+                        |> ProgramTest.clickButton "Create a passkey"
+                        |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/passkeys/options"
+            , test "signs in to an account the email has, straight to the dashboard" <|
                 \() ->
                     startAt "/auth/verify#Zm9vYmFy" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET"
@@ -205,7 +397,9 @@ suite =
                             """{"email":"ada@example.com","username":"ada","newAccount":false}"""
                         |> ProgramTest.ensureViewHas [ text "Sign in to this account?" ]
                         |> ProgramTest.clickButton "Sign in"
-                        |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/verify"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/verify" account
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/dashboard")
+                        |> ProgramTest.expectViewHas [ text "Welcome, ada" ]
             , test "says so when the link is not valid any more" <|
                 \() ->
                     startAt "/auth/verify#Zm9vYmFy" defaultFlags
@@ -369,6 +563,80 @@ localStorageWrite =
         (Decode.field "tag" Decode.string)
         (Decode.at [ "data", "key" ] Decode.string)
         (Decode.at [ "data", "value" ] Decode.string)
+
+
+type alias PasskeyRequest =
+    { tag : String
+    , challenge : String
+    , rp : String
+    , user : ( String, String, String )
+    , algorithms : List Int
+    , excludeCredentials : List String
+    }
+
+
+passkeyRequest : Decode.Decoder PasskeyRequest
+passkeyRequest =
+    Decode.map6 PasskeyRequest
+        (Decode.field "tag" Decode.string)
+        (Decode.at [ "data", "challenge" ] Decode.string)
+        (Decode.at [ "data", "rp", "id" ] Decode.string)
+        (Decode.at [ "data", "user" ]
+            (Decode.map3 (\id name displayName -> ( id, name, displayName ))
+                (Decode.field "id" Decode.string)
+                (Decode.field "name" Decode.string)
+                (Decode.field "displayName" Decode.string)
+            )
+        )
+        (Decode.at [ "data", "algorithms" ] (Decode.list Decode.int))
+        (Decode.at [ "data", "excludeCredentials" ] (Decode.list Decode.string))
+
+
+passkeyCreated : Encode.Value
+passkeyCreated =
+    Encode.object
+        [ ( "tag", Encode.string "PasskeyCreated" )
+        , ( "clientDataJSON", Encode.string "eyJ0eXBlIjo" )
+        , ( "attestationObject", Encode.string "o2NmbXRkbm9uZQ" )
+        , ( "transports", Encode.list Encode.string [ "internal", "hybrid" ] )
+        ]
+
+
+passkeyUsed : Encode.Value
+passkeyUsed =
+    Encode.object
+        [ ( "tag", Encode.string "PasskeyUsed" )
+        , ( "id", Encode.string "oKGio6SlpqeoqaqrrK2urw" )
+        , ( "clientDataJSON", Encode.string "eyJ0eXBlIjo" )
+        , ( "authenticatorData", Encode.string "hc4asGtQ" )
+        , ( "signature", Encode.string "MEQCIQCA" )
+        ]
+
+
+passkeyFailed : String -> Encode.Value
+passkeyFailed name =
+    Encode.object
+        [ ( "tag", Encode.string "PasskeyFailed" )
+        , ( "error", Encode.string name )
+        ]
+
+
+passkey : String
+passkey =
+    """{"id":"oKGio6SlpqeoqaqrrK2urw","name":"Apple Passwords","createdAt":"2026-11-10T09:30:00Z"}"""
+
+
+passkeyOptions : String
+passkeyOptions =
+    """
+    {
+      "challenge": "Y2hhbGxlbmdl",
+      "rp": { "id": "pixo.pics", "name": "pixo" },
+      "user": { "id": "7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11", "name": "ada@example.com", "displayName": "ada" },
+      "algorithms": [-8, -7, -257],
+      "excludeCredentials": ["b2xkZXI"]
+    }
+    """
 
 
 account : String

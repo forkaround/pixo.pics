@@ -108,6 +108,31 @@ $$;
 
 
 --
+-- Name: create_authentication_challenge(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.create_authentication_challenge(p_ttl_seconds integer) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_challenge text;
+BEGIN
+  IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 THEN
+    RAISE EXCEPTION 'create_authentication_challenge: challenge must last at least 1 second, got %', p_ttl_seconds
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  INSERT INTO webauthn_challenges (challenge, ceremony, expires_at)
+  VALUES (new_token(), 'authentication', now() + p_ttl_seconds * interval '1 second')
+  RETURNING challenge INTO v_challenge;
+
+  RETURN v_challenge;
+END;
+$$;
+
+
+--
 -- Name: create_sign_in_link(text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -272,6 +297,20 @@ $$;
 
 
 --
+-- Name: passkey_public_key(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.passkey_public_key(p_credential_id text) RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT p.public_key
+  FROM passkeys AS p
+  WHERE p.credential_id = p_credential_id;
+$$;
+
+
+--
 -- Name: rate_limit(text, integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -331,6 +370,64 @@ BEGIN
       ceil(extract(epoch FROM COALESCE(v_tat, v_now) + v_interval - v_burst - v_now))
     )::integer;
   END IF;
+
+  RETURN NEXT;
+END;
+$$;
+
+
+--
+-- Name: sign_in_with_passkey(text, text, bigint, boolean, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sign_in_with_passkey(p_challenge text, p_credential_id text, p_sign_count bigint, p_backed_up boolean, p_session_seconds integer) RETURNS TABLE(outcome text, session_token text, email text, username text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_user_id uuid;
+BEGIN
+  IF p_session_seconds IS NULL OR p_session_seconds < 1 THEN
+    RAISE EXCEPTION 'sign_in_with_passkey: session must last at least 1 second, got %', p_session_seconds
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  DELETE FROM webauthn_challenges AS c
+  WHERE c.challenge = p_challenge AND c.ceremony = 'authentication' AND c.expires_at > now();
+
+  IF NOT FOUND THEN
+    outcome := 'no-challenge';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  UPDATE passkeys AS p
+  SET sign_count = p_sign_count,
+      backed_up = p.backup_eligible AND p_backed_up,
+      last_used_at = now()
+  WHERE p.credential_id = p_credential_id
+    AND (p_sign_count > p.sign_count OR (p_sign_count = 0 AND p.sign_count = 0))
+  RETURNING p.user_id INTO v_user_id;
+
+  IF NOT FOUND THEN
+    outcome := 'no-passkey';
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  SELECT u.email, u.username INTO email, username
+  FROM users AS u
+  WHERE u.id = v_user_id;
+
+  outcome := 'signed-in';
+  session_token := new_token();
+
+  INSERT INTO sessions (token_hash, user_id, expires_at)
+  VALUES (
+    sha256(convert_to(session_token, 'UTF8')),
+    v_user_id,
+    now() + p_session_seconds * interval '1 second'
+  );
 
   RETURN NEXT;
 END;
@@ -691,6 +788,14 @@ GRANT ALL ON FUNCTION public.consume_magic_link(p_token text, p_session_seconds 
 
 
 --
+-- Name: FUNCTION create_authentication_challenge(p_ttl_seconds integer); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.create_authentication_challenge(p_ttl_seconds integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.create_authentication_challenge(p_ttl_seconds integer) TO api;
+
+
+--
 -- Name: FUNCTION create_sign_in_link(p_email text, p_ttl_seconds integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -730,11 +835,27 @@ REVOKE ALL ON FUNCTION public.new_token() FROM PUBLIC;
 
 
 --
+-- Name: FUNCTION passkey_public_key(p_credential_id text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.passkey_public_key(p_credential_id text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.passkey_public_key(p_credential_id text) TO api;
+
+
+--
 -- Name: FUNCTION rate_limit(p_key text, p_limit integer, p_window_seconds integer); Type: ACL; Schema: public; Owner: -
 --
 
 REVOKE ALL ON FUNCTION public.rate_limit(p_key text, p_limit integer, p_window_seconds integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.rate_limit(p_key text, p_limit integer, p_window_seconds integer) TO api;
+
+
+--
+-- Name: FUNCTION sign_in_with_passkey(p_challenge text, p_credential_id text, p_sign_count bigint, p_backed_up boolean, p_session_seconds integer); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.sign_in_with_passkey(p_challenge text, p_credential_id text, p_sign_count bigint, p_backed_up boolean, p_session_seconds integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.sign_in_with_passkey(p_challenge text, p_credential_id text, p_sign_count bigint, p_backed_up boolean, p_session_seconds integer) TO api;
 
 
 --

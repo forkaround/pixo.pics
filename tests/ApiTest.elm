@@ -27,6 +27,10 @@ suite =
                         \() ->
                             Api.parse "DELETE" [ "api", "auth", "verify" ]
                                 |> Expect.equal (Err (Api.MethodNotAllowed [ Api.Get, Api.Post ]))
+                   , test "tells a path from the longer one that starts with it" <|
+                        \() ->
+                            Api.parse "GET" [ "api", "auth", "passkeys", "options" ]
+                                |> Expect.equal (Err (Api.MethodNotAllowed [ Api.Post, Api.Delete ]))
                    , test "finds nothing at an unknown path" <|
                         \() ->
                             Api.parse "GET" [ "api", "nowhere" ]
@@ -81,6 +85,60 @@ suite =
                         |> Decode.decodeValue (Api.responseDecoder Api.verify)
                         |> Expect.equal (Ok { email = "ada@example.com", username = "ada" })
             ]
+        , describe "passkeys"
+            [ test "decodes what it encodes" <|
+                \() ->
+                    Api.encodeResponse Api.passkeys [ passkey, { passkey | name = Nothing } ]
+                        |> Decode.decodeValue (Api.responseDecoder Api.passkeys)
+                        |> Expect.equal (Ok [ passkey, { passkey | name = Nothing } ])
+            ]
+        , describe "passkeySignInOptions"
+            [ test "decodes what it encodes" <|
+                \() ->
+                    Api.encodeResponse Api.passkeySignInOptions { challenge = "Y2hhbGxlbmdl", rpId = "pixo.pics" }
+                        |> Decode.decodeValue (Api.responseDecoder Api.passkeySignInOptions)
+                        |> Expect.equal (Ok { challenge = "Y2hhbGxlbmdl", rpId = "pixo.pics" })
+            ]
+        , describe "passkeySignIn"
+            [ test "sends what the passkey signed as JSON" <|
+                \() ->
+                    Api.encodeBody Api.passkeySignIn assertion
+                        |> Maybe.map (Encode.encode 0)
+                        |> Expect.equal
+                            (Just """{"id":"oKGio6SlpqeoqaqrrK2urw","clientDataJSON":"eyJ0eXBlIjo","authenticatorData":"hc4asGtQ","signature":"MEQCIQCA"}""")
+            , test "decodes the body it encodes" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.passkeySignIn)
+                        """{"id":"oKGio6SlpqeoqaqrrK2urw","clientDataJSON":"eyJ0eXBlIjo","authenticatorData":"hc4asGtQ","signature":"MEQCIQCA"}"""
+                        |> Expect.equal (Ok assertion)
+            ]
+        , describe "passkeyOptions"
+            [ test "decodes what it encodes" <|
+                \() ->
+                    Api.encodeResponse Api.passkeyOptions passkeyOptions
+                        |> Decode.decodeValue (Api.responseDecoder Api.passkeyOptions)
+                        |> Expect.equal (Ok passkeyOptions)
+            ]
+        , describe "addPasskey"
+            [ test "sends what the browser made as JSON" <|
+                \() ->
+                    Api.encodeBody Api.addPasskey
+                        { clientDataJSON = "eyJ0eXBlIjo", attestationObject = "o2NmbXRkbm9uZQ", transports = [ "internal" ] }
+                        |> Maybe.map (Encode.encode 0)
+                        |> Expect.equal
+                            (Just """{"clientDataJSON":"eyJ0eXBlIjo","attestationObject":"o2NmbXRkbm9uZQ","transports":["internal"]}""")
+            , test "decodes the body it encodes" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.addPasskey)
+                        """{"clientDataJSON":"eyJ0eXBlIjo","attestationObject":"o2NmbXRkbm9uZQ","transports":["internal"]}"""
+                        |> Expect.equal
+                            (Ok { clientDataJSON = "eyJ0eXBlIjo", attestationObject = "o2NmbXRkbm9uZQ", transports = [ "internal" ] })
+            , test "answers with the passkey" <|
+                \() ->
+                    Api.encodeResponse Api.addPasskey passkey
+                        |> Encode.encode 0
+                        |> Expect.equal """{"id":"oKGio6SlpqeoqaqrrK2urw","name":"Apple Passwords","createdAt":"2026-11-10T09:30:00Z"}"""
+            ]
         , describe "health"
             [ test "decodes what it encodes" <|
                 \() ->
@@ -100,7 +158,38 @@ routes =
     , Api.PostVerification
     , Api.GetSession
     , Api.DeleteSession
+    , Api.GetPasskeys
+    , Api.PostPasskey
+    , Api.PostPasskeyOptions
+    , Api.DeletePasskey "oKGio6SlpqeoqaqrrK2urw"
+    , Api.DeletePasskey "options"
+    , Api.PostPasskeySignIn
+    , Api.PostPasskeySignInOptions
     ]
+
+
+assertion : Api.Assertion
+assertion =
+    { id = "oKGio6SlpqeoqaqrrK2urw"
+    , clientDataJSON = "eyJ0eXBlIjo"
+    , authenticatorData = "hc4asGtQ"
+    , signature = "MEQCIQCA"
+    }
+
+
+passkey : Api.Passkey
+passkey =
+    { id = "oKGio6SlpqeoqaqrrK2urw", name = Just "Apple Passwords", createdAt = "2026-11-10T09:30:00Z" }
+
+
+passkeyOptions : Api.PasskeyOptions
+passkeyOptions =
+    { challenge = "Y2hhbGxlbmdl"
+    , rp = { id = "pixo.pics", name = "pixo" }
+    , user = { id = "7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11", name = "ada@example.com", displayName = "ada" }
+    , algorithms = [ -8, -7, -257 ]
+    , excludeCredentials = [ "oKGio6SlpqeoqaqrrK2urw" ]
+    }
 
 
 report : Api.Health

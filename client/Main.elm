@@ -47,8 +47,22 @@ type alias Model =
     , systemDark : Bool
     , health : Health
     , session : Session
+    , passkeys : Passkeys
+    , ceremony : Ceremony
+    , confirming : Maybe String
     , page : Page
     }
+
+
+type Passkeys
+    = Loading
+    | Loaded (List Api.Passkey)
+    | NotLoaded String
+
+
+type Ceremony
+    = Resting (Maybe String)
+    | Waiting
 
 
 type Session
@@ -89,6 +103,7 @@ type Verification
     = Looking String
     | Found String Api.Verification (Maybe String)
     | Accepting String Api.Verification
+    | Accepted
     | Refused String
 
 
@@ -110,13 +125,20 @@ init flags url =
         , systemDark = systemDark
         , health = Checking Nothing
         , session = Unknown
+        , passkeys = Loading
+        , ceremony = Resting Nothing
+        , confirming = Nothing
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
 
 
 open : Url -> Model -> ( Model, Effect )
-open url model =
+open url opened =
+    let
+        model =
+            { opened | ceremony = Resting Nothing, confirming = Nothing }
+    in
     case ( url.path, url.fragment ) of
         ( "/", _ ) ->
             ( { model | page = Home, health = Checking (lastReport model.health) }, checkHealth )
@@ -128,12 +150,12 @@ open url model =
             ( { model | page = SignIn { email = "", state = Editing Nothing } }, NoEffect )
 
         ( "/dashboard", _ ) ->
-            ( { model | page = Dashboard }
+            ( { model | page = Dashboard, passkeys = Loading }
             , if model.session == SignedOut then
                 PushUrl "/auth/signin"
 
               else
-                NoEffect
+                Request (ApiClient.request Api.passkeys () GotPasskeys)
             )
 
         ( "/auth/verify", Just token ) ->
@@ -202,6 +224,17 @@ type Msg
     | GotSignIn (Result String ())
     | SignOutClicked
     | GotSignOut (Result String ())
+    | GotPasskeys (Result String (List Api.Passkey))
+    | PasskeyRequested
+    | GotPasskeyOptions (Result String Api.PasskeyOptions)
+    | GotPasskey (Result String Api.Passkey)
+    | PasskeyRemoveRequested String
+    | PasskeyRemoveCancelled
+    | PasskeyRemoveConfirmed String
+    | GotPasskeyRemoved String (Result String ())
+    | PasskeySignInRequested
+    | GotSignInOptions (Result String Api.SignInOptions)
+    | GotPasskeySignIn (Result String Api.Account)
 
 
 update : Msg -> Model -> ( Model, Effect )
@@ -210,7 +243,38 @@ update msg model =
         GotInterop (Ok (Interop.SystemThemeChanged systemDark)) ->
             ( { model | systemDark = systemDark }, NoEffect )
 
-        GotInterop _ ->
+        GotInterop (Ok (Interop.PasskeyCreated attestation)) ->
+            if model.ceremony == Waiting then
+                ( model, Request (ApiClient.request Api.addPasskey attestation GotPasskey) )
+
+            else
+                ( model, NoEffect )
+
+        GotInterop (Ok (Interop.PasskeyUsed assertion)) ->
+            if model.ceremony == Waiting then
+                ( model, Request (ApiClient.request Api.passkeySignIn assertion GotPasskeySignIn) )
+
+            else
+                ( model, NoEffect )
+
+        GotInterop (Ok (Interop.PasskeyFailed name)) ->
+            ( { model
+                | ceremony =
+                    Resting
+                        (Just
+                            (case model.page of
+                                SignIn _ ->
+                                    signInProblem name
+
+                                _ ->
+                                    passkeyProblem name
+                            )
+                        )
+              }
+            , NoEffect
+            )
+
+        GotInterop (Err _) ->
             ( model, NoEffect )
 
         GotHealth (Ok health) ->
@@ -302,8 +366,12 @@ update msg model =
 
         GotAccount result ->
             case ( model.page, result ) of
-                ( Verify (Accepting _ _), Ok account ) ->
-                    ( { model | session = SignedIn account }, PushUrl "/dashboard" )
+                ( Verify (Accepting _ found), Ok account ) ->
+                    if found.newAccount then
+                        ( { model | session = SignedIn account, page = Verify Accepted }, NoEffect )
+
+                    else
+                        ( { model | session = SignedIn account }, PushUrl "/dashboard" )
 
                 ( Verify (Accepting _ _), Err message ) ->
                     ( { model | page = Verify (Refused message) }, NoEffect )
@@ -368,6 +436,97 @@ update msg model =
         GotSignOut (Err _) ->
             ( model, NoEffect )
 
+        GotPasskeys (Ok found) ->
+            ( { model | passkeys = Loaded found }, NoEffect )
+
+        GotPasskeys (Err message) ->
+            ( { model | passkeys = NotLoaded message }, NoEffect )
+
+        PasskeyRequested ->
+            if model.ceremony == Waiting then
+                ( model, NoEffect )
+
+            else
+                ( { model | ceremony = Waiting }
+                , Request (ApiClient.request Api.passkeyOptions () GotPasskeyOptions)
+                )
+
+        GotPasskeyOptions (Ok options) ->
+            ( model, SendToJs (Interop.CreatePasskey options) )
+
+        GotPasskeyOptions (Err message) ->
+            ( { model | ceremony = Resting (Just message) }, NoEffect )
+
+        GotPasskey (Ok passkey) ->
+            ( { model
+                | ceremony = Resting Nothing
+                , passkeys =
+                    case model.passkeys of
+                        Loaded found ->
+                            Loaded (found ++ [ passkey ])
+
+                        _ ->
+                            model.passkeys
+              }
+            , if model.page == Verify Accepted then
+                PushUrl "/dashboard"
+
+              else
+                NoEffect
+            )
+
+        GotPasskey (Err message) ->
+            ( { model | ceremony = Resting (Just message) }, NoEffect )
+
+        PasskeyRemoveRequested id ->
+            ( { model | confirming = Just id }, NoEffect )
+
+        PasskeyRemoveCancelled ->
+            ( { model | confirming = Nothing }, NoEffect )
+
+        PasskeyRemoveConfirmed id ->
+            ( { model | confirming = Nothing }
+            , Request (ApiClient.request (Api.deletePasskey id) () (GotPasskeyRemoved id))
+            )
+
+        GotPasskeyRemoved id (Ok ()) ->
+            ( { model
+                | ceremony = Resting Nothing
+                , passkeys =
+                    case model.passkeys of
+                        Loaded found ->
+                            Loaded (List.filter (\passkey -> passkey.id /= id) found)
+
+                        _ ->
+                            model.passkeys
+              }
+            , NoEffect
+            )
+
+        GotPasskeyRemoved _ (Err message) ->
+            ( { model | ceremony = Resting (Just message) }, NoEffect )
+
+        PasskeySignInRequested ->
+            if model.ceremony == Waiting then
+                ( model, NoEffect )
+
+            else
+                ( { model | ceremony = Waiting }
+                , Request (ApiClient.request Api.passkeySignInOptions () GotSignInOptions)
+                )
+
+        GotSignInOptions (Ok options) ->
+            ( model, SendToJs (Interop.GetPasskey options) )
+
+        GotSignInOptions (Err message) ->
+            ( { model | ceremony = Resting (Just message) }, NoEffect )
+
+        GotPasskeySignIn (Ok account) ->
+            ( { model | session = SignedIn account }, PushUrl "/dashboard" )
+
+        GotPasskeySignIn (Err message) ->
+            ( { model | ceremony = Resting (Just message) }, NoEffect )
+
         ThemeSelected theme ->
             ( { model | theme = theme }
             , SendToJs
@@ -377,6 +536,35 @@ update msg model =
                     }
                 )
             )
+
+
+passkeyProblem : String -> String
+passkeyProblem name =
+    case name of
+        "NotAllowedError" ->
+            "The passkey was not created. Try again when you're ready."
+
+        "InvalidStateError" ->
+            "This device already has a passkey for this account."
+
+        "NotSupportedError" ->
+            "This browser can't create passkeys."
+
+        _ ->
+            "The passkey could not be created."
+
+
+signInProblem : String -> String
+signInProblem name =
+    case name of
+        "NotAllowedError" ->
+            "No passkey was used. Try again when you're ready."
+
+        "NotSupportedError" ->
+            "This browser can't use passkeys."
+
+        _ ->
+            "The passkey could not be used."
 
 
 editSignIn : (SignInForm -> SignInForm) -> Model -> Model
@@ -504,13 +692,18 @@ viewPage model =
             [ viewSignUp signUp ]
 
         SignIn signIn ->
-            [ viewSignIn signIn ]
+            [ viewSignIn model.ceremony signIn ]
 
         Dashboard ->
-            [ viewDashboard model.session ]
+            case model.session of
+                SignedIn _ ->
+                    [ viewDashboard model.session, viewPasskeys model ]
+
+                _ ->
+                    [ viewDashboard model.session ]
 
         Verify verification ->
-            [ viewVerification verification ]
+            [ viewVerification model.ceremony verification ]
 
         NotFound ->
             [ notice "Not found" "There is nothing at this address." [ link "/" "Go home" ] ]
@@ -609,8 +802,8 @@ viewSignUpForm signUp busy problem =
         |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewSignIn : SignInForm -> Html Msg
-viewSignIn signIn =
+viewSignIn : Ceremony -> SignInForm -> Html Msg
+viewSignIn ceremony signIn =
     case signIn.state of
         Sent ->
             notice "Check your inbox"
@@ -618,14 +811,14 @@ viewSignIn signIn =
                 []
 
         Editing problem ->
-            viewSignInForm signIn False problem
+            viewSignInForm ceremony signIn False problem
 
         Submitting ->
-            viewSignInForm signIn True Nothing
+            viewSignInForm ceremony signIn True Nothing
 
 
-viewSignInForm : SignInForm -> Bool -> Maybe String -> Html Msg
-viewSignInForm signIn busy problem =
+viewSignInForm : Ceremony -> SignInForm -> Bool -> Maybe String -> Html Msg
+viewSignInForm ceremony signIn busy problem =
     Card.new
         |> Card.title [ text "Sign in" ]
         |> Card.description [ text "We'll email you a link. No password needed." ]
@@ -659,6 +852,19 @@ viewSignInForm signIn busy problem =
                                 "Email me a link"
                             )
                         |> Button.toHtml [ type_ "submit", disabled busy ]
+                    , Field.separator [] [ text "Or" ]
+                    , viewProblem ceremony
+                    , Button.new
+                        |> Button.text
+                            (if ceremony == Waiting then
+                                "Waiting for your device…"
+
+                             else
+                                "Sign in with a passkey"
+                            )
+                        |> Button.outline
+                        |> Button.startIcon (Phosphor.key Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                        |> Button.toHtml [ type_ "button", onClick PasskeySignInRequested, disabled (ceremony == Waiting) ]
                     ]
                 ]
             ]
@@ -698,8 +904,88 @@ viewDashboard session =
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewVerification : Verification -> Html Msg
-viewVerification verification =
+viewPasskeys : Model -> Html Msg
+viewPasskeys { passkeys, ceremony, confirming } =
+    Card.new
+        |> Card.title [ text "Passkeys" ]
+        |> Card.description [ text "Your fingerprint, face or screen lock, instead of an emailed link." ]
+        |> Card.action
+            (Button.new
+                |> Button.text "Add a passkey"
+                |> Button.outline
+                |> Button.small
+                |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting) ]
+            )
+        |> Card.content []
+            [ div [ class "flex flex-col gap-3" ]
+                [ case passkeys of
+                    Loading ->
+                        Skeleton.view [ class "h-5 w-48", attribute "aria-hidden" "true" ]
+
+                    Loaded [] ->
+                        p [ class "text-sm text-muted-foreground" ] [ text "No passkeys yet." ]
+
+                    Loaded found ->
+                        ul [ class "flex flex-col gap-3" ] (List.map (viewPasskey confirming) found)
+
+                    NotLoaded message ->
+                        p [ class "text-sm text-muted-foreground" ] [ text message ]
+                , viewProblem ceremony
+                ]
+            ]
+        |> Card.toHtml [ class "w-full max-w-sm" ]
+
+
+viewPasskey : Maybe String -> Api.Passkey -> Html Msg
+viewPasskey confirming passkey =
+    let
+        name =
+            Maybe.withDefault "Passkey" passkey.name
+    in
+    li [ class "flex min-h-8 items-center gap-3" ]
+        (if confirming == Just passkey.id then
+            [ span [ class "text-sm font-medium" ] [ text ("Remove " ++ name ++ "?") ]
+            , div [ class "ml-auto flex gap-2" ]
+                [ Button.new
+                    |> Button.text "Cancel"
+                    |> Button.ghost
+                    |> Button.small
+                    |> Button.toHtml [ onClick PasskeyRemoveCancelled ]
+                , Button.new
+                    |> Button.text "Remove"
+                    |> Button.destructive
+                    |> Button.small
+                    |> Button.toHtml [ onClick (PasskeyRemoveConfirmed passkey.id) ]
+                ]
+            ]
+
+         else
+            [ Phosphor.key Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            , span [ class "font-medium" ] [ text name ]
+            , span [ class "ml-auto text-sm text-muted-foreground tabular-nums" ]
+                [ text ("Added " ++ String.left 10 passkey.createdAt) ]
+            , Button.new
+                |> Button.icon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Button.label ("Remove " ++ name)
+                |> Button.ghost
+                |> Button.small
+                |> Button.toHtml [ onClick (PasskeyRemoveRequested passkey.id) ]
+            ]
+        )
+
+
+viewProblem : Ceremony -> Html Msg
+viewProblem ceremony =
+    case ceremony of
+        Resting (Just reason) ->
+            Field.error [] [ text reason ]
+
+        _ ->
+            text ""
+
+
+viewVerification : Ceremony -> Verification -> Html Msg
+viewVerification ceremony verification =
     case verification of
         Looking _ ->
             Card.new
@@ -718,6 +1004,28 @@ viewVerification verification =
 
         Accepting _ found ->
             viewFound found True Nothing
+
+        Accepted ->
+            Card.new
+                |> Card.title [ text "Your account is ready" ]
+                |> Card.description
+                    [ text "Add a passkey to use your fingerprint, face or screen lock instead of an emailed link." ]
+                |> Card.content []
+                    [ div [ class "flex flex-col gap-5" ]
+                        [ viewProblem ceremony
+                        , Button.new
+                            |> Button.text
+                                (if ceremony == Waiting then
+                                    "Waiting for your device…"
+
+                                 else
+                                    "Create a passkey"
+                                )
+                            |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting) ]
+                        ]
+                    ]
+                |> Card.footer [] [ link "/dashboard" "Not now" ]
+                |> Card.toHtml [ class "w-full max-w-sm" ]
 
         Refused reason ->
             notice "This link didn't work" reason [ link "/auth/signup" "Sign up again" ]

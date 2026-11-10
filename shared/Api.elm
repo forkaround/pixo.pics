@@ -1,19 +1,26 @@
 module Api exposing
     ( Account
+    , Assertion
+    , Attestation
     , Check
     , Endpoint
     , Health
     , Method(..)
+    , Passkey
+    , PasskeyOptions
     , Problem(..)
     , Release
     , Route(..)
     , SignIn
+    , SignInOptions
     , SignUp
     , Status(..)
     , Verification
+    , addPasskey
     , bodyDecoder
     , checkNames
     , checks
+    , deletePasskey
     , encodeBody
     , encodeError
     , encodeResponse
@@ -23,6 +30,10 @@ module Api exposing
     , method
     , methodToString
     , parse
+    , passkeyOptions
+    , passkeySignIn
+    , passkeySignInOptions
+    , passkeys
     , path
     , responseDecoder
     , route
@@ -52,6 +63,12 @@ type Route
     | DeleteSession
     | GetVerification
     | PostVerification
+    | GetPasskeys
+    | PostPasskey
+    | PostPasskeyOptions
+    | DeletePasskey String
+    | PostPasskeySignIn
+    | PostPasskeySignInOptions
 
 
 type Method
@@ -89,6 +106,24 @@ method r =
         PostVerification ->
             Post
 
+        GetPasskeys ->
+            Get
+
+        PostPasskey ->
+            Post
+
+        PostPasskeyOptions ->
+            Post
+
+        DeletePasskey _ ->
+            Delete
+
+        PostPasskeySignIn ->
+            Post
+
+        PostPasskeySignInOptions ->
+            Post
+
 
 path : Route -> List String
 path r =
@@ -118,6 +153,24 @@ segments r =
 
         PostVerification ->
             [ "auth", "verify" ]
+
+        GetPasskeys ->
+            [ "auth", "passkeys" ]
+
+        PostPasskey ->
+            [ "auth", "passkeys" ]
+
+        PostPasskeyOptions ->
+            [ "auth", "passkeys", "options" ]
+
+        DeletePasskey id ->
+            [ "auth", "passkeys", id ]
+
+        PostPasskeySignIn ->
+            [ "auth", "signin", "passkey" ]
+
+        PostPasskeySignInOptions ->
+            [ "auth", "signin", "passkey", "options" ]
 
 
 toString : Route -> String
@@ -179,6 +232,21 @@ routesAt rest =
         [ "auth", "verify" ] ->
             [ GetVerification, PostVerification ]
 
+        [ "auth", "passkeys" ] ->
+            [ GetPasskeys, PostPasskey ]
+
+        [ "auth", "passkeys", "options" ] ->
+            [ PostPasskeyOptions, DeletePasskey "options" ]
+
+        [ "auth", "passkeys", id ] ->
+            [ DeletePasskey id ]
+
+        [ "auth", "signin", "passkey" ] ->
+            [ PostPasskeySignIn ]
+
+        [ "auth", "signin", "passkey", "options" ] ->
+            [ PostPasskeySignInOptions ]
+
         _ ->
             []
 
@@ -239,6 +307,36 @@ verification =
 verify : Endpoint () Account
 verify =
     Endpoint { route = PostVerification, body = NoBody (), response = accountCodec }
+
+
+passkeys : Endpoint () (List Passkey)
+passkeys =
+    Endpoint { route = GetPasskeys, body = NoBody (), response = listCodec passkeyCodec }
+
+
+passkeyOptions : Endpoint () PasskeyOptions
+passkeyOptions =
+    Endpoint { route = PostPasskeyOptions, body = NoBody (), response = passkeyOptionsCodec }
+
+
+addPasskey : Endpoint Attestation Passkey
+addPasskey =
+    Endpoint { route = PostPasskey, body = JsonBody attestationCodec, response = passkeyCodec }
+
+
+deletePasskey : String -> Endpoint () ()
+deletePasskey id =
+    Endpoint { route = DeletePasskey id, body = NoBody (), response = emptyCodec }
+
+
+passkeySignInOptions : Endpoint () SignInOptions
+passkeySignInOptions =
+    Endpoint { route = PostPasskeySignInOptions, body = NoBody (), response = signInOptionsCodec }
+
+
+passkeySignIn : Endpoint Assertion Account
+passkeySignIn =
+    Endpoint { route = PostPasskeySignIn, body = JsonBody assertionCodec, response = accountCodec }
 
 
 route : Endpoint body response -> Route
@@ -365,6 +463,161 @@ accountCodec =
         Decode.map2 Account
             (Decode.field "email" Decode.string)
             (Decode.field "username" Decode.string)
+    }
+
+
+type alias Passkey =
+    { id : String
+    , name : Maybe String
+    , createdAt : String
+    }
+
+
+passkeyCodec : Codec Passkey
+passkeyCodec =
+    { encode =
+        \p ->
+            Encode.object
+                [ ( "id", Encode.string p.id )
+                , ( "name", Maybe.withDefault Encode.null (Maybe.map Encode.string p.name) )
+                , ( "createdAt", Encode.string p.createdAt )
+                ]
+    , decoder =
+        Decode.map3 Passkey
+            (Decode.field "id" Decode.string)
+            (Decode.field "name" (Decode.nullable Decode.string))
+            (Decode.field "createdAt" Decode.string)
+    }
+
+
+type alias PasskeyOptions =
+    { challenge : String
+    , rp : { id : String, name : String }
+    , user : { id : String, name : String, displayName : String }
+    , algorithms : List Int
+    , excludeCredentials : List String
+    }
+
+
+passkeyOptionsCodec : Codec PasskeyOptions
+passkeyOptionsCodec =
+    { encode =
+        \o ->
+            Encode.object
+                [ ( "challenge", Encode.string o.challenge )
+                , ( "rp"
+                  , Encode.object
+                        [ ( "id", Encode.string o.rp.id )
+                        , ( "name", Encode.string o.rp.name )
+                        ]
+                  )
+                , ( "user"
+                  , Encode.object
+                        [ ( "id", Encode.string o.user.id )
+                        , ( "name", Encode.string o.user.name )
+                        , ( "displayName", Encode.string o.user.displayName )
+                        ]
+                  )
+                , ( "algorithms", Encode.list Encode.int o.algorithms )
+                , ( "excludeCredentials", Encode.list Encode.string o.excludeCredentials )
+                ]
+    , decoder =
+        Decode.map5 PasskeyOptions
+            (Decode.field "challenge" Decode.string)
+            (Decode.field "rp"
+                (Decode.map2 (\id name -> { id = id, name = name })
+                    (Decode.field "id" Decode.string)
+                    (Decode.field "name" Decode.string)
+                )
+            )
+            (Decode.field "user"
+                (Decode.map3 (\id name displayName -> { id = id, name = name, displayName = displayName })
+                    (Decode.field "id" Decode.string)
+                    (Decode.field "name" Decode.string)
+                    (Decode.field "displayName" Decode.string)
+                )
+            )
+            (Decode.field "algorithms" (Decode.list Decode.int))
+            (Decode.field "excludeCredentials" (Decode.list Decode.string))
+    }
+
+
+type alias Attestation =
+    { clientDataJSON : String
+    , attestationObject : String
+    , transports : List String
+    }
+
+
+attestationCodec : Codec Attestation
+attestationCodec =
+    { encode =
+        \a ->
+            Encode.object
+                [ ( "clientDataJSON", Encode.string a.clientDataJSON )
+                , ( "attestationObject", Encode.string a.attestationObject )
+                , ( "transports", Encode.list Encode.string a.transports )
+                ]
+    , decoder =
+        Decode.map3 Attestation
+            (Decode.field "clientDataJSON" Decode.string)
+            (Decode.field "attestationObject" Decode.string)
+            (Decode.field "transports" (Decode.list Decode.string))
+    }
+
+
+type alias SignInOptions =
+    { challenge : String
+    , rpId : String
+    }
+
+
+signInOptionsCodec : Codec SignInOptions
+signInOptionsCodec =
+    { encode =
+        \o ->
+            Encode.object
+                [ ( "challenge", Encode.string o.challenge )
+                , ( "rpId", Encode.string o.rpId )
+                ]
+    , decoder =
+        Decode.map2 SignInOptions
+            (Decode.field "challenge" Decode.string)
+            (Decode.field "rpId" Decode.string)
+    }
+
+
+type alias Assertion =
+    { id : String
+    , clientDataJSON : String
+    , authenticatorData : String
+    , signature : String
+    }
+
+
+assertionCodec : Codec Assertion
+assertionCodec =
+    { encode =
+        \a ->
+            Encode.object
+                [ ( "id", Encode.string a.id )
+                , ( "clientDataJSON", Encode.string a.clientDataJSON )
+                , ( "authenticatorData", Encode.string a.authenticatorData )
+                , ( "signature", Encode.string a.signature )
+                ]
+    , decoder =
+        Decode.map4 Assertion
+            (Decode.field "id" Decode.string)
+            (Decode.field "clientDataJSON" Decode.string)
+            (Decode.field "authenticatorData" Decode.string)
+            (Decode.field "signature" Decode.string)
+    }
+
+
+listCodec : Codec a -> Codec (List a)
+listCodec codec =
+    { encode = Encode.list codec.encode
+    , decoder = Decode.list codec.decoder
     }
 
 

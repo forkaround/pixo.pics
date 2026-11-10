@@ -21,9 +21,9 @@ export interface ElmApp {
   };
 }
 
-export type FromElm = { level : "error" | "warn" | "info"; message : string; tag : "Log" } | { body : string; headers : [ string, string ][]; resolve : JsonValue; status : number; tag : "Respond" };
+export type FromElm = { key : { e : string; n : string; tag : "RS256" } | { tag : "EdDSA"; x : string } | { tag : "ES256"; x : string; y : string }; resolve : JsonValue; signIn : { backedUp : boolean; challenge : string; credentialId : string; signCount : number }; signature : string; signed : string; tag : "VerifySignature" } | { level : "error" | "warn" | "info"; message : string; tag : "Log" } | { body : string; headers : [ string, string ][]; resolve : JsonValue; status : number; tag : "Respond" };
 
-export type ToElm = { request : ({ method : string } & { path : string[] } & { query : { [key: string]: string } } & { headers : { [key: string]: string } } & { body : string }); resolve : JsonValue; tag : "Request" };
+export type ToElm = { request : ({ method : string } & { path : string[] } & { query : { [key: string]: string } } & { headers : { [key: string]: string } } & { body : string }); resolve : JsonValue; tag : "Request" } | { resolve : JsonValue; signIn : ({ challenge : string } & { credentialId : string } & { signCount : number } & { backedUp : boolean }); tag : "SignatureChecked"; valid : boolean };
 
 export type Flags = ({ databaseUrl : string | null } & { neonEndpoint : string | null } & { brevoApiKey : string | null } & { emailFrom : string | null } & { origin : string } & { releaseId : string | null } & { releaseUrl : string | null } & { region : string | null });
 

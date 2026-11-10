@@ -1,8 +1,10 @@
-module Db exposing (Consumed(..), Link(..), RateLimit(..), account, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, ping, rateLimit, signOut, signedIn)
+module Db exposing (Added(..), Ceremony, Consumed(..), Link(..), PasskeySignIn(..), RateLimit(..), Removed(..), SignInChallenge(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 import Neon
+import WebAuthn
 
 
 connect : { a | databaseUrl : Maybe String, neonEndpoint : Maybe String } -> Result String Neon.Connection
@@ -175,14 +177,229 @@ consumedDecoder =
 account : String -> Neon.Transaction (Maybe Api.Account)
 account token =
     signedIn token (\_ found -> found)
+        |> Neon.with ownAccount
+
+
+ownAccount : Neon.Query (Maybe Api.Account)
+ownAccount =
+    Neon.selectOne "SELECT email, username FROM users"
+        []
+        (Decode.map2 Api.Account
+            (Decode.field "email" Decode.string)
+            (Decode.field "username" Decode.string)
+        )
+
+
+passkeys : String -> Neon.Transaction (Maybe (List Api.Passkey))
+passkeys token =
+    signedIn token (\userId found -> Maybe.map (\_ -> found) userId)
         |> Neon.with
-            (Neon.selectOne "SELECT email, username FROM users"
+            (Neon.select ("SELECT credential_id, name, " ++ createdAt ++ " FROM passkeys ORDER BY passkeys.created_at")
                 []
-                (Decode.map2 Api.Account
-                    (Decode.field "email" Decode.string)
-                    (Decode.field "username" Decode.string)
-                )
+                passkeyDecoder
             )
+
+
+passkeyDecoder : Decoder Api.Passkey
+passkeyDecoder =
+    Decode.map3 Api.Passkey
+        (Decode.field "credential_id" Decode.string)
+        (Decode.field "name" (Decode.nullable Decode.string))
+        (Decode.field "created_at" Decode.string)
+
+
+createdAt : String
+createdAt =
+    "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS created_at"
+
+
+type alias Ceremony =
+    { challenge : String
+    , userId : String
+    , account : Api.Account
+    , passkeys : List String
+    }
+
+
+startPasskey : { token : String, ttlSeconds : Int } -> Neon.Transaction (Maybe Ceremony)
+startPasskey { token, ttlSeconds } =
+    signedIn token
+        (\userId _ challenge found credentialIds ->
+            Maybe.map3
+                (\id made owner ->
+                    { challenge = made
+                    , userId = id
+                    , account = owner
+                    , passkeys = credentialIds
+                    }
+                )
+                userId
+                challenge
+                found
+        )
+        |> Neon.with (Neon.execute "DELETE FROM webauthn_challenges WHERE ceremony = 'registration'" [])
+        |> Neon.with
+            (Neon.selectOne
+                ("INSERT INTO webauthn_challenges (challenge, ceremony, user_id, expires_at) "
+                    ++ "SELECT translate(rtrim(encode(uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()), 'base64'), '='), '+/', '-_'), "
+                    ++ "'registration', NULLIF(current_setting('app.user_id', true), '')::uuid, now() + $1::int * interval '1 second' "
+                    ++ "WHERE NULLIF(current_setting('app.user_id', true), '') IS NOT NULL "
+                    ++ "RETURNING challenge"
+                )
+                [ Neon.int ttlSeconds ]
+                (Decode.field "challenge" Decode.string)
+            )
+        |> Neon.with ownAccount
+        |> Neon.with
+            (Neon.select "SELECT credential_id FROM passkeys ORDER BY created_at"
+                []
+                (Decode.field "credential_id" Decode.string)
+            )
+
+
+type Added
+    = Added Api.Passkey Api.Account
+    | NotAdded
+
+
+addPasskey : { token : String, registration : WebAuthn.Registration, name : Maybe String } -> Neon.Transaction (Maybe Added)
+addPasskey { token, registration, name } =
+    signedIn token
+        (\userId added found ->
+            Maybe.map2 (\_ owner -> Maybe.withDefault NotAdded (Maybe.map (\passkey -> Added passkey owner) added))
+                userId
+                found
+        )
+        |> Neon.with
+            (Neon.selectOne
+                ("WITH used AS ("
+                    ++ "DELETE FROM webauthn_challenges "
+                    ++ "WHERE challenge = $1 AND ceremony = 'registration' AND expires_at > now() "
+                    ++ "RETURNING user_id"
+                    ++ ") "
+                    ++ "INSERT INTO passkeys (credential_id, user_id, public_key, sign_count, transports, backup_eligible, backed_up, name) "
+                    ++ "SELECT $2::text, used.user_id, $3::text, $4::bigint, ARRAY(SELECT jsonb_array_elements_text($5::jsonb)), $6::boolean, $7::boolean, $8::text "
+                    ++ "FROM used "
+                    ++ "ON CONFLICT (credential_id) DO NOTHING "
+                    ++ "RETURNING credential_id, name, "
+                    ++ createdAt
+                )
+                [ Neon.text registration.challenge
+                , Neon.text registration.credentialId
+                , Neon.text registration.publicKey
+                , Neon.int registration.signCount
+                , Neon.json (Encode.list Encode.string registration.transports)
+                , Neon.bool registration.backupEligible
+                , Neon.bool registration.backedUp
+                , Neon.nullable Neon.text name
+                ]
+                passkeyDecoder
+            )
+        |> Neon.with ownAccount
+
+
+type Removed
+    = Removed { name : Maybe String, account : Api.Account }
+    | NotRemoved
+
+
+removePasskey : { token : String, id : String } -> Neon.Transaction (Maybe Removed)
+removePasskey { token, id } =
+    signedIn token
+        (\userId removed found ->
+            Maybe.map2
+                (\_ owner ->
+                    removed
+                        |> Maybe.map (\name -> Removed { name = name, account = owner })
+                        |> Maybe.withDefault NotRemoved
+                )
+                userId
+                found
+        )
+        |> Neon.with
+            (Neon.selectOne "DELETE FROM passkeys WHERE credential_id = $1 RETURNING name"
+                [ Neon.text id ]
+                (Decode.field "name" (Decode.nullable Decode.string))
+            )
+        |> Neon.with ownAccount
+
+
+type SignInChallenge
+    = SignInChallenge String
+    | TooManyChallenges { retryAfter : Int }
+
+
+signInChallenge : { key : String, limit : Int, windowSeconds : Int, ttlSeconds : Int } -> Neon.Query SignInChallenge
+signInChallenge { key, limit, windowSeconds, ttlSeconds } =
+    Neon.one
+        ("SELECT l.retry_after, CASE WHEN l.allowed THEN create_authentication_challenge($4) END AS challenge "
+            ++ "FROM rate_limit($1, $2, $3) AS l"
+        )
+        [ Neon.text key, Neon.int limit, Neon.int windowSeconds, Neon.int ttlSeconds ]
+        (Decode.field "challenge" (Decode.nullable Decode.string)
+            |> Decode.andThen
+                (\challenge ->
+                    case challenge of
+                        Just made ->
+                            Decode.succeed (SignInChallenge made)
+
+                        Nothing ->
+                            Decode.field "retry_after" Decode.int
+                                |> Decode.map (\retryAfter -> TooManyChallenges { retryAfter = retryAfter })
+                )
+        )
+
+
+passkeyPublicKey : String -> Neon.Query (Maybe String)
+passkeyPublicKey credentialId =
+    Neon.one "SELECT passkey_public_key($1) AS public_key"
+        [ Neon.text credentialId ]
+        (Decode.field "public_key" (Decode.nullable Decode.string))
+
+
+type PasskeySignIn
+    = PasskeySignedIn { sessionToken : String, account : Api.Account }
+    | ChallengeSpent
+    | PasskeyStale
+
+
+signInWithPasskey :
+    { challenge : String, credentialId : String, signCount : Int, backedUp : Bool, sessionSeconds : Int }
+    -> Neon.Query PasskeySignIn
+signInWithPasskey { challenge, credentialId, signCount, backedUp, sessionSeconds } =
+    Neon.one "SELECT outcome, session_token, email, username FROM sign_in_with_passkey($1, $2, $3, $4, $5)"
+        [ Neon.text challenge
+        , Neon.text credentialId
+        , Neon.int signCount
+        , Neon.bool backedUp
+        , Neon.int sessionSeconds
+        ]
+        (Decode.field "outcome" Decode.string
+            |> Decode.andThen
+                (\outcome ->
+                    case outcome of
+                        "signed-in" ->
+                            Decode.map3
+                                (\sessionToken email username ->
+                                    PasskeySignedIn
+                                        { sessionToken = sessionToken
+                                        , account = { email = email, username = username }
+                                        }
+                                )
+                                (Decode.field "session_token" Decode.string)
+                                (Decode.field "email" Decode.string)
+                                (Decode.field "username" Decode.string)
+
+                        "no-challenge" ->
+                            Decode.succeed ChallengeSpent
+
+                        "no-passkey" ->
+                            Decode.succeed PasskeyStale
+
+                        _ ->
+                            Decode.fail ("Unknown passkey sign-in outcome: " ++ outcome)
+                )
+        )
 
 
 signOut : String -> Neon.Query ()

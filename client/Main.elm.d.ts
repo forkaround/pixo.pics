@@ -21,9 +21,9 @@ export interface ElmApp {
   };
 }
 
-export type FromElm = { data : { key : string; value : string }; tag : "WriteToLocalStorage" };
+export type FromElm = { data : { challenge : string; rpId : string }; tag : "GetPasskey" } | { data : { algorithms : number[]; challenge : string; excludeCredentials : string[]; rp : { id : string; name : string }; user : { displayName : string; id : string; name : string } }; tag : "CreatePasskey" } | { data : { key : string; value : string }; tag : "WriteToLocalStorage" };
 
-export type ToElm = { dark : boolean; tag : "SystemThemeChanged" };
+export type ToElm = { dark : boolean; tag : "SystemThemeChanged" } | { attestationObject : string; clientDataJSON : string; tag : "PasskeyCreated"; transports : string[] } | ({ tag : "PasskeyUsed" } & ({ id : string } & { clientDataJSON : string } & { authenticatorData : string } & { signature : string })) | { error : string; tag : "PasskeyFailed" };
 
 export type Flags = { systemDark : boolean; theme : ("light" | "dark" | "system") | null };
 

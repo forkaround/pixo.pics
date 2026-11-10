@@ -2,6 +2,8 @@ module EmailTest exposing (suite)
 
 import Email
 import Email.Layout as Layout
+import Email.PasskeyAdded
+import Email.PasskeyRemoved
 import Email.SignIn
 import Email.SignUp
 import Expect
@@ -115,6 +117,36 @@ suite =
                             , .html >> contains "href=\"https://pixo.pics/sign-in?token=abc\""
                             , .text >> contains "Sign in:\nhttps://pixo.pics/sign-in?token=abc"
                             , .text >> contains "expires in 15 minutes."
+                            ]
+            ]
+        , describe "PasskeyAdded"
+            [ test "names the passkey and the account, and links to the dashboard" <|
+                \() ->
+                    Email.PasskeyAdded.email
+                        { url = "https://pixo.pics/dashboard", username = "ada", passkey = Just "Apple Passwords" }
+                        |> Expect.all
+                            [ .html >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
+                            , .text >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
+                            , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                            , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                            ]
+            , test "says just a passkey when nothing names it" <|
+                \() ->
+                    Email.PasskeyAdded.email { url = "https://pixo.pics/dashboard", username = "ada", passkey = Nothing }
+                        |> .text
+                        |> String.contains "A passkey was added to the account ada."
+                        |> Expect.equal True
+            ]
+        , describe "PasskeyRemoved"
+            [ test "names the passkey and the account, and links to the dashboard" <|
+                \() ->
+                    Email.PasskeyRemoved.email
+                        { url = "https://pixo.pics/dashboard", username = "ada", passkey = Just "Apple Passwords" }
+                        |> Expect.all
+                            [ .html >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
+                            , .text >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
+                            , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                            , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
                             ]
             ]
         , describe "SignUp"

@@ -1,9 +1,10 @@
-module InteropDefinitions exposing (Flags, FromElm(..), Level(..), Request, Resolver, Response, ToElm(..), interop)
+module InteropDefinitions exposing (Flags, FromElm(..), Level(..), Request, Resolver, Response, SignIn, ToElm(..), interop)
 
 import Dict exposing (Dict)
 import Json.Encode as Encode
 import TsJson.Decode as TsDecode exposing (Decoder)
 import TsJson.Encode as TsEncode exposing (Encoder)
+import WebAuthn
 
 
 interop :
@@ -20,11 +21,21 @@ interop =
 
 type ToElm
     = GotRequest Resolver Request
+    | SignatureChecked Resolver SignIn Bool
 
 
 type FromElm
     = Respond Resolver Response
     | Log Level String
+    | VerifySignature Resolver { key : WebAuthn.Key, signed : String, signature : String, signIn : SignIn }
+
+
+type alias SignIn =
+    { challenge : String
+    , credentialId : String
+    , signCount : Int
+    , backedUp : Bool
+    }
 
 
 type Level
@@ -77,6 +88,19 @@ toElm =
                 (TsDecode.field "resolve" resolverDecoder)
                 (TsDecode.field "request" requestDecoder)
           )
+        , ( "SignatureChecked"
+          , TsDecode.map3 SignatureChecked
+                (TsDecode.field "resolve" resolverDecoder)
+                (TsDecode.field "signIn"
+                    (TsDecode.map4 SignIn
+                        (TsDecode.field "challenge" TsDecode.string)
+                        (TsDecode.field "credentialId" TsDecode.string)
+                        (TsDecode.field "signCount" TsDecode.int)
+                        (TsDecode.field "backedUp" TsDecode.bool)
+                    )
+                )
+                (TsDecode.field "valid" TsDecode.bool)
+          )
         ]
 
 
@@ -102,13 +126,16 @@ requestDecoder =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\respond log value ->
+        (\respond log verifySignature value ->
             case value of
                 Respond resolver response ->
                     respond ( resolver, response )
 
                 Log level message ->
                     log ( level, message )
+
+                VerifySignature resolver check ->
+                    verifySignature ( resolver, check )
         )
         |> TsEncode.variantObject "Respond"
             [ TsEncode.required "resolve" Tuple.first resolverEncoder
@@ -121,6 +148,48 @@ fromElm =
         |> TsEncode.variantObject "Log"
             [ TsEncode.required "level" Tuple.first levelEncoder
             , TsEncode.required "message" Tuple.second TsEncode.string
+            ]
+        |> TsEncode.variantObject "VerifySignature"
+            [ TsEncode.required "resolve" Tuple.first resolverEncoder
+            , TsEncode.required "key" (Tuple.second >> .key) keyEncoder
+            , TsEncode.required "signed" (Tuple.second >> .signed) TsEncode.string
+            , TsEncode.required "signature" (Tuple.second >> .signature) TsEncode.string
+            , TsEncode.required "signIn"
+                (Tuple.second >> .signIn)
+                (TsEncode.object
+                    [ TsEncode.required "challenge" .challenge TsEncode.string
+                    , TsEncode.required "credentialId" .credentialId TsEncode.string
+                    , TsEncode.required "signCount" .signCount TsEncode.int
+                    , TsEncode.required "backedUp" .backedUp TsEncode.bool
+                    ]
+                )
+            ]
+        |> TsEncode.buildUnion
+
+
+keyEncoder : Encoder WebAuthn.Key
+keyEncoder =
+    TsEncode.union
+        (\es256 edDsa rs256 value ->
+            case value of
+                WebAuthn.Es256 point ->
+                    es256 point
+
+                WebAuthn.EdDsa point ->
+                    edDsa point
+
+                WebAuthn.Rs256 modulus ->
+                    rs256 modulus
+        )
+        |> TsEncode.variantObject "ES256"
+            [ TsEncode.required "x" .x TsEncode.string
+            , TsEncode.required "y" .y TsEncode.string
+            ]
+        |> TsEncode.variantObject "EdDSA"
+            [ TsEncode.required "x" .x TsEncode.string ]
+        |> TsEncode.variantObject "RS256"
+            [ TsEncode.required "n" .n TsEncode.string
+            , TsEncode.required "e" .e TsEncode.string
             ]
         |> TsEncode.buildUnion
 

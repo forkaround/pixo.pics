@@ -5,19 +5,19 @@ on Postgres (Neon), deployed to Vercel.
 
 ## Layout
 
-| Path               | What                                                                       |
-| ------------------ | -------------------------------------------------------------------------- |
-| `client/`          | Browser app (root `elm.json`). `client/UI/`: elmcn components              |
-| `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs)                  |
-| `tests/`           | elm-test suites for `client/` and `shared/` (see [Tests](#tests))          |
-| `api/tests/`       | elm-test suites for the server                                             |
-| `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon` driver, `Brevo` client   |
-| `api/src/Email/`   | Email templates (see [Email](#email))                                      |
-| `api/_ts/`         | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin) |
-| `api/index.ts`     | The only Vercel Function                                                   |
-| `migrations/`      | Graphile Migrate (`.gmrc`)                                                 |
-| `.scripts/neon.sh` | Starts the local Neon proxy                                                |
-| `.agents/`         | Agent skills, tracked by `skills-lock.json`; `.claude` links here          |
+| Path               | What                                                                             |
+| ------------------ | -------------------------------------------------------------------------------- |
+| `client/`          | Browser app (root `elm.json`). `client/UI/`: elmcn components                    |
+| `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs)                        |
+| `tests/`           | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                |
+| `api/tests/`       | elm-test suites for the server                                                   |
+| `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon`, `Brevo`, `WebAuthn`, `Aaguid` |
+| `api/src/Email/`   | Email templates (see [Email](#email))                                            |
+| `api/_ts/`         | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)       |
+| `api/index.ts`     | The only Vercel Function                                                         |
+| `migrations/`      | Graphile Migrate (`.gmrc`)                                                       |
+| `.scripts/neon.sh` | Starts the local Neon proxy                                                      |
+| `.agents/`         | Agent skills, tracked by `skills-lock.json`; `.claude` links here                |
 
 ## Commands
 
@@ -79,10 +79,10 @@ pull requests and on `main`; it needs no database.
   `Api.method` and `Api.path`.
 - **Every `FromElm` is handled**: the port handlers in `app.ts` and `client/main.ts` take
   `msg` and end `switch (msg.tag)` with a `default` that is `never`:
-  `return msg satisfies never;` when `FromElm` has several variants, but
-  `return msg.tag satisfies never;` when it has one, as in `client/`: elm-ts-interop then
-  emits a plain object, not a union, and TypeScript narrows only `msg.tag`. Switch forms
-  when the count crosses one.
+  `return msg satisfies never;` when `FromElm` has several variants, as in both now, but
+  `return msg.tag satisfies never;` when it has one: elm-ts-interop then emits a plain
+  object, not a union, and TypeScript narrows only `msg.tag`. Switch forms when the count
+  crosses one.
 - **UI**: use the elmcn registry component instead of writing one; Phosphor
   (`phosphor-icons/phosphor-elm`, `Regular`) instead of hand-written SVG; `sr-only` text
   on icon-only controls.
@@ -93,7 +93,8 @@ pull requests and on `main`; it needs no database.
   compilation error when trying to build the following package". It's a race, so it may
   pass locally and still fail on Vercel.
 - **Vercel functions**: every `.ts` under `api/` becomes one unless its name or folder
-  starts with `_`. Server TypeScript lives in `api/_ts`; `app.ts` uses Web APIs only.
+  starts with `_`. Server TypeScript lives in `api/_ts`; `app.ts` uses Web APIs only
+  (`crypto.subtle`, `atob`: their types come from `"WebWorker"` in `api/tsconfig.json`).
 
 ## Commits
 
@@ -262,11 +263,29 @@ link or passkey.
   username) or `sign-up`. The username is checked first, so the answer never tells
   whether an email has an account.
 - WebAuthn values (`credential_id`, `public_key`, `challenge`) are unpadded base64url text,
-  as on the wire. `sign_count` is a `bigint`: it arrives as text.
+  as on the wire. `sign_count` is a `bigint`: it arrives as text. `public_key` is the COSE
+  key (see [WebAuthn](#webauthn)).
+- A registration challenge is made by `api` itself, under `own_rows`: `Db.startPasskey`
+  deletes the user's earlier ones and inserts a new one (two random UUIDs, as
+  `new_token()` makes them). `Db.addPasskey` deletes it and inserts the passkey in one
+  statement, `ON CONFLICT DO NOTHING`: no row back means the challenge was expired, used
+  or unknown, or the credential is already someone's.
 - The driver can't read, then decide, inside a transaction: every check-then-change is one
   statement. A link or a challenge is used once by
   `DELETE ... WHERE ... AND expires_at > now() RETURNING`; a passkey's counter moves by
   `UPDATE ... WHERE $2 > sign_count OR ($2 = 0 AND sign_count = 0) RETURNING`.
+- Passkey sign-in is three functions. `create_authentication_challenge(ttl_seconds)`
+  stores a challenge that has no user yet and returns it. `passkey_public_key(credential_id)`
+  reads the key to check the signature against. `sign_in_with_passkey(challenge,
+credential_id, sign_count, backed_up, session_seconds)` uses the challenge up, moves the
+  passkey's counter by the rule above, starts a session and returns its token once, with
+  an `outcome`: `signed-in`, `no-challenge` (expired, used or unknown) or `no-passkey`
+  (gone, or a counter that did not move forward: maybe a copy).
+- Postgres can't check a signature: `sign_in_with_passkey` trusts that the server did,
+  as `authenticate` trusts nothing but the token. It is the one function that takes no
+  secret.
+- `passkeys.name` is what made the passkey ("Apple Passwords"), from its AAGUID (see
+  [WebAuthn](#webauthn)), or `NULL`.
 - `delete_expired()` removes expired links, challenges and sessions, and stale rate-limit
   rows. Nothing schedules it yet.
 
@@ -296,8 +315,8 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `GRANT EXECUTE ... TO api`. It runs as the owner, past every policy, so it takes the
   secret as an argument and filters by it. There are `authenticate`, `rate_limit`,
   `create_sign_up_link`, `create_sign_in_link`, `magic_link`, `consume_magic_link`,
-  `sign_out` and `delete_expired`; passkey sign-in is not written yet. `new_token()` is
-  theirs alone: `api` may not execute it.
+  `sign_out`, `delete_expired`, `create_authentication_challenge`, `passkey_public_key`
+  and `sign_in_with_passkey`. `new_token()` is theirs alone: `api` may not execute it.
 - A new table: `ALTER TABLE t ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY`,
   `CREATE POLICY`, `GRANT`, after its `CREATE TABLE` (`DROP TABLE ... CASCADE` drops them
   too), and an index on its user column. Never grant `TRUNCATE`, `REFERENCES` or
@@ -339,15 +358,27 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
   `open` picks the `Page` from the URL: `/`, `/auth/signup`, `/auth/signin`,
   `/auth/verify`, `/dashboard`, else `NotFound`. A new page outside `/auth/` needs its
-  rewrite in `vercel.json`.
+  rewrite in `vercel.json`. `open` also ends a passkey ceremony left unfinished.
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
-  or `SignedIn account`. `/dashboard` shows the account and a sign-out button, and sends
-  a signed-out visitor to `/auth/signin`.
+  or `SignedIn account`. `/dashboard` shows the account, a sign-out button and the
+  Passkeys card (`Api.passkeys`, "Add a passkey", and a bin on each row that asks
+  "Remove ...?" before `Api.deletePasskey`: `model.confirming` holds the id meanwhile), and
+  sends a signed-out visitor to `/auth/signin`.
 - `/auth/signup` and `/auth/signin` post `Api.signUp` and `Api.signIn`, then say to
-  check the inbox. `/auth/verify#<token>`
+  check the inbox. `/auth/signin` also has "Sign in with a passkey": post
+  `Api.passkeySignInOptions`, the `GetPasskey` port (`navigator.credentials.get`, any
+  passkey the device has for this site), then `PasskeyUsed` goes to `Api.passkeySignIn`
+  and on to `/dashboard`. `/auth/verify#<token>`
   asks `Api.verification` who the link is for, shows the username and the email, and
-  only on the button's click posts `Api.verify`, then goes to `/dashboard`. Both send
-  the token with `ApiClient.withToken`, as a bearer token.
+  only on the button's click posts `Api.verify`. Both send the token with
+  `ApiClient.withToken`, as a bearer token. A sign-in then goes to `/dashboard`; a new
+  account is first offered a passkey ("Not now" skips it).
+- A passkey takes three steps, `model.ceremony` being `Creating` meanwhile: post
+  `Api.passkeyOptions`, send them to `main.ts` through the `CreatePasskey` port
+  (`navigator.credentials.create`), and post what comes back in `PasskeyCreated` to
+  `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`
+  words it. `main.ts` only converts base64url and buffers: the ceremony's options
+  (`residentKey: "required"`, `attestation: "none"`) are its only constants.
 - Home: the Server card (one row per `Api.checks`, release and region in the
   footer) and links to sign up and sign in, or to the dashboard. Every page: a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
   `WriteToLocalStorage` port, read back from the flags).
@@ -386,7 +417,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   request carries its Promise's `resolve` into Elm, which sends it back with the
   response. The Vercel Function and the `app:api` plugin (`dev.ts`) serve `handle`.
 - `init` and `update` return a `Main.Effect`, never a `Cmd`: `Batch`, `SendToJs` (a
-  response or a log), `Database`, a `Neon.Request` whose message also takes the
+  response, a log or a signature to check), `Database`, a `Neon.Request` whose message also takes the
   latency in ms, and `Email`, a `Brevo.Request`. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
   (see [Tests](#tests)).
 - `dev.ts` reloads the server on any `.elm`/`.ts` change in `api/` or `shared/`
@@ -408,6 +439,17 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   link is consumed. Three steps, each a `Msg`: both rate limits in one transaction
   (`magic-link:ip:<x-real-ip>` 10 and `magic-link:email:<email>` 3 per 15 minutes, in that
   order), `Db.createSignUpLink` (15 minutes), then the `Email` effect.
+- `POST /api/auth/signin/passkey/options` (`Api.passkeySignInOptions`) answers
+  `{ challenge, rpId }`, the challenge lasting 5 minutes, or 429: `Db.signInChallenge`
+  limits `passkey:ip:<x-real-ip>` to 20 per 15 minutes and makes the challenge in one
+  statement, only when allowed.
+- `POST /api/auth/signin/passkey` (`Api.passkeySignIn`,
+  `{ "id", "clientDataJSON", "authenticatorData", "signature" }`, base64url) signs in
+  with a passkey, in four steps: `WebAuthn.authenticate`, `Db.passkeyPublicKey`, the
+  `VerifySignature` port (`app.ts` answers `SignatureChecked`, with the `signIn` it was
+  given: the model keeps nothing between the two), then `Db.signInWithPasskey`. 200 with
+  the account and the `session` cookie, as `POST /api/auth/verify`; 400 (not that JSON);
+  401 for every refusal, whose reason is only logged, at `warn`.
 - `POST /api/auth/signin` (`Api.signIn`, `{ "email" }`) runs the same steps (`Ask` tells
   them apart) with `Db.createSignInLink`. An email without an account gets 202 and no
   email, so the answer doesn't tell; it does come back sooner, without the Brevo call.
@@ -430,6 +472,25 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   meanwhile.
   `origin` comes from `app.ts`: `VERCEL_PROJECT_PRODUCTION_URL` in production,
   `VERCEL_URL` in a preview, else `http://localhost:5173`; never from the request.
+- The passkey routes read the `session` cookie and answer 401 without a session.
+  `GET /api/auth/passkeys` (`Api.passkeys`) lists the account's passkeys: `id` (the
+  credential id) and `createdAt` (ISO 8601, UTC).
+- `POST /api/auth/passkeys/options` (`Api.passkeyOptions`) starts a registration: a
+  challenge that lasts 5 minutes, `rp` (see [WebAuthn](#webauthn)), `user` (`id` is the
+  user's UUID, whose UTF-8 bytes are the user handle; `name` the email, `displayName` the
+  username), `algorithms` and `excludeCredentials`, the ids the account already has.
+- `POST /api/auth/passkeys` (`Api.addPasskey`,
+  `{ "clientDataJSON", "attestationObject", "transports" }`, base64url) checks the
+  browser's answer with `WebAuthn.register`, then saves the passkey: 201 with the passkey,
+  400 (not that JSON), 422 (refused: the reason is only logged, at `warn`) and 409 (the
+  challenge is expired, used or unknown).
+- `DELETE /api/auth/passkeys/<id>` (`Api.deletePasskey id`) removes one of the account's
+  passkeys (`Db.removePasskey`, under `own_rows`): 200 with `{}`, or 404. It is the only
+  route with a parameter; at `/api/auth/passkeys/options` the method tells it from
+  `Api.PostPasskeyOptions`.
+- Adding and removing a passkey email the account (`notify`): the answer waits for Brevo,
+  since nothing may run after it on Vercel, but is the same when the email fails (logged
+  at `error`) or isn't configured. Removing a passkey leaves its sessions alone.
 - The report's `releaseId` (`VERCEL_GIT_COMMIT_SHA`, else `VERCEL_DEPLOYMENT_ID`),
   `region` (`VERCEL_REGION`, our own field) and `links.release` (GitHub commit URL from
   `VERCEL_GIT_*`) come from `app.ts`. Off Vercel they are `local`.
@@ -467,7 +528,9 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   to an `Email.Layout.Email`. It lists `Layout` blocks (`Heading`, `Paragraph`, `Button`,
   `Footnote`) and `Layout.render` writes the HTML and the text from them, escaping every
   value: never build HTML in a template.
-- Templates: `Email.SignIn` and `Email.SignUp`, for the two kinds of magic link.
+- Templates: `Email.SignIn` and `Email.SignUp`, for the two kinds of magic link;
+  `Email.PasskeyAdded` and `Email.PasskeyRemoved`, which tell the account what happened
+  to it and link to `<origin>/dashboard`.
 - `Email.configure` (`api/src/Email.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
   an address verified as a sender in Brevo; its name is `pixo`. Without either the server
   starts anyway, warns, and `model.email` is an `Err`.
@@ -475,6 +538,36 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   with a 10 s timeout; wrap it in the `Email` effect. The tag names the template
   (`sign-in`) and shows in Brevo's logs.
 - `POST /api/auth/signup` sends `Email.SignUp`, or `Email.SignIn` (see [Server](#server)).
+
+## WebAuthn
+
+- `WebAuthn.elm` checks a registration in Elm, with no port: `WebAuthn.register` takes the
+  expected `origin` and `rpId` and the browser's answer, and gives a `Registration` (the
+  challenge to use up, the credential id, the public key, the counter, the backup flags
+  and the transports it knows) or the reason as text, for the log.
+- The relying party's id is the origin's host (`WebAuthn.rpId`), so a passkey belongs to
+  one host: production's, a preview's own, or `localhost`.
+- It checks the client data (`webauthn.create`, the origin, not cross-origin) and the
+  authenticator data (the hash of the id, user present, a credential, backed up only if
+  eligible, an algorithm from `WebAuthn.algorithms`: EdDSA, ES256, RS256). The challenge
+  is checked by the database, which uses it up.
+- Attestation is `none`: the statement is ignored, whatever its format, so nothing proves
+  which authenticator made the key. User verification is preferred, not required.
+- `WebAuthn.authenticate` checks a sign-in the same way (`webauthn.get`) and gives the
+  challenge, the counter, the backup flag and `signed`: the authenticator data followed
+  by the SHA-256 of the client data, which is what the passkey signed.
+- Elm can't check the signature, so `app.ts` does, with WebCrypto, and nothing else:
+  `WebAuthn.key` turns the stored COSE key into the parts of a JWK (`Es256`, `EdDsa`,
+  `Rs256`) and `WebAuthn.signature` turns an ES256 signature from DER into the two
+  32-byte integers WebCrypto takes. A key that fails to import counts as a bad signature.
+- `Aaguid.name` names what made a passkey, from the AAGUID in its authenticator data:
+  the names in
+  [passkey-authenticator-aaguids](https://github.com/passkeydeveloper/passkey-authenticator-aaguids)'s
+  `aaguid.json`, copied on 2026-11-10. Security keys and anything that sends zeros have
+  no name, and the app says "Passkey". Passkeys made before this have none either.
+- Packages: `elm-toulouse/cbor` (the attestation object and the COSE key, which is stored
+  re-encoded, without the extensions that may follow it), `folkertdev/elm-sha2`,
+  `danfishgold/base64-bytes`.
 
 ## Tests
 
@@ -508,6 +601,10 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   what would be sent and `.onResponse` decodes an `Http.Response`.
 - `api/tests/BrevoTest.elm` works the same way; `api/tests/EmailTest.elm` covers `Email`
   and renders the templates. A new template gets a test that its values reach the HTML and the text.
+- `api/tests/WebAuthnTest.elm` feeds `WebAuthn` attestations and assertions written by
+  another encoder, byte by byte, for `https://pixo.pics`: one fixture per flag or fault.
+  No test checks a real signature: `MainTest` answers `VerifySignature` itself, with
+  `SignatureChecked`.
 - `tests/ApiTest.elm` checks `Api.parse` against `Api.method` and `Api.path` for each
   route in its `routes`: add a new route there.
 

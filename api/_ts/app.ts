@@ -1,11 +1,66 @@
 import "./xhr";
-import { Elm, type JsonValue } from "../src/Main.elm";
+import { Elm, type FromElm, type JsonValue } from "../src/Main.elm";
 
 //-- RESOLVERS
 
 type Resolve = (response: Response) => void;
 const toResolver = (resolve: Resolve) => resolve as unknown as JsonValue;
 const fromResolver = (resolver: JsonValue) => resolver as unknown as Resolve;
+
+//-- SIGNATURES
+
+type Key = Extract<FromElm, { tag: "VerifySignature" }>["key"];
+
+const fromBase64Url = (value: string) =>
+  Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
+
+const importKey = (key: Key) => {
+  switch (key.tag) {
+    case "ES256":
+      return crypto.subtle.importKey(
+        "jwk",
+        { kty: "EC", crv: "P-256", x: key.x, y: key.y },
+        { name: "ECDSA", namedCurve: "P-256" },
+        false,
+        ["verify"],
+      );
+
+    case "EdDSA":
+      return crypto.subtle.importKey(
+        "jwk",
+        { kty: "OKP", crv: "Ed25519", x: key.x },
+        "Ed25519",
+        false,
+        ["verify"],
+      );
+
+    case "RS256":
+      return crypto.subtle.importKey(
+        "jwk",
+        { kty: "RSA", n: key.n, e: key.e },
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["verify"],
+      );
+
+    default:
+      return key satisfies never;
+  }
+};
+
+const verifySignature = async (key: Key, signed: string, signature: string) => {
+  try {
+    const cryptoKey = await importKey(key);
+    return await crypto.subtle.verify(
+      key.tag === "ES256" ? { name: "ECDSA", hash: "SHA-256" } : cryptoKey.algorithm,
+      cryptoKey,
+      fromBase64Url(signature),
+      fromBase64Url(signed),
+    );
+  } catch {
+    return false;
+  }
+};
 
 //-- INIT
 
@@ -68,6 +123,16 @@ app.ports.interopFromElm.subscribe((msg) => {
 
     case "Log":
       return console[msg.level](msg.message);
+
+    case "VerifySignature":
+      return void verifySignature(msg.key, msg.signed, msg.signature).then((valid) =>
+        app.ports.interopToElm.send({
+          tag: "SignatureChecked",
+          resolve: msg.resolve,
+          signIn: msg.signIn,
+          valid,
+        }),
+      );
 
     default:
       return msg satisfies never;
