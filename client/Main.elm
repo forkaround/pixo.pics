@@ -852,7 +852,7 @@ viewSignInForm ceremony signIn busy problem =
                                 "Email me a link"
                             )
                         |> Button.toHtml [ type_ "submit", disabled busy ]
-                    , Field.separator [] [ text "Or" ]
+                    , Field.separator [ class "*:data-[slot=field-separator-content]:bg-card" ] [ text "Or" ]
                     , viewProblem ceremony
                     , Button.new
                         |> Button.text
