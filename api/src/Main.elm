@@ -1,4 +1,4 @@
-module Main exposing (Model, Msg, main)
+module Main exposing (Effect(..), Model, Msg(..), init, main, update)
 
 import Api
 import Db
@@ -7,17 +7,24 @@ import InteropPorts
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Neon
-import Task exposing (Task)
+import Task
 import Time
 
 
 main : Program Decode.Value Model Msg
 main =
     Platform.worker
-        { init = init
-        , update = update
+        { init =
+            \flags ->
+                init flags
+                    |> Tuple.mapSecond perform
+        , update =
+            \msg model ->
+                update msg model
+                    |> Tuple.mapSecond perform
         , subscriptions = \_ -> Sub.map GotInterop InteropPorts.toElm
         }
+
 
 
 -- MODEL
@@ -29,7 +36,7 @@ type alias Model =
     }
 
 
-init : Decode.Value -> ( Model, Cmd Msg )
+init : Decode.Value -> ( Model, Effect )
 init flags =
     case InteropPorts.decodeFlags flags of
         Ok config ->
@@ -56,9 +63,15 @@ init flags =
             )
 
 
-log : Interop.Level -> String -> Cmd msg
+log : Interop.Level -> String -> Effect
 log level message =
-    InteropPorts.fromElm (Interop.Log level message)
+    SendToJs (Interop.Log level message)
+
+
+respond : Interop.Resolver -> Response -> Effect
+respond resolver response =
+    SendToJs (Interop.Respond resolver response)
+
 
 
 -- UPDATE
@@ -71,10 +84,10 @@ type Msg
 
 type Reply
     = Now Response
-    | Later (Interop.Resolver -> Cmd Msg)
+    | Later (Interop.Resolver -> Effect)
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> ( Model, Effect )
 update msg model =
     case msg of
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
@@ -84,23 +97,21 @@ update msg model =
             in
             case reply of
                 Now response ->
-                    ( next, InteropPorts.fromElm (Interop.Respond resolver response) )
+                    ( next, respond resolver response )
 
-                Later toCmd ->
-                    ( next, toCmd resolver )
+                Later toEffect ->
+                    ( next, toEffect resolver )
 
         DatabaseChecked resolver ( latency, Ok () ) ->
             if latency > slowAfter then
                 ( model
-                , Cmd.batch
-                    [ InteropPorts.fromElm
-                        (Interop.Respond resolver
-                            (health model
-                                { status = Api.Warn
-                                , latencyMs = Just latency
-                                , output = Just ("Slower than " ++ String.fromInt slowAfter ++ " ms.")
-                                }
-                            )
+                , Batch
+                    [ respond resolver
+                        (health model
+                            { status = Api.Warn
+                            , latencyMs = Just latency
+                            , output = Just ("Slower than " ++ String.fromInt slowAfter ++ " ms.")
+                            }
                         )
                     , log Interop.Warn ("Health check slow: the database took " ++ String.fromInt latency ++ " ms.")
                     ]
@@ -108,25 +119,59 @@ update msg model =
 
             else
                 ( model
-                , InteropPorts.fromElm
-                    (Interop.Respond resolver
-                        (health model { status = Api.Pass, latencyMs = Just latency, output = Nothing })
-                    )
+                , respond resolver
+                    (health model { status = Api.Pass, latencyMs = Just latency, output = Nothing })
                 )
 
         DatabaseChecked resolver ( latency, Err problem ) ->
             ( model
-            , Cmd.batch
-                [ InteropPorts.fromElm
-                    (Interop.Respond resolver
-                        (health model { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
-                    )
+            , Batch
+                [ respond resolver
+                    (health model { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
                 , log Interop.Error ("Health check failed: " ++ Neon.errorToString problem)
                 ]
             )
 
         GotInterop (Err _) ->
-            ( model, Cmd.none )
+            ( model, NoEffect )
+
+
+
+-- EFFECTS
+
+
+type Effect
+    = NoEffect
+    | Batch (List Effect)
+    | SendToJs Interop.FromElm
+    | Database (Neon.Request (Int -> Msg))
+
+
+perform : Effect -> Cmd Msg
+perform effect =
+    case effect of
+        NoEffect ->
+            Cmd.none
+
+        Batch effects ->
+            Cmd.batch (List.map perform effects)
+
+        SendToJs value ->
+            InteropPorts.fromElm value
+
+        Database request ->
+            Time.now
+                |> Task.andThen
+                    (\start ->
+                        Neon.send request
+                            |> Task.andThen
+                                (\toMsg ->
+                                    Time.now
+                                        |> Task.map (\end -> toMsg (Time.posixToMillis end - Time.posixToMillis start))
+                                )
+                    )
+                |> Task.perform identity
+
 
 
 -- ROUTES
@@ -165,9 +210,11 @@ handle model _ r =
                 Ok db ->
                     Later
                         (\resolver ->
-                            Neon.run (Neon.withTimeout healthTimeout db) Db.ping
-                                |> timed
-                                |> Task.perform (DatabaseChecked resolver)
+                            Database
+                                (Neon.run (Neon.withTimeout healthTimeout db)
+                                    Db.ping
+                                    (\result latency -> DatabaseChecked resolver ( latency, result ))
+                                )
                         )
 
                 Err problem ->
@@ -205,22 +252,6 @@ failure problem =
 
         Neon.UnexpectedResult _ ->
             "Unexpected result."
-
-
-timed : Task x a -> Task Never ( Int, Result x a )
-timed task =
-    Time.now
-        |> Task.andThen
-            (\start ->
-                task
-                    |> Task.map Ok
-                    |> Task.onError (Err >> Task.succeed)
-                    |> Task.andThen
-                        (\result ->
-                            Time.now
-                                |> Task.map (\end -> ( Time.posixToMillis end - Time.posixToMillis start, result ))
-                        )
-            )
 
 
 

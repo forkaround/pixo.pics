@@ -1,9 +1,27 @@
 module Api exposing
-    ( Route(..), Method(..), Problem(..), parse, method, path, toString, methodToString
-    , Endpoint, health
-    , route, encodeBody, encodeResponse, responseDecoder
-    , encodeError, errorDecoder
-    , Health, Check, Status(..), Release, healthOf, checks, checkNames
+    ( Check
+    , Endpoint
+    , Health
+    , Method(..)
+    , Problem(..)
+    , Release
+    , Route(..)
+    , Status(..)
+    , checkNames
+    , checks
+    , encodeBody
+    , encodeError
+    , encodeResponse
+    , errorDecoder
+    , health
+    , healthOf
+    , method
+    , methodToString
+    , parse
+    , path
+    , responseDecoder
+    , route
+    , toString
     )
 
 import Json.Decode as Decode exposing (Decoder)
@@ -147,7 +165,6 @@ encodeResponse (Endpoint e) =
 responseDecoder : Endpoint body response -> Decoder response
 responseDecoder (Endpoint e) =
     e.response.decoder
-
 
 
 encodeError : String -> Encode.Value

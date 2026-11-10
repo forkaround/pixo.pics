@@ -1,4 +1,4 @@
-module Main exposing (Model, Msg, main)
+module Main exposing (Effect(..), Model, Msg(..), init, main, update, view)
 
 import Api
 import ApiClient
@@ -19,8 +19,14 @@ import UI.Tabs as Tabs
 main : Program Decode.Value Model Msg
 main =
     Browser.element
-        { init = init
-        , update = update
+        { init =
+            \flags ->
+                init flags
+                    |> Tuple.mapSecond perform
+        , update =
+            \msg model ->
+                update msg model
+                    |> Tuple.mapSecond perform
         , view = view
         , subscriptions = \_ -> Sub.map GotInterop InteropPorts.toElm
         }
@@ -43,7 +49,7 @@ type Health
     | Unreachable String
 
 
-init : Decode.Value -> ( Model, Cmd Msg )
+init : Decode.Value -> ( Model, Effect )
 init flags =
     let
         { theme, systemDark } =
@@ -58,9 +64,9 @@ init flags =
     )
 
 
-checkHealth : Cmd Msg
+checkHealth : Effect
 checkHealth =
-    ApiClient.request Api.health () GotHealth
+    Request (ApiClient.request Api.health () GotHealth)
 
 
 isDark : Model -> Bool
@@ -87,33 +93,56 @@ type Msg
     | ThemeSelected Theme
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> ( Model, Effect )
 update msg model =
     case msg of
         GotInterop (Ok (Interop.SystemThemeChanged systemDark)) ->
-            ( { model | systemDark = systemDark }, Cmd.none )
+            ( { model | systemDark = systemDark }, NoEffect )
 
         GotInterop _ ->
-            ( model, Cmd.none )
+            ( model, NoEffect )
 
         GotHealth (Ok health) ->
-            ( { model | health = Checked health }, Cmd.none )
+            ( { model | health = Checked health }, NoEffect )
 
         GotHealth (Err message) ->
-            ( { model | health = Unreachable message }, Cmd.none )
+            ( { model | health = Unreachable message }, NoEffect )
 
         CheckHealth ->
             ( { model | health = Checking (lastReport model.health) }, checkHealth )
 
         ThemeSelected theme ->
             ( { model | theme = theme }
-            , InteropPorts.fromElm
+            , SendToJs
                 (Interop.WriteToLocalStorage
                     { key = "theme"
                     , value = Interop.themeToString theme
                     }
                 )
             )
+
+
+
+-- EFFECTS
+
+
+type Effect
+    = NoEffect
+    | Request (ApiClient.Request Msg)
+    | SendToJs Interop.FromElm
+
+
+perform : Effect -> Cmd Msg
+perform effect =
+    case effect of
+        NoEffect ->
+            Cmd.none
+
+        Request request ->
+            ApiClient.send request
+
+        SendToJs value ->
+            InteropPorts.fromElm value
 
 
 

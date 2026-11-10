@@ -1,4 +1,4 @@
-port module InteropPorts exposing (fromElm, toElm, decodeFlags)
+port module InteropPorts exposing (decodeFlags, fromElm, toElm)
 
 import InteropDefinitions
 import Json.Decode

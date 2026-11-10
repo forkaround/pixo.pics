@@ -9,6 +9,8 @@ on Postgres (Neon), deployed to Vercel.
 | ------------------ | -------------------------------------------------------------------------- |
 | `client/`          | Browser app (root `elm.json`). `client/UI/`: elmcn components              |
 | `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs)                  |
+| `tests/`           | elm-test suites for `client/` and `shared/` (see [Tests](#tests))          |
+| `api/tests/`       | elm-test suites for the server                                             |
 | `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon` driver                   |
 | `api/_ts/`         | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin) |
 | `api/index.ts`     | The only Vercel Function                                                   |
@@ -25,11 +27,13 @@ bun run build           # types:api, types:app, check, then vite build (server, 
 bun run preview         # the build on :4173
 bun run types           # regenerate *.elm.d.ts after changing an InteropDefinitions.elm
 bun check               # type-check both TypeScript projects
-bun fmt                 # format (--check to only report)
+bun run test            # test:app (tests/), then test:api (api/tests/); not `bun test`
+bun fmt                 # format: fmt:bun and fmt:elm (elm-format), in parallel
+bun fmt-check           # report what bun fmt would change, and change nothing
 bun db <command>        # graphile-migrate: migrate, watch, commit, uncommit, status, reset --erase
 ```
 
-CI (`.github/workflows/ci.yml`) runs `bun fmt --check` and `bun run build`; it needs no
+CI (`.github/workflows/ci.yml`) runs `bun fmt-check` and `bun run build`; it needs no
 database.
 
 ## Rules
@@ -38,6 +42,14 @@ database.
 - **No comments** in code or config. Exceptions: tool directives
   (`// @ts-expect-error`, `/// <reference ... />`) and generated or signed files (`.gmrc`,
   `*.elm.d.ts`, committed migrations).
+- **Elm is formatted by elm-format**: the `fmt` script replaces Bun's `bun fmt` and runs
+  `fmt:bun` (Bun's formatter) and `fmt:elm` (`elm-format` over `client`, `shared`,
+  `api/src` and both `tests` folders) in parallel. A new Elm folder goes in `fmt:elm` and
+  `fmt-check:elm`. A multi-line `exposing` list comes out one name per line, sorted:
+  keeping groups takes `@docs` in a doc comment, which the rule above excludes.
+- **`bun fmt-check`, not `bun fmt --check`**: `bun run --parallel` takes `--check` for one
+  more script to run, so `bun fmt --check` formats in place, then fails. For Bun's flags
+  (a path, `--staged`...), run `bun fmt --no-script <flags>`.
 - **`.env.example` mirrors `.env`**: same variables, same order, changed in the same
   commit, with values that work on a fresh checkout and never a secret. Vercel-only
   variables (`DATABASE_URL_UNPOOLED`) stay out of both.
@@ -301,9 +313,11 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
 
 - `client/Main.elm`, started by `client/main.ts`. `client/main.css` is the only
   stylesheet, linked from `index.html`: don't import CSS from TypeScript.
-- Calls the server only through `ApiClient.request` with an `Api.Endpoint`. On an error
-  status it decodes `Api.errorDecoder`, then the endpoint's response (the health report
-  comes with a 503).
+- `init` and `update` return a `Main.Effect`, never a `Cmd`: `perform` turns it into one
+  in `main`, and the tests simulate it (see [Tests](#tests)).
+- Calls the server only through `ApiClient.request` with an `Api.Endpoint`, wrapped in the
+  `Request` effect; `ApiClient.send` is its `Cmd`. On an error status it decodes
+  `Api.errorDecoder`, then the endpoint's response (the health report comes with a 503).
 - The page: the Server card (one row per `Api.checks`, release and region in the
   footer) and a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
   `WriteToLocalStorage` port, read back from the flags).
@@ -341,6 +355,10 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - `api/src/Main.elm` is a `Platform.worker`. `app.ts` exports `handle(request)`: each
   request carries its Promise's `resolve` into Elm, which sends it back with the
   response. The Vercel Function and the `app:api` plugin (`dev.ts`) serve `handle`.
+- `init` and `update` return a `Main.Effect`, never a `Cmd`: `Batch`, `SendToJs` (a
+  response or a log) and `Database`, a `Neon.Request` whose message also takes the
+  latency in ms. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
+  (see [Tests](#tests)).
 - `dev.ts` reloads the server on any `.elm`/`.ts` change in `api/` or `shared/`
   (restarting from `init`); `preview` runs `dist/server/app.js`.
 - Routes are real URLs under `/api`: entry points pass requests through unchanged.
@@ -362,8 +380,10 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 ## Neon driver
 
 - `Neon.elm` is `neon()` from `@neondatabase/serverless` in Elm: one HTTPS request per
-  query or transaction; `Neon.run` and `Neon.commit` return `Task`s. It uses `elm/http`,
-  so `app.ts` imports `xhr.ts` first: Bun, Node and Vercel have no `XMLHttpRequest`.
+  query or transaction. `Neon.run` and `Neon.commit` take the message for the result and
+  return a `Neon.Request`, a record describing that HTTP request; `Neon.send` is its
+  `Task`. It uses `elm/http`, so `app.ts` imports `xhr.ts` first: Bun, Node and Vercel
+  have no `XMLHttpRequest`.
 - Rows are JSON objects by column name. `boolean`, `smallint`, `integer`, `real`,
   `double precision`, `json`, `jsonb` and arrays arrive as JSON; `NULL` as `null`;
   everything else (`bigint`, `numeric`, `timestamptz`...) as Postgres's text. Duplicate
@@ -374,6 +394,37 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - The endpoint comes from the host (`ep-x.eu-central-1.aws.neon.tech` →
   `api.eu-central-1.aws.neon.tech`); `Neon.withEndpoint` overrides it (`NEON_ENDPOINT`).
 - The connection string holds the password: server only.
+
+## Tests
+
+`bun run test` runs [elm-test](https://github.com/rtfeldman/node-test-runner) in both Elm
+projects, one after the other: `test:app` over `tests/` (root `elm.json`: `client/` and
+`shared/`), `test:api` over `api/tests/` (`api/elm.json`). `bun test` is Bun's own runner
+and finds nothing. One project, rerun on save: `bun run test:app --watch`. Test packages
+go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for the server.
+
+- Each project's `MainTest.elm` drives its whole `Main` with
+  [elm-program-test](https://elm-program-test.netlify.app/): `start`, then what happens
+  to the program, ending in one `expect*` (`ensure*` in between).
+- `simulateEffects` there mirrors `Main.perform`, and `simulateSubscriptions` mirrors
+  `main`'s `subscriptions`. Both match `Main.Effect` without a wildcard, so a new variant
+  doesn't compile until `perform` and `simulateEffects` handle it.
+- A new endpoint, query or `FromElm` variant needs no new simulation: reuse `Request`,
+  `Database` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
+- Write response bodies and port values as the JSON on the wire, not with the `Api` or
+  `Interop` encoders: the test then pins the format the other side relies on.
+- Browser: act as a user does. `clickButton` by its text (the `sr-only` label on an
+  icon-only control), then look for text in the view.
+- Server: `request "first" "GET" [ "api", "health" ]` sends a request in through the port.
+  Its first argument stands for the Promise's `resolve` and comes back in the response.
+  Neon is the only HTTP call: answer it with `simulateHttpOk "POST" endpoint` and the rows.
+  `advanceTime` moves the clock that `Database` measures latency with.
+- A passing check of outgoing port values clears them: look at logs and responses in one
+  `expectSent`, not one after the other.
+- `api/tests/NeonTest.elm` needs no program: a `Neon.Request` is a record, so `.body` is
+  what would be sent and `.onResponse` decodes an `Http.Response`.
+- `tests/ApiTest.elm` checks `Api.parse` against `Api.method` and `Api.path` for each
+  route in its `routes`: add a new route there.
 
 ## Vercel
 

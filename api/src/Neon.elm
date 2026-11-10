@@ -1,9 +1,33 @@
 module Neon exposing
-    ( Connection, connect, withEndpoint, withTimeout, endpoint
-    , Param, text, int, float, bool, json, null, nullable
-    , Query, select, selectOne, one, execute, map, run
-    , Transaction, transaction, with, commit
-    , Error(..), PostgresError, errorToString
+    ( Connection
+    , Error(..)
+    , Param
+    , PostgresError
+    , Query
+    , Request
+    , Transaction
+    , bool
+    , commit
+    , connect
+    , endpoint
+    , errorToString
+    , execute
+    , float
+    , int
+    , json
+    , map
+    , null
+    , nullable
+    , one
+    , run
+    , select
+    , selectOne
+    , send
+    , text
+    , transaction
+    , with
+    , withEndpoint
+    , withTimeout
     )
 
 import Http
@@ -242,11 +266,12 @@ map f (Query q) =
         }
 
 
-run : Connection -> Query a -> Task Error a
-run connection (Query q) =
+run : Connection -> Query a -> (Result Error a -> msg) -> Request msg
+run connection (Query q) toMsg =
     request connection
         (encodeQuery (Query q))
         (resultDecoder |> Decode.map q.toResult)
+        toMsg
 
 
 encodeQuery : Query a -> Encode.Value
@@ -303,13 +328,14 @@ with (Query q) (Transaction t) =
         }
 
 
-commit : Connection -> Transaction a -> Task Error a
-commit connection (Transaction t) =
+commit : Connection -> Transaction a -> (Result Error a -> msg) -> Request msg
+commit connection (Transaction t) toMsg =
     request connection
         (Encode.object [ ( "queries", Encode.list identity t.queries ) ])
         (Decode.field "results" (Decode.list resultDecoder)
             |> Decode.map (t.toResult >> Result.map Tuple.first)
         )
+        toMsg
 
 
 
@@ -382,19 +408,40 @@ postgresErrorDecoder =
 -- HTTP
 
 
-request : Connection -> Encode.Value -> Decoder (Result String a) -> Task Error a
-request (Connection c) body decoder =
+type alias Request msg =
+    { method : String
+    , headers : List ( String, String )
+    , url : String
+    , body : Encode.Value
+    , timeout : Maybe Float
+    , onResponse : Http.Response String -> msg
+    }
+
+
+request : Connection -> Encode.Value -> Decoder (Result String a) -> (Result Error a -> msg) -> Request msg
+request (Connection c) body decoder toMsg =
+    { method = "POST"
+    , headers =
+        [ ( "Neon-Connection-String", c.connectionString )
+        , ( "Neon-Raw-Text-Output", "false" )
+        , ( "Neon-Array-Mode", "false" )
+        ]
+    , url = c.endpoint
+    , body = body
+    , timeout = c.timeout
+    , onResponse = toMsg << resolve decoder
+    }
+
+
+send : Request msg -> Task x msg
+send { method, headers, url, body, timeout, onResponse } =
     Http.task
-        { method = "POST"
-        , headers =
-            [ Http.header "Neon-Connection-String" c.connectionString
-            , Http.header "Neon-Raw-Text-Output" "false"
-            , Http.header "Neon-Array-Mode" "false"
-            ]
-        , url = c.endpoint
+        { method = method
+        , headers = List.map (\( name, value ) -> Http.header name value) headers
+        , url = url
         , body = Http.jsonBody body
-        , resolver = Http.stringResolver (resolve decoder)
-        , timeout = c.timeout
+        , resolver = Http.stringResolver (onResponse >> Ok)
+        , timeout = timeout
         }
 
 
