@@ -167,7 +167,8 @@ bun db migrate
   on a port clash, which stops `bun dev`; a failed `SELECT 1` only warns.
 - One proxy serves every database on that Postgres. It holds connections open, so
   `bun db reset --erase` needs `docker stop neon-http-proxy` first. ~50 ms per query.
-- `bun db migrate` creates the tables in [Schema](#schema); `/api/health` needs none.
+- `bun db migrate` creates the tables in [Schema](#schema). `/api/health` needs them
+  too: it runs `rate_limit`, so it fails until the database is migrated.
 
 ## Migrations
 
@@ -438,12 +439,14 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   check fails.
 - Logging: `log Interop.Info|Warn|Error message`; `app.ts` calls `console[level]` with the
   message unchanged, which Vercel reads as the level. Database errors log at `error`.
-- `GET /api/health` (IETF health check draft, `application/health+json`) runs `Db.ping`
-  with a 5 s `Neon.withTimeout`. It answers `pass` with 200, `warn` with 200 when slower
-  than `slowAfter` (1 s), and `fail` with 503, also when the server's role is a superuser,
-  `BYPASSRLS` or a table owner. `output` is a short public reason; the full
+- `GET /api/health` (IETF health check draft, `application/health+json`) runs one
+  transaction with a 5 s `Neon.withTimeout`: `Db.rateLimit` on `health:ip:<x-real-ip>`
+  (60 per minute), then `Db.ping`. An address over its limit gets 429 with
+  `retry-after`, as JSON. Otherwise it answers `pass` with 200, `warn` with 200 when
+  slower than `slowAfter` (1 s), and `fail` with 503, also when the server's role is a
+  superuser, `BYPASSRLS` or a table owner. `output` is a short public reason; the full
   error is only logged, since Postgres messages can name roles and tables. Latency
-  includes the hop to Neon and any cold start.
+  includes the rate limit, the hop to Neon and any cold start.
 - `POST /api/auth/signup` (`Api.signUp`, `{ "email", "username" }`) starts a sign-up: it
   answers 202 with `{}` once the magic link is emailed, and the user exists only when the
   link is consumed. Three steps, each a `Msg`: both rate limits in one transaction

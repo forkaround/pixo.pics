@@ -129,7 +129,7 @@ respond resolver response =
 
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
-    | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error () )
+    | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error Db.RateLimit )
     | DatabaseFailed Interop.Resolver String Neon.Error
     | LinkLimited Interop.Resolver Ask ( Db.RateLimit, Db.RateLimit )
     | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
@@ -182,7 +182,10 @@ update msg model =
                     toEffect resolver
             )
 
-        DatabaseChecked resolver ( latency, Ok () ) ->
+        DatabaseChecked resolver ( _, Ok (Db.Limited limited) ) ->
+            ( model, respond resolver (tooManyRequests limited.retryAfter) )
+
+        DatabaseChecked resolver ( latency, Ok (Db.Allowed _) ) ->
             if latency > slowAfter then
                 ( model
                 , Batch
@@ -616,8 +619,17 @@ handle model request r =
                     Later
                         (\resolver ->
                             Database
-                                (Neon.run (Neon.withTimeout healthTimeout db)
-                                    Db.ping
+                                (Neon.commit (Neon.withTimeout healthTimeout db)
+                                    (Neon.transaction always
+                                        |> Neon.with
+                                            (Db.rateLimit
+                                                { key = "health:ip:" ++ clientAddress request
+                                                , limit = 60
+                                                , windowSeconds = 60
+                                                }
+                                            )
+                                        |> Neon.with Db.ping
+                                    )
                                     (\result latency -> DatabaseChecked resolver ( latency, result ))
                                 )
                         )

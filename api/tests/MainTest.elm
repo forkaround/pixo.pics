@@ -59,10 +59,43 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> request "first" "GET" [ "api", "health" ]
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"exempt":true}],"rowCount":1}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"allowed":true,"remaining":59,"retry_after":0}]},{"rows":[{"exempt":true}],"rowCount":1}]}"""
                         |> expectSent (\values -> ( levels values, responses values ))
                             ( [ "info", "error" ]
                             , [ health "first" 503 (failed "Unexpected result.") ]
+                            )
+            , test "limits by address before it checks the database" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> requestWith
+                            { resolve = "first"
+                            , method = "GET"
+                            , path = [ "api", "health" ]
+                            , headers = [ ( "x-real-ip", "203.0.113.7" ) ]
+                            , body = ""
+                            }
+                        |> ProgramTest.expectHttpRequest "POST"
+                            endpoint
+                            (Test.Http.expectJsonBody
+                                (Decode.field "queries" (Decode.list (Decode.field "params" (Decode.list Decode.string))))
+                                (Expect.equal [ [ "health:ip:203.0.113.7", "60", "60" ], [] ])
+                            )
+            , test "answers 429 without a word in the log when the address asks too often" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> request "first" "GET" [ "api", "health" ]
+                        |> ProgramTest.advanceTime 1500
+                        |> ProgramTest.simulateHttpOk "POST"
+                            endpoint
+                            """{"results":[{"rows":[{"allowed":false,"remaining":0,"retry_after":2}]},{"rows":[{"exempt":false}],"rowCount":1}]}"""
+                        |> expectSent (\values -> ( levels values, responses values ))
+                            ( [ "info" ]
+                            , [ { resolve = "first"
+                                , status = 429
+                                , headers = ( "retry-after", "2" ) :: jsonHeaders
+                                , body = """{"error":"Too many attempts. Try again later."}"""
+                                }
+                              ]
                             )
             , test "fails when Neon can't be reached" <|
                 \() ->
@@ -997,7 +1030,7 @@ endpoint =
 
 notExempt : String
 notExempt =
-    """{"rows":[{"exempt":false}],"rowCount":1}"""
+    """{"results":[{"rows":[{"allowed":true,"remaining":59,"retry_after":0}]},{"rows":[{"exempt":false}],"rowCount":1}]}"""
 
 
 allowed : String

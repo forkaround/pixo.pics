@@ -72,7 +72,8 @@ create `api` in SQL and set `API_DATABASE_PASSWORD` on Vercel: see
 
 `GET /api/health` queries the database as `api` and answers in the
 [health check format](https://datatracker.ietf.org/doc/html/draft-inadarei-api-health-check):
-`pass` (200), `warn` when slower than 1 s (200), or `fail` (503).
+`pass` (200), `warn` when slower than 1 s (200), or `fail` (503). An address gets 60
+checks a minute, then 429 with `retry-after`.
 
 ```json
 {
