@@ -1,9 +1,9 @@
-module Email.SignUp exposing (email)
+module Services.Mailer.SignUp exposing (email)
 
-import Email.Layout as Layout exposing (Email)
+import Services.Mailer.Layout as Layout exposing (Message)
 
 
-email : { url : String, username : String, expiresInMinutes : Int } -> Email
+email : { url : String, username : String, expiresInMinutes : Int } -> Message
 email { url, username, expiresInMinutes } =
     Layout.render
         { subject = "Confirm your email for pixo"

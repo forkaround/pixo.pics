@@ -8,7 +8,7 @@ Vercel on Neon.
 | Browser  | `client/`  | Elm, Vite, Tailwind, [elmcn](https://github.com/ricardocasares/elmcn) |
 | Server   | `api/`     | Elm `Platform.worker` in one Vercel Function (Bun runtime)            |
 | Shared   | `shared/`  | Routes, endpoints and JSON codecs both sides compile against          |
-| Database | `api/src/` | `Neon.elm`, Postgres over HTTP; schema with Graphile Migrate          |
+| Database | `api/src/` | `Services/Neon.elm`, Postgres over HTTP; schema with Graphile Migrate |
 
 ## Quick start
 

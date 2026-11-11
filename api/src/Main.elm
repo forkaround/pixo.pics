@@ -2,29 +2,29 @@ module Main exposing (Effect(..), Model, Msg(..), init, main, update)
 
 import Aaguid
 import Api
-import Brevo
+import Data.Email as Email exposing (Email)
+import Data.LinkToken as LinkToken exposing (LinkToken)
+import Data.Origin as Origin exposing (Origin)
+import Data.SessionToken as SessionToken exposing (SessionToken)
+import Data.SignUp as SignUp
+import Data.Username as Username
 import Db
 import Dict
-import Email
-import Email.Layout
-import Email.PasskeyAdded
-import Email.PasskeyRemoved
-import Email.SignIn
-import Email.SignUp
-import EmailAddress exposing (EmailAddress)
 import InteropDefinitions as Interop exposing (Request, Response)
 import InteropPorts
 import Json.Decode as Decode
 import Json.Encode as Encode
-import LinkToken exposing (LinkToken)
-import Neon
-import Origin exposing (Origin)
 import Path
-import SessionToken exposing (SessionToken)
-import SignUp
+import Services.Brevo as Brevo
+import Services.Mailer as Mailer
+import Services.Mailer.Layout as Layout
+import Services.Mailer.PasskeyAdded
+import Services.Mailer.PasskeyRemoved
+import Services.Mailer.SignIn
+import Services.Mailer.SignUp
+import Services.Neon as Neon
 import Task
 import Time
-import Username
 import WebAuthn
 
 
@@ -49,7 +49,7 @@ main =
 
 type alias Model =
     { db : Result String Neon.Connection
-    , email : Result String Email.Mailer
+    , email : Result String Mailer.Mailer
     , origin : Origin
     , release : Api.Release
     }
@@ -70,7 +70,7 @@ init flags =
                             Db.connect config
 
                         email =
-                            Email.configure config
+                            Mailer.configure config
                     in
                     ( { db = db
                       , email = email
@@ -133,7 +133,7 @@ type Msg
     | DatabaseFailed Interop.Resolver String Neon.Error
     | LinkLimited Interop.Resolver Ask ( Db.RateLimit, Db.RateLimit )
     | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
-    | SignInLinkCreated Interop.Resolver EmailAddress Db.SignInLink
+    | SignInLinkCreated Interop.Resolver Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | SessionFound Interop.Resolver (Maybe Api.Account)
     | SessionEnded Interop.Resolver
@@ -151,10 +151,10 @@ type Msg
 
 type Ask
     = SignUpAsked SignUp.SignUp
-    | SignInAsked EmailAddress
+    | SignInAsked Email
 
 
-askedBy : Ask -> EmailAddress
+askedBy : Ask -> Email
 askedBy ask =
     case ask of
         SignUpAsked signUp ->
@@ -263,8 +263,8 @@ update msg model =
                 Db.SignUpLink token ->
                     sendLink model
                         resolver
-                        { to = EmailAddress.toString signUp.email, tag = "sign-up" }
-                        (Email.SignUp.email
+                        { to = Email.toString signUp.email, tag = "sign-up" }
+                        (Services.Mailer.SignUp.email
                             { url = verifyUrl model token
                             , username = Username.toString signUp.username
                             , expiresInMinutes = linkMinutes
@@ -272,7 +272,7 @@ update msg model =
                         )
 
                 Db.SignInInstead token ->
-                    sendLink model resolver { to = EmailAddress.toString signUp.email, tag = "sign-in" } (signInEmail model token)
+                    sendLink model resolver { to = Email.toString signUp.email, tag = "sign-in" } (signInEmail model token)
             )
 
         SignInLinkCreated resolver email link ->
@@ -282,7 +282,7 @@ update msg model =
                     respond resolver accepted
 
                 Db.SignInLink token ->
-                    sendLink model resolver { to = EmailAddress.toString email, tag = "sign-in" } (signInEmail model token)
+                    sendLink model resolver { to = Email.toString email, tag = "sign-in" } (signInEmail model token)
             )
 
         LinkSent resolver (Ok _) ->
@@ -361,7 +361,7 @@ update msg model =
                 resolver
                 (json 201 (Api.encodeResponse Api.addPasskey passkey))
                 { to = account.email, tag = "passkey-added" }
-                (Email.PasskeyAdded.email
+                (Services.Mailer.PasskeyAdded.email
                     { url = dashboardUrl model
                     , username = account.username
                     , passkey = passkey.name
@@ -381,7 +381,7 @@ update msg model =
                 resolver
                 (json 200 (Api.encodeResponse (Api.deletePasskey "") ()))
                 { to = account.email, tag = "passkey-removed" }
-                (Email.PasskeyRemoved.email
+                (Services.Mailer.PasskeyRemoved.email
                     { url = dashboardUrl model
                     , username = account.username
                     , passkey = name
@@ -486,19 +486,19 @@ update msg model =
             ( model, NoEffect )
 
 
-sendLink : Model -> Interop.Resolver -> { to : String, tag : String } -> Email.Layout.Email -> Effect
+sendLink : Model -> Interop.Resolver -> { to : String, tag : String } -> Layout.Message -> Effect
 sendLink model resolver envelope email =
     case model.email of
         Ok mailer ->
-            Email (Email.send mailer envelope email (LinkSent resolver))
+            Mail (Mailer.send mailer envelope email (LinkSent resolver))
 
         Err _ ->
             respond resolver unavailable
 
 
-signInEmail : Model -> LinkToken -> Email.Layout.Email
+signInEmail : Model -> LinkToken -> Layout.Message
 signInEmail model token =
-    Email.SignIn.email
+    Services.Mailer.SignIn.email
         { url = verifyUrl model token
         , expiresInMinutes = linkMinutes
         }
@@ -524,11 +524,11 @@ answered resolver step toMsg result =
             DatabaseFailed resolver step problem
 
 
-notify : Model -> Interop.Resolver -> Response -> { to : String, tag : String } -> Email.Layout.Email -> Effect
+notify : Model -> Interop.Resolver -> Response -> { to : String, tag : String } -> Layout.Message -> Effect
 notify model resolver response envelope email =
     case model.email of
         Ok mailer ->
-            Email (Email.send mailer envelope email (Notified resolver response))
+            Mail (Mailer.send mailer envelope email (Notified resolver response))
 
         Err _ ->
             respond resolver response
@@ -551,7 +551,7 @@ type Effect
     | Batch (List Effect)
     | SendToJs Interop.FromElm
     | Database (Neon.Request (Int -> Msg))
-    | Email (Brevo.Request Msg)
+    | Mail (Brevo.Request Msg)
 
 
 perform : Effect -> Cmd Msg
@@ -579,7 +579,7 @@ perform effect =
                     )
                 |> Task.perform identity
 
-        Email request ->
+        Mail request ->
             Brevo.send request
                 |> Task.perform identity
 
@@ -651,7 +651,7 @@ handle model request r =
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signIn) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email.")
-                    |> Result.andThen (.email >> EmailAddress.parse >> Result.mapError (error 422))
+                    |> Result.andThen (.email >> Email.parse >> Result.mapError (error 422))
                     |> Result.map SignInAsked
                 )
 
@@ -832,7 +832,7 @@ askForLink model request parsed =
                                 )
                             |> Neon.with
                                 (Db.rateLimit
-                                    { key = "magic-link:email:" ++ EmailAddress.toString (askedBy ask)
+                                    { key = "magic-link:email:" ++ Email.toString (askedBy ask)
                                     , limit = 3
                                     , windowSeconds = 900
                                     }

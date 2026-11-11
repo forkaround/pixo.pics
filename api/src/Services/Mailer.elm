@@ -1,7 +1,7 @@
-module Email exposing (Mailer, configure, send)
+module Services.Mailer exposing (Mailer, configure, send)
 
-import Brevo
-import Email.Layout exposing (Email)
+import Services.Brevo as Brevo
+import Services.Mailer.Layout exposing (Message)
 
 
 type alias Mailer =
@@ -28,7 +28,7 @@ timeout =
     10000
 
 
-send : Mailer -> { to : String, tag : String } -> Email -> (Result Brevo.Error Brevo.Sent -> msg) -> Brevo.Request msg
+send : Mailer -> { to : String, tag : String } -> Message -> (Result Brevo.Error Brevo.Sent -> msg) -> Brevo.Request msg
 send mailer { to, tag } email toMsg =
     Brevo.email mailer.client
         { from = mailer.from

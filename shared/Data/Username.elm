@@ -1,4 +1,4 @@
-module Username exposing (Username, parse, toString)
+module Data.Username exposing (Username, parse, toString)
 
 
 type Username

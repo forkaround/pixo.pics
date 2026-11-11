@@ -4,7 +4,7 @@ import Expect exposing (Expectation)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Neon
+import Services.Neon as Neon
 import Test exposing (Test, describe, test)
 import Test.Http
 

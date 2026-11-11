@@ -1,7 +1,7 @@
 module OriginTest exposing (suite)
 
+import Data.Origin as Origin
 import Expect
-import Origin
 import Test exposing (Test, describe, test)
 
 

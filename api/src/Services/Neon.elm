@@ -1,4 +1,4 @@
-module Neon exposing
+module Services.Neon exposing
     ( Connection
     , Error(..)
     , Param

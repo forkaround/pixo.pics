@@ -5,19 +5,21 @@ on Postgres (Neon), deployed to Vercel.
 
 ## Layout
 
-| Path               | What                                                                             |
-| ------------------ | -------------------------------------------------------------------------------- |
-| `client/`          | Browser app (root `elm.json`). `client/UI/`: elmcn components                    |
-| `shared/`          | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages)        |
-| `tests/`           | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                |
-| `api/tests/`       | elm-test suites for the server                                                   |
-| `api/src/`         | Server Elm (`api/elm.json`): `Main`, `Db`, `Neon`, `Brevo`, `WebAuthn`, `Aaguid` |
-| `api/src/Email/`   | Email templates (see [Email](#email))                                            |
-| `api/_ts/`         | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)       |
-| `api/index.ts`     | The only Vercel Function                                                         |
-| `migrations/`      | Graphile Migrate (`.gmrc`)                                                       |
-| `.scripts/neon.sh` | Starts the local Neon proxy                                                      |
-| `.agents/`         | Agent skills, tracked by `skills-lock.json`; `.claude` links here                |
+| Path                | What                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                           |
+| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`       |
+| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`                        |
+| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                       |
+| `api/tests/`        | elm-test suites for the server                                                          |
+| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `WebAuthn`, `Aaguid`                         |
+| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`                             |
+| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email)) |
+| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)              |
+| `api/index.ts`      | The only Vercel Function                                                                |
+| `migrations/`       | Graphile Migrate (`.gmrc`)                                                              |
+| `.scripts/neon.sh`  | Starts the local Neon proxy                                                             |
+| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                       |
 
 ## Commands
 
@@ -74,6 +76,12 @@ pull requests and on `main`; it needs no database.
 - **Keep the Elm projects apart**: the root `elm.json` never lists `api/` folders, so the
   database password can't reach the browser bundle. A package `shared/` imports goes in
   both `elm.json`s; server packages: `elm install` inside `api/`.
+- **Value types live in `Data`**: one module per type, the type exposed
+  without its constructor, made only by that module's `parse`, `fromString`
+  or `decoder`. `shared/Data/` for a value that crosses the wire or sits in
+  a `Path`, `api/src/Data/` for one only the server holds. Import as
+  `import Data.Email as Email exposing (Email)`. Drivers of outside services
+  live in `api/src/Services/`, imported as `import Services.Neon as Neon`.
 - **Every route is handled**: `Api.Route` is matched without a wildcard, so a new route
   doesn't compile until the server handles it. Keep `Api.parse` in step with
   `Api.method` and `Api.path`.
@@ -431,7 +439,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   response. The Vercel Function and the `app:api` plugin (`dev.ts`) serve `handle`.
 - `init` and `update` return a `Main.Effect`, never a `Cmd`: `Batch`, `SendToJs` (a
   response, a log or a signature to check), `Database`, a `Neon.Request` whose message also takes the
-  latency in ms, and `Email`, a `Brevo.Request`. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
+  latency in ms, and `Mail`, a `Brevo.Request`. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
   (see [Tests](#tests)).
 - `dev.ts` reloads the server on any `.elm`/`.ts` change in `api/` or `shared/`
   (restarting from `init`); `preview` runs `dist/server/app.js`.
@@ -453,7 +461,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   answers 202 with `{}` once the magic link is emailed, and the user exists only when the
   link is consumed. Three steps, each a `Msg`: both rate limits in one transaction
   (`magic-link:ip:<x-real-ip>` 10 and `magic-link:email:<email>` 3 per 15 minutes, in that
-  order), `Db.createSignUpLink` (15 minutes), then the `Email` effect.
+  order), `Db.createSignUpLink` (15 minutes), then the `Mail` effect.
 - `POST /api/auth/signin/passkey/options` (`Api.passkeySignInOptions`) answers
   `{ challenge, rpId }`, the challenge lasting 5 minutes, or 429: `Db.signInChallenge`
   limits `passkey:ip:<x-real-ip>` to 20 per 15 minutes and makes the challenge in one
@@ -476,7 +484,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   429 with `retry-after`, 502 (Brevo failed; the link stays until it expires) and 503 (no
   database or email, or the database failed). An email that has an account gets 202 and
   a sign-in link instead.
-- `SignUp.parse` gives an `EmailAddress` and a `Username`, and `EmailAddress.parse` checks a
+- `SignUp.parse` gives an `Email` and a `Username`, and `Email.parse` checks a
   sign-in's email: the only way to make either. `Db.createSignUpLink` and
   `Db.createSignInLink` take nothing else, so an unchecked address doesn't compile.
 - Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
@@ -522,7 +530,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 
 ## Neon driver
 
-- `Neon.elm` is `neon()` from `@neondatabase/serverless` in Elm: one HTTPS request per
+- `Services/Neon.elm` is `neon()` from `@neondatabase/serverless` in Elm: one HTTPS request per
   query or transaction. `Neon.run` and `Neon.commit` take the message for the result and
   return a `Neon.Request`, a record describing that HTTP request; `Neon.send` is its
   `Task`. It uses `elm/http`, so `app.ts` imports `xhr.ts` first: Bun, Node and Vercel
@@ -540,7 +548,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 
 ## Email
 
-- `Brevo.elm` posts one transactional email to `https://api.brevo.com/v3/smtp/email`, as
+- `Services/Brevo.elm` posts one transactional email to `https://api.brevo.com/v3/smtp/email`, as
   Brevo's SDK does: `Brevo.email client message toMsg` returns a `Brevo.Request`, the same
   record as a `Neon.Request`; `Brevo.send` is its `Task`. `Brevo.client` takes the API
   key, sent as the `api-key` header: server only.
@@ -549,20 +557,20 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   scheduling or batches.
 - Any 2xx is `Ok { messageId }`. An error status with Brevo's `{ "code", "message" }` is
   `Rejected { status, code, message }`, anything else `ServerError`. Nothing is retried.
-- A template is a module in `api/src/Email/` with one `email` function from its values
-  to an `Email.Layout.Email`. It lists `Layout` blocks (`Heading`, `Paragraph`, `Button`,
+- A template is a module in `api/src/Services/Mailer/` with one `email` function from its values
+  to a `Services.Mailer.Layout.Message`. It lists `Layout` blocks (`Heading`, `Paragraph`, `Button`,
   `Footnote`) and `Layout.render` writes the HTML and the text from them, escaping every
   value: never build HTML in a template.
-- Templates: `Email.SignIn` and `Email.SignUp`, for the two kinds of magic link;
-  `Email.PasskeyAdded` and `Email.PasskeyRemoved`, which tell the account what happened
+- Templates: `Services.Mailer.SignIn` and `Services.Mailer.SignUp`, for the two kinds of magic link;
+  `Services.Mailer.PasskeyAdded` and `Services.Mailer.PasskeyRemoved`, which tell the account what happened
   to it and link to `<origin>/dashboard`.
-- `Email.configure` (`api/src/Email.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
+- `Mailer.configure` (`api/src/Services/Mailer.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
   an address verified as a sender in Brevo; its name is `pixo`. Without either the server
   starts anyway, warns, and `model.email` is an `Err`.
-- `Email.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient,
-  with a 10 s timeout; wrap it in the `Email` effect. The tag names the template
+- `Mailer.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient,
+  with a 10 s timeout; wrap it in the `Mail` effect. The tag names the template
   (`sign-in`) and shows in Brevo's logs.
-- `POST /api/auth/signup` sends `Email.SignUp`, or `Email.SignIn` (see [Server](#server)).
+- `POST /api/auth/signup` sends `Services.Mailer.SignUp`, or `Services.Mailer.SignIn` (see [Server](#server)).
 
 ## WebAuthn
 
@@ -609,7 +617,7 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   `main`'s `subscriptions`. Both match `Main.Effect` without a wildcard, so a new variant
   doesn't compile until `perform` and `simulateEffects` handle it.
 - A new endpoint, query, email or `FromElm` variant needs no new simulation: reuse
-  `Request`, `Database`, `Email` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
+  `Request`, `Database`, `Mail` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
 - Write response bodies and port values as the JSON on the wire, not with the `Api` or
   `Interop` encoders: the test then pins the format the other side relies on.
 - Browser: act as a user does. `startAt "/auth/signup"` opens a page; `fillIn` a field by
@@ -624,7 +632,7 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   `expectSent`, not one after the other.
 - `api/tests/NeonTest.elm` needs no program: a `Neon.Request` is a record, so `.body` is
   what would be sent and `.onResponse` decodes an `Http.Response`.
-- `api/tests/BrevoTest.elm` works the same way; `api/tests/EmailTest.elm` covers `Email`
+- `api/tests/BrevoTest.elm` works the same way; `api/tests/MailerTest.elm` covers `Mailer`
   and renders the templates. A new template gets a test that its values reach the HTML and the text.
 - `api/tests/WebAuthnTest.elm` feeds `WebAuthn` attestations and assertions written by
   another encoder, byte by byte, for `https://pixo.pics`: one fixture per flag or fault.

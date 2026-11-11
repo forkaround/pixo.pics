@@ -1,25 +1,25 @@
-module EmailAddress exposing (EmailAddress, parse, toString)
+module Data.Email exposing (Email, parse, toString)
 
 
-type EmailAddress
-    = EmailAddress String
+type Email
+    = Email String
 
 
-parse : String -> Result String EmailAddress
+parse : String -> Result String Email
 parse value =
     let
         clean =
             String.toLower (String.trim value)
     in
     if isEmail clean then
-        Ok (EmailAddress clean)
+        Ok (Email clean)
 
     else
         Err "Enter a valid email address."
 
 
-toString : EmailAddress -> String
-toString (EmailAddress value) =
+toString : Email -> String
+toString (Email value) =
     value
 
 

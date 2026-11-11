@@ -1,12 +1,12 @@
-module SignUp exposing (SignUp, parse)
+module Data.SignUp exposing (SignUp, parse)
 
 import Api
-import EmailAddress exposing (EmailAddress)
-import Username exposing (Username)
+import Data.Email as Email exposing (Email)
+import Data.Username as Username exposing (Username)
 
 
 type alias SignUp =
-    { email : EmailAddress
+    { email : Email
     , username : Username
     }
 
@@ -14,5 +14,5 @@ type alias SignUp =
 parse : Api.SignUp -> Result String SignUp
 parse { email, username } =
     Result.map2 SignUp
-        (EmailAddress.parse email)
+        (Email.parse email)
         (Username.parse username)

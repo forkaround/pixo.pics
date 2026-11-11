@@ -1,9 +1,9 @@
 module BrevoTest exposing (suite)
 
-import Brevo
 import Expect
 import Http
 import Json.Encode as Encode
+import Services.Brevo as Brevo
 import Test exposing (Test, describe, test)
 import Test.Http
 

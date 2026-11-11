@@ -1,41 +1,41 @@
-module EmailTest exposing (suite)
+module MailerTest exposing (suite)
 
-import Email
-import Email.Layout as Layout
-import Email.PasskeyAdded
-import Email.PasskeyRemoved
-import Email.SignIn
-import Email.SignUp
 import Expect
 import Json.Decode as Decode
+import Services.Mailer as Mailer
+import Services.Mailer.Layout as Layout
+import Services.Mailer.PasskeyAdded
+import Services.Mailer.PasskeyRemoved
+import Services.Mailer.SignIn
+import Services.Mailer.SignUp
 import Test exposing (Test, describe, test)
 
 
 suite : Test
 suite =
-    describe "Email"
+    describe "Mailer"
         [ describe "configure"
             [ test "needs the API key" <|
                 \() ->
-                    Email.configure { brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics" }
+                    Mailer.configure { brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics" }
                         |> Result.map (\_ -> ())
                         |> Expect.equal (Err "BREVO_API_KEY and EMAIL_FROM must both be set.")
             , test "needs the sender" <|
                 \() ->
-                    Email.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing }
+                    Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing }
                         |> Result.map (\_ -> ())
                         |> Expect.equal (Err "BREVO_API_KEY and EMAIL_FROM must both be set.")
             ]
         , describe "send"
             [ test "sends a template from the configured sender, tagged, with a timeout" <|
                 \() ->
-                    case Email.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics" } of
+                    case Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics" } of
                         Ok mailer ->
                             let
                                 request =
-                                    Email.send mailer
+                                    Mailer.send mailer
                                         { to = "ada@example.com", tag = "sign-in" }
-                                        (Email.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 })
+                                        (Services.Mailer.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 })
                                         identity
                             in
                             ( request.headers
@@ -111,7 +111,7 @@ suite =
         , describe "SignIn"
             [ test "carries the link in the HTML and in the text" <|
                 \() ->
-                    Email.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 }
+                    Services.Mailer.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 }
                         |> Expect.all
                             [ .subject >> Expect.equal "Sign in to pixo"
                             , .html >> contains "href=\"https://pixo.pics/sign-in?token=abc\""
@@ -122,7 +122,7 @@ suite =
         , describe "PasskeyAdded"
             [ test "names the passkey and the account, and links to the dashboard" <|
                 \() ->
-                    Email.PasskeyAdded.email
+                    Services.Mailer.PasskeyAdded.email
                         { url = "https://pixo.pics/dashboard", username = "ada", passkey = Just "Apple Passwords" }
                         |> Expect.all
                             [ .html >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
@@ -132,7 +132,7 @@ suite =
                             ]
             , test "says just a passkey when nothing names it" <|
                 \() ->
-                    Email.PasskeyAdded.email { url = "https://pixo.pics/dashboard", username = "ada", passkey = Nothing }
+                    Services.Mailer.PasskeyAdded.email { url = "https://pixo.pics/dashboard", username = "ada", passkey = Nothing }
                         |> .text
                         |> String.contains "A passkey was added to the account ada."
                         |> Expect.equal True
@@ -140,7 +140,7 @@ suite =
         , describe "PasskeyRemoved"
             [ test "names the passkey and the account, and links to the dashboard" <|
                 \() ->
-                    Email.PasskeyRemoved.email
+                    Services.Mailer.PasskeyRemoved.email
                         { url = "https://pixo.pics/dashboard", username = "ada", passkey = Just "Apple Passwords" }
                         |> Expect.all
                             [ .html >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
@@ -152,7 +152,7 @@ suite =
         , describe "SignUp"
             [ test "names the account and carries the link" <|
                 \() ->
-                    Email.SignUp.email
+                    Services.Mailer.SignUp.email
                         { url = "https://pixo.pics/sign-up?token=abc"
                         , username = "ada"
                         , expiresInMinutes = 15
@@ -165,7 +165,7 @@ suite =
                             ]
             , test "escapes the username" <|
                 \() ->
-                    Email.SignUp.email
+                    Services.Mailer.SignUp.email
                         { url = "https://pixo.pics/sign-up?token=abc"
                         , username = "<img src=x>"
                         , expiresInMinutes = 15

@@ -1,4 +1,4 @@
-module SessionToken exposing (SessionToken, decoder, fromString, toString)
+module Data.SessionToken exposing (SessionToken, decoder, fromString, toString)
 
 import Json.Decode as Decode exposing (Decoder)
 

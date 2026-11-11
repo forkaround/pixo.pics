@@ -1,4 +1,4 @@
-module Brevo exposing
+module Services.Brevo exposing
     ( Address
     , Client
     , Content

@@ -1,4 +1,4 @@
-module LinkToken exposing (LinkToken, decoder, fromString, toString)
+module Data.LinkToken exposing (LinkToken, decoder, fromString, toString)
 
 import Json.Decode as Decode exposing (Decoder)
 

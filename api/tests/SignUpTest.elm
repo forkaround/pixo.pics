@@ -1,10 +1,10 @@
 module SignUpTest exposing (suite)
 
-import EmailAddress
+import Data.Email as Email
+import Data.SignUp as SignUp
+import Data.Username as Username
 import Expect
-import SignUp
 import Test exposing (Test, describe, test)
-import Username
 
 
 suite : Test
@@ -63,7 +63,7 @@ parsed =
     SignUp.parse
         >> Result.map
             (\signUp ->
-                { email = EmailAddress.toString signUp.email
+                { email = Email.toString signUp.email
                 , username = Username.toString signUp.username
                 }
             )

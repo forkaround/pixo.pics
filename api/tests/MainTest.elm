@@ -1,12 +1,12 @@
 module MainTest exposing (suite)
 
-import Brevo
 import Expect exposing (Expectation)
 import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Main
 import ProgramTest exposing (ProgramTest)
+import Services.Brevo as Brevo
 import SimulatedEffect.Cmd
 import SimulatedEffect.Http
 import SimulatedEffect.Ports
@@ -1489,7 +1489,7 @@ simulateEffects effect =
                     )
                 |> SimulatedEffect.Task.perform identity
 
-        Main.Email { method, headers, url, body, timeout, onResponse } ->
+        Main.Mail { method, headers, url, body, timeout, onResponse } ->
             SimulatedEffect.Http.task
                 { method = method
                 , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers

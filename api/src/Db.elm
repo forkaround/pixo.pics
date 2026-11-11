@@ -1,13 +1,13 @@
 module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), RateLimit(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
-import EmailAddress exposing (EmailAddress)
+import Data.Email as Email exposing (Email)
+import Data.LinkToken as LinkToken exposing (LinkToken)
+import Data.SessionToken as SessionToken exposing (SessionToken)
+import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
-import LinkToken exposing (LinkToken)
-import Neon
-import SessionToken exposing (SessionToken)
-import Username exposing (Username)
+import Services.Neon as Neon
 import WebAuthn
 
 
@@ -95,17 +95,17 @@ type SignInLink
     | NoAccount
 
 
-createSignInLink : { email : EmailAddress, ttlSeconds : Int } -> Neon.Query SignInLink
+createSignInLink : { email : Email, ttlSeconds : Int } -> Neon.Query SignInLink
 createSignInLink { email, ttlSeconds } =
     Neon.one "SELECT outcome, token FROM create_sign_in_link($1, $2)"
-        [ Neon.text (EmailAddress.toString email), Neon.int ttlSeconds ]
+        [ Neon.text (Email.toString email), Neon.int ttlSeconds ]
         signInLinkDecoder
 
 
-createSignUpLink : { email : EmailAddress, username : Username, ttlSeconds : Int } -> Neon.Query SignUpLink
+createSignUpLink : { email : Email, username : Username, ttlSeconds : Int } -> Neon.Query SignUpLink
 createSignUpLink { email, username, ttlSeconds } =
     Neon.one "SELECT outcome, token FROM create_sign_up_link($1, $2, $3)"
-        [ Neon.text (EmailAddress.toString email), Neon.text (Username.toString username), Neon.int ttlSeconds ]
+        [ Neon.text (Email.toString email), Neon.text (Username.toString username), Neon.int ttlSeconds ]
         signUpLinkDecoder
 
 

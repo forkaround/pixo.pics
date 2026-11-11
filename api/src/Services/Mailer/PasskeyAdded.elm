@@ -1,9 +1,9 @@
-module Email.PasskeyAdded exposing (email)
+module Services.Mailer.PasskeyAdded exposing (email)
 
-import Email.Layout as Layout exposing (Email)
+import Services.Mailer.Layout as Layout exposing (Message)
 
 
-email : { url : String, username : String, passkey : Maybe String } -> Email
+email : { url : String, username : String, passkey : Maybe String } -> Message
 email { url, username, passkey } =
     Layout.render
         { subject = "A passkey was added to your pixo account"

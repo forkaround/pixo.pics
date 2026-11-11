@@ -1,7 +1,7 @@
-module Email.Layout exposing (Block(..), Email, minutes, render)
+module Services.Mailer.Layout exposing (Block(..), Message, minutes, render)
 
 
-type alias Email =
+type alias Message =
     { subject : String
     , html : String
     , text : String
@@ -15,7 +15,7 @@ type Block
     | Footnote String
 
 
-render : { subject : String, preview : String, blocks : List Block } -> Email
+render : { subject : String, preview : String, blocks : List Block } -> Message
 render { subject, preview, blocks } =
     { subject = subject
     , html = document subject preview (String.concat (List.map blockToHtml blocks))

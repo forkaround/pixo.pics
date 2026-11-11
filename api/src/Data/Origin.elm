@@ -1,4 +1,4 @@
-module Origin exposing (Origin, isSecure, local, parse, rpId, toString)
+module Data.Origin exposing (Origin, isSecure, local, parse, rpId, toString)
 
 import WebAuthn
 

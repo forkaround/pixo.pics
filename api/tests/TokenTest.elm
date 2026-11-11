@@ -1,9 +1,9 @@
 module TokenTest exposing (suite)
 
+import Data.LinkToken as LinkToken
+import Data.SessionToken as SessionToken
 import Expect
 import Json.Decode as Decode
-import LinkToken
-import SessionToken
 import Test exposing (Test, describe, test)
 
 
