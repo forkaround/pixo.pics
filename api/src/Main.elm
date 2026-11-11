@@ -1,7 +1,6 @@
 module Main exposing (Model, Msg(..), init, main, update)
 
 import Api
-import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.Origin as Origin exposing (Origin)
@@ -9,6 +8,7 @@ import Data.SignUp as SignUp
 import Db
 import Effect exposing (Effect(..), log, query, respond, transact)
 import Flow.Health
+import Flow.PasskeySignIn
 import Flow.Passkeys
 import Flow.Session
 import InteropDefinitions as Interop
@@ -30,7 +30,6 @@ import Services.Neon as Neon
 import SessionCookie
 import Task
 import Time
-import WebAuthn
 
 
 main : Program Decode.Value Model Msg
@@ -111,15 +110,13 @@ type Msg
     | Health Flow.Health.Msg
     | Session Flow.Session.Msg
     | Passkeys Flow.Passkeys.Msg
+    | PasskeySignIn Flow.PasskeySignIn.Msg
     | LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | VerificationFound Interop.Resolver (Maybe Api.Verification)
     | VerificationConsumed Interop.Resolver Db.Consumed
-    | SignInStarted Interop.Resolver Db.SignInChallenge
-    | KeyFound Interop.Resolver { signed : String, signature : String, signIn : Interop.SignIn } (Maybe String)
-    | PasskeySignedIn Interop.Resolver Db.PasskeySignIn
 
 
 type Ask
@@ -234,6 +231,12 @@ running server msg =
         Passkeys flowMsg ->
             Effect.map Passkeys (Flow.Passkeys.update server flowMsg)
 
+        GotInterop (Ok (Interop.SignatureChecked resolver signIn valid)) ->
+            Effect.map PasskeySignIn (Flow.PasskeySignIn.signatureChecked server resolver signIn valid)
+
+        PasskeySignIn flowMsg ->
+            Effect.map PasskeySignIn (Flow.PasskeySignIn.update server flowMsg)
+
         DatabaseFailed { resolver, step, problem } ->
             Batch
                 [ respond resolver Response.unavailable
@@ -320,68 +323,6 @@ running server msg =
         VerificationConsumed resolver Db.UsernameTakenMeanwhile ->
             respond resolver (Response.error 409 "That username was taken in the meantime. Sign up again with another.")
 
-        SignInStarted resolver (Db.SignInChallenge challenge) ->
-            respond resolver
-                (Response.json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId server.origin }))
-
-        SignInStarted resolver (Db.TooManyChallenges limited) ->
-            respond resolver (Response.tooManyRequests limited.retryAfter)
-
-        KeyFound resolver assertion (Just publicKey) ->
-            case
-                WebAuthn.key publicKey
-                    |> Result.andThen
-                        (\key ->
-                            WebAuthn.signature key assertion.signature
-                                |> Result.map (Tuple.pair key)
-                        )
-            of
-                Ok ( key, signature ) ->
-                    SendToJs
-                        (Interop.VerifySignature resolver
-                            { key = key
-                            , signed = assertion.signed
-                            , signature = signature
-                            , signIn = assertion.signIn
-                            }
-                        )
-
-                Err problem ->
-                    refuse resolver problem
-
-        KeyFound resolver _ Nothing ->
-            refuse resolver "No passkey has this credential id."
-
-        GotInterop (Ok (Interop.SignatureChecked resolver signIn valid)) ->
-            if valid then
-                query server.db
-                    resolver
-                    "Passkey sign-in failed at its session"
-                    (Db.signInWithPasskey
-                        { challenge = signIn.challenge
-                        , credentialId = signIn.credentialId
-                        , signCount = signIn.signCount
-                        , backedUp = signIn.backedUp
-                        , sessionSeconds = SessionCookie.lifetimeSeconds
-                        }
-                    )
-                    (PasskeySignedIn resolver)
-
-            else
-                refuse resolver "The signature does not match the passkey."
-
-        PasskeySignedIn resolver (Db.PasskeySignedIn { sessionToken, account }) ->
-            respond resolver
-                (Response.json 200 (Api.encodeResponse Api.passkeySignIn account)
-                    |> SessionCookie.set server.origin sessionToken
-                )
-
-        PasskeySignedIn resolver Db.ChallengeSpent ->
-            refuse resolver "The challenge is expired, used or unknown."
-
-        PasskeySignedIn resolver Db.PasskeyStale ->
-            refuse resolver "The passkey is gone, or its counter did not move forward."
-
         GotInterop (Err _) ->
             NoEffect
 
@@ -397,14 +338,6 @@ signInEmail server token =
         { url = Origin.href server.origin (Path.Verify (Just token))
         , expiresInMinutes = linkMinutes
         }
-
-
-refuse : Interop.Resolver -> String -> Effect Msg
-refuse resolver problem =
-    Batch
-        [ respond resolver (Response.error 401 "This passkey could not be verified. Try again, or sign in with an emailed link.")
-        , log Interop.Warn ("Passkey sign-in refused: " ++ String.left 200 problem)
-        ]
 
 
 
@@ -524,51 +457,10 @@ handle server request r =
             Reply.map Passkeys (Flow.Passkeys.remove id server request)
 
         Api.PostPasskeySignInOptions ->
-            Later
-                (\resolver ->
-                    query server.db
-                        resolver
-                        "Passkey sign-in failed at its challenge"
-                        (Db.signInChallenge
-                            { policy = RateLimit.passkeyChallenges (Request.clientAddress request)
-                            , ttlSeconds = WebAuthn.challengeSeconds
-                            }
-                        )
-                        (SignInStarted resolver)
-                )
+            Reply.map PasskeySignIn (Flow.PasskeySignIn.options server request)
 
         Api.PostPasskeySignIn ->
-            case Decode.decodeString (Api.bodyDecoder Api.passkeySignIn) request.body of
-                Ok assertion ->
-                    Later
-                        (\resolver ->
-                            case ( WebAuthn.authenticate server.origin assertion, CredentialId.fromString assertion.id ) of
-                                ( Ok authentication, Just credentialId ) ->
-                                    query server.db
-                                        resolver
-                                        "Passkey sign-in failed at its key"
-                                        (Db.passkeyPublicKey credentialId)
-                                        (KeyFound resolver
-                                            { signed = authentication.signed
-                                            , signature = assertion.signature
-                                            , signIn =
-                                                { challenge = authentication.challenge
-                                                , credentialId = credentialId
-                                                , signCount = authentication.signCount
-                                                , backedUp = authentication.backedUp
-                                                }
-                                            }
-                                        )
-
-                                ( Err problem, _ ) ->
-                                    refuse resolver problem
-
-                                ( Ok _, Nothing ) ->
-                                    refuse resolver "The assertion names no credential."
-                        )
-
-                Err _ ->
-                    Now (Response.error 400 "Expected a JSON object with an id, a clientDataJSON, an authenticatorData and a signature.")
+            Reply.map PasskeySignIn (Flow.PasskeySignIn.authenticate server request)
 
 
 askForLink : Server -> Request -> Result Response Ask -> Reply Msg
