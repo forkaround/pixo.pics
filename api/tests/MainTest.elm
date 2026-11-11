@@ -7,7 +7,7 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Main
 import ProgramTest exposing (ProgramTest)
-import Services.Brevo as Brevo
+import Services.BrevoMailer as BrevoMailer
 import SimulatedEffect.Cmd
 import SimulatedEffect.Http
 import SimulatedEffect.Ports
@@ -137,7 +137,7 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
-                        |> ProgramTest.simulateHttpOk "POST" Brevo.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
+                        |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
                         |> expectResponses
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "limits by address, then by the cleaned email" <|
@@ -172,7 +172,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.expectHttpRequest "POST"
-                            Brevo.endpoint
+                            BrevoMailer.endpoint
                             (Expect.all
                                 [ Test.Http.hasHeader "api-key" "xkeysib-secret"
                                 , Test.Http.expectJsonBody email
@@ -193,7 +193,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-in")
                         |> ProgramTest.ensureHttpRequest "POST"
-                            Brevo.endpoint
+                            BrevoMailer.endpoint
                             (Test.Http.expectJsonBody email
                                 (Expect.equal
                                     { from = "hello@pixo.pics"
@@ -204,7 +204,7 @@ suite =
                                     }
                                 )
                             )
-                        |> ProgramTest.simulateHttpOk "POST" Brevo.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
+                        |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
                         |> expectResponses
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "prints the sign-up link instead of emailing it when no key is set locally" <|
@@ -213,7 +213,7 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
-                        |> ProgramTest.ensureHttpRequests "POST" Brevo.endpoint (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectSent
                             (\values ->
                                 ( List.any (Tuple.second >> String.contains "https://pixo.pics/auth/verify#Zm9vYmFy") (logs values)
@@ -277,7 +277,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.simulateHttpResponse "POST"
-                            Brevo.endpoint
+                            BrevoMailer.endpoint
                             (Test.Http.httpResponse
                                 { statusCode = 401
                                 , headers = []
@@ -444,7 +444,7 @@ suite =
                             )
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-in")
                         |> ProgramTest.ensureHttpRequest "POST"
-                            Brevo.endpoint
+                            BrevoMailer.endpoint
                             (Test.Http.expectJsonBody email
                                 (Expect.equal
                                     { from = "hello@pixo.pics"
@@ -455,7 +455,7 @@ suite =
                                     }
                                 )
                             )
-                        |> ProgramTest.simulateHttpOk "POST" Brevo.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
+                        |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
                         |> expectResponses
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "answers 202 and emails nobody when the address has no account" <|
@@ -464,7 +464,7 @@ suite =
                         |> signIn """{"email":"ada@example.com"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
-                        |> ProgramTest.ensureHttpRequests "POST" Brevo.endpoint (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectResponses
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "answers 422 to an email that is not one" <|
@@ -694,7 +694,7 @@ suite =
                             endpoint
                             """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"credential_id":"oKGio6SlpqeoqaqrrK2urw","name":"Apple Passwords","created_at":"2026-11-10T09:30:00Z"}]},{"rows":[{"email":"ada@example.com","username":"ada"}]}]}"""
                         |> ProgramTest.ensureHttpRequest "POST"
-                            Brevo.endpoint
+                            BrevoMailer.endpoint
                             (Test.Http.expectJsonBody (notice "Apple Passwords")
                                 (Expect.equal
                                     { to = [ "ada@example.com" ]
@@ -704,14 +704,14 @@ suite =
                                     }
                                 )
                             )
-                        |> ProgramTest.simulateHttpOk "POST" Brevo.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
+                        |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
                         |> expectResponses [ added ]
             , test "answers 201 all the same, and logs why, when the email fails" <|
                 \() ->
                     start (Just databaseUrl)
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
-                        |> ProgramTest.simulateHttpResponse "POST" Brevo.endpoint Test.Http.networkError
+                        |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, responses values ))
                             ( [ "info", "error" ], [ added ] )
             , test "prints the notice instead of emailing it when no key is set locally" <|
@@ -719,7 +719,7 @@ suite =
                     startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
-                        |> ProgramTest.ensureHttpRequests "POST" Brevo.endpoint (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectSent
                             (\values ->
                                 ( levels values
@@ -789,7 +789,7 @@ suite =
                             endpoint
                             """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"name":"Apple Passwords"}]},{"rows":[{"email":"ada@example.com","username":"ada"}]}]}"""
                         |> ProgramTest.ensureHttpRequest "POST"
-                            Brevo.endpoint
+                            BrevoMailer.endpoint
                             (Test.Http.expectJsonBody (notice "Apple Passwords")
                                 (Expect.equal
                                     { to = [ "ada@example.com" ]
@@ -799,7 +799,7 @@ suite =
                                     }
                                 )
                             )
-                        |> ProgramTest.simulateHttpOk "POST" Brevo.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
+                        |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
                         |> expectResponses
                             [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
             , test "answers 404 and emails nobody when the account has no such passkey" <|
@@ -809,7 +809,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST"
                             endpoint
                             """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[]},{"rows":[{"email":"ada@example.com","username":"ada"}]}]}"""
-                        |> ProgramTest.ensureHttpRequests "POST" Brevo.endpoint (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectResponses
                             [ { resolve = "first"
                               , status = 404
