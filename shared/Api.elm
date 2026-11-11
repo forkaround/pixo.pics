@@ -46,6 +46,8 @@ module Api exposing
     , verify
     )
 
+import Data.Email as Email exposing (Email)
+import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import Url
@@ -422,8 +424,8 @@ signInCodec =
 
 
 type alias Verification =
-    { email : String
-    , username : String
+    { email : Email
+    , username : Username
     , newAccount : Bool
     }
 
@@ -433,21 +435,21 @@ verificationCodec =
     { encode =
         \v ->
             Encode.object
-                [ ( "email", Encode.string v.email )
-                , ( "username", Encode.string v.username )
+                [ ( "email", Email.encode v.email )
+                , ( "username", Username.encode v.username )
                 , ( "newAccount", Encode.bool v.newAccount )
                 ]
     , decoder =
         Decode.map3 Verification
-            (Decode.field "email" Decode.string)
-            (Decode.field "username" Decode.string)
+            (Decode.field "email" Email.decoder)
+            (Decode.field "username" Username.decoder)
             (Decode.field "newAccount" Decode.bool)
     }
 
 
 type alias Account =
-    { email : String
-    , username : String
+    { email : Email
+    , username : Username
     }
 
 
@@ -456,13 +458,13 @@ accountCodec =
     { encode =
         \a ->
             Encode.object
-                [ ( "email", Encode.string a.email )
-                , ( "username", Encode.string a.username )
+                [ ( "email", Email.encode a.email )
+                , ( "username", Username.encode a.username )
                 ]
     , decoder =
         Decode.map2 Account
-            (Decode.field "email" Decode.string)
-            (Decode.field "username" Decode.string)
+            (Decode.field "email" Email.decoder)
+            (Decode.field "username" Username.decoder)
     }
 
 

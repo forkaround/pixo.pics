@@ -1,6 +1,8 @@
 module MailerTest exposing (suite)
 
-import Expect
+import Data.Email as Email
+import Data.Username as Username
+import Expect exposing (Expectation)
 import Json.Decode as Decode
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
@@ -25,16 +27,21 @@ suite =
                     Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing }
                         |> Result.map (\_ -> ())
                         |> Expect.equal (Err "BREVO_API_KEY and EMAIL_FROM must both be set.")
+            , test "refuses a sender that is not an address" <|
+                \() ->
+                    Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello" }
+                        |> Result.map (\_ -> ())
+                        |> Expect.equal (Err "EMAIL_FROM is not an email address.")
             ]
         , describe "send"
             [ test "sends a template from the configured sender, tagged, with a timeout" <|
                 \() ->
-                    case Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics" } of
-                        Ok mailer ->
+                    case ( Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics" }, Email.parse "ada@example.com" ) of
+                        ( Ok mailer, Ok to ) ->
                             let
                                 request =
                                     Mailer.send mailer
-                                        { to = "ada@example.com", tag = "sign-in" }
+                                        { to = to, tag = "sign-in" }
                                         (Services.Mailer.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 })
                                         identity
                             in
@@ -54,8 +61,8 @@ suite =
                                         }
                                     )
 
-                        Err problem ->
-                            Expect.fail problem
+                        _ ->
+                            Expect.fail "The mailer or the address did not parse."
             ]
         , describe "Layout"
             [ test "writes the text version from the same blocks" <|
@@ -122,58 +129,71 @@ suite =
         , describe "PasskeyAdded"
             [ test "names the passkey and the account, and links to the dashboard" <|
                 \() ->
-                    Services.Mailer.PasskeyAdded.email
-                        { url = "https://pixo.pics/dashboard", username = "ada", passkey = Just "Apple Passwords" }
-                        |> Expect.all
-                            [ .html >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
-                            , .text >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
-                            , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
-                            , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
-                            ]
+                    withUsername "ada"
+                        (\username ->
+                            Services.Mailer.PasskeyAdded.email
+                                { url = "https://pixo.pics/dashboard", username = username, passkey = Just "Apple Passwords" }
+                                |> Expect.all
+                                    [ .html >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
+                                    , .text >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
+                                    , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                                    , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                                    ]
+                        )
             , test "says just a passkey when nothing names it" <|
                 \() ->
-                    Services.Mailer.PasskeyAdded.email { url = "https://pixo.pics/dashboard", username = "ada", passkey = Nothing }
-                        |> .text
-                        |> String.contains "A passkey was added to the account ada."
-                        |> Expect.equal True
+                    withUsername "ada"
+                        (\username ->
+                            Services.Mailer.PasskeyAdded.email { url = "https://pixo.pics/dashboard", username = username, passkey = Nothing }
+                                |> .text
+                                |> String.contains "A passkey was added to the account ada."
+                                |> Expect.equal True
+                        )
             ]
         , describe "PasskeyRemoved"
             [ test "names the passkey and the account, and links to the dashboard" <|
                 \() ->
-                    Services.Mailer.PasskeyRemoved.email
-                        { url = "https://pixo.pics/dashboard", username = "ada", passkey = Just "Apple Passwords" }
-                        |> Expect.all
-                            [ .html >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
-                            , .text >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
-                            , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
-                            , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
-                            ]
+                    withUsername "ada"
+                        (\username ->
+                            Services.Mailer.PasskeyRemoved.email
+                                { url = "https://pixo.pics/dashboard", username = username, passkey = Just "Apple Passwords" }
+                                |> Expect.all
+                                    [ .html >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
+                                    , .text >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
+                                    , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                                    , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                                    ]
+                        )
             ]
         , describe "SignUp"
             [ test "names the account and carries the link" <|
                 \() ->
-                    Services.Mailer.SignUp.email
-                        { url = "https://pixo.pics/sign-up?token=abc"
-                        , username = "ada"
-                        , expiresInMinutes = 15
-                        }
-                        |> Expect.all
-                            [ .subject >> Expect.equal "Confirm your email for pixo"
-                            , .html >> contains "href=\"https://pixo.pics/sign-up?token=abc\""
-                            , .text >> contains "create the account ada."
-                            , .text >> contains "Create my account:\nhttps://pixo.pics/sign-up?token=abc"
-                            ]
-            , test "escapes the username" <|
-                \() ->
-                    Services.Mailer.SignUp.email
-                        { url = "https://pixo.pics/sign-up?token=abc"
-                        , username = "<img src=x>"
-                        , expiresInMinutes = 15
-                        }
-                        |> .html
-                        |> excludes "<img"
+                    withUsername "ada"
+                        (\username ->
+                            Services.Mailer.SignUp.email
+                                { url = "https://pixo.pics/sign-up?token=abc"
+                                , username = username
+                                , expiresInMinutes = 15
+                                }
+                                |> Expect.all
+                                    [ .subject >> Expect.equal "Confirm your email for pixo"
+                                    , .html >> contains "href=\"https://pixo.pics/sign-up?token=abc\""
+                                    , .text >> contains "create the account ada."
+                                    , .text >> contains "Create my account:\nhttps://pixo.pics/sign-up?token=abc"
+                                    ]
+                        )
             ]
         ]
+
+
+withUsername : String -> (Username.Username -> Expectation) -> Expectation
+withUsername value toExpectation =
+    case Username.parse value of
+        Ok username ->
+            toExpectation username
+
+        Err problem ->
+            Expect.fail problem
 
 
 contains : String -> String -> Expect.Expectation

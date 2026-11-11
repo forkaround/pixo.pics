@@ -1,4 +1,7 @@
-module Data.Email exposing (Email, parse, toString)
+module Data.Email exposing (Email, decoder, encode, parse, toString)
+
+import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 
 
 type Email
@@ -16,6 +19,25 @@ parse value =
 
     else
         Err "Enter a valid email address."
+
+
+decoder : Decoder Email
+decoder =
+    Decode.string
+        |> Decode.andThen
+            (\value ->
+                case parse value of
+                    Ok parsed ->
+                        Decode.succeed parsed
+
+                    Err problem ->
+                        Decode.fail problem
+            )
+
+
+encode : Email -> Encode.Value
+encode (Email value) =
+    Encode.string value
 
 
 toString : Email -> String

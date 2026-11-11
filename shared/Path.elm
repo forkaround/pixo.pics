@@ -1,5 +1,6 @@
 module Path exposing (Path(..), parse, toString)
 
+import Data.LinkToken as LinkToken exposing (LinkToken)
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser)
 
@@ -8,7 +9,7 @@ type Path
     = Home
     | SignUp
     | SignIn
-    | Verify (Maybe String)
+    | Verify (Maybe LinkToken)
     | Dashboard
     | NotFound
 
@@ -29,7 +30,7 @@ toString path =
             "/auth/verify"
 
         Verify (Just token) ->
-            "/auth/verify#" ++ token
+            "/auth/verify#" ++ LinkToken.toString token
 
         Dashboard ->
             "/dashboard"
@@ -50,16 +51,6 @@ parser =
         [ Parser.map Home Parser.top
         , Parser.map SignUp (Parser.s "auth" </> Parser.s "signup")
         , Parser.map SignIn (Parser.s "auth" </> Parser.s "signin")
-        , Parser.map Verify (Parser.s "auth" </> Parser.s "verify" </> Parser.fragment nonEmpty)
+        , Parser.map Verify (Parser.s "auth" </> Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))
         , Parser.map Dashboard (Parser.s "dashboard")
         ]
-
-
-nonEmpty : Maybe String -> Maybe String
-nonEmpty fragment =
-    case fragment of
-        Just "" ->
-            Nothing
-
-        _ ->
-            fragment

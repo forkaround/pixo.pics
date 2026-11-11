@@ -369,7 +369,8 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   each with the text to show (`ApiClient.errorToString`).
 - A `Browser.application` without the `Navigation.Key` in its model: `main` keeps it
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
-  `open` picks the `Page` from `Path.parse` (`shared/Path.elm`), which names every
+  `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
+  `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
   address: `/`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
   `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
@@ -487,6 +488,10 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - `SignUp.parse` gives an `Email` and a `Username`, and `Email.parse` checks a
   sign-in's email: the only way to make either. `Db.createSignUpLink` and
   `Db.createSignInLink` take nothing else, so an unchecked address doesn't compile.
+  `Mailer.send` takes an `Email` as well, and `Api.Account` and `Api.Verification` carry
+  `Email` and `Username`: `Db` reads them with `Email.decoder` and `Username.decoder`,
+  which parse. Request bodies (`Api.SignUp`, `Api.SignIn`) stay raw strings, so the
+  server can tell a 400 from a 422.
 - Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
   reaches no server log. For the same reason the verify routes take it as
   `authorization: Bearer <token>`, and answer 401 without it.
@@ -568,10 +573,11 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   to it and link to `<origin>/dashboard`.
 - `Mailer.configure` (`api/src/Services/Mailer.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
   an address verified as a sender in Brevo; its name is `pixo`. Without either the server
-  starts anyway, warns, and `model.email` is an `Err`.
-- `Mailer.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient,
-  with a 10 s timeout; wrap it in the `Mail` effect. The tag names the template
-  (`sign-in`) and shows in Brevo's logs.
+  starts anyway, warns, and `model.email` is an `Err`. `EMAIL_FROM` is parsed as an `Email`;
+  one that isn't leaves `model.email` an `Err` (`EMAIL_FROM is not an email address.`).
+- `Mailer.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient, whose
+  `to` is an `Email`, with a 10 s timeout; wrap it in the `Mail` effect. The tag names the
+  template (`sign-in`) and shows in Brevo's logs.
 - `POST /api/auth/signup` sends `Services.Mailer.SignUp`, or `Services.Mailer.SignIn` (see [Server](#server)).
 
 ## WebAuthn

@@ -1,5 +1,6 @@
 module PathTest exposing (suite)
 
+import Data.LinkToken as LinkToken
 import Expect
 import Path exposing (Path)
 import Test exposing (Test, describe, test)
@@ -72,7 +73,8 @@ next path =
             Just (Path.Verify Nothing)
 
         Path.Verify Nothing ->
-            Just (Path.Verify (Just "Zm9vYmFy"))
+            LinkToken.fromString "Zm9vYmFy"
+                |> Maybe.map (\token -> Path.Verify (Just token))
 
         Path.Verify (Just _) ->
             Just Path.Dashboard

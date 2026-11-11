@@ -1,4 +1,7 @@
-module Data.Username exposing (Username, parse, toString)
+module Data.Username exposing (Username, decoder, encode, parse, toString)
+
+import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 
 
 type Username
@@ -16,6 +19,25 @@ parse value =
 
     else
         Err "A username has 3 to 20 characters: letters, digits and underscores."
+
+
+decoder : Decoder Username
+decoder =
+    Decode.string
+        |> Decode.andThen
+            (\value ->
+                case parse value of
+                    Ok parsed ->
+                        Decode.succeed parsed
+
+                    Err problem ->
+                        Decode.fail problem
+            )
+
+
+encode : Username -> Encode.Value
+encode (Username value) =
+    Encode.string value
 
 
 toString : Username -> String

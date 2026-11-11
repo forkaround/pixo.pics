@@ -65,25 +65,25 @@ suite =
                         |> Expect.equal (Ok { email = "ada@example.com" })
             ]
         , describe "session"
-            [ test "decodes what it encodes" <|
+            [ test "encodes what it decodes" <|
                 \() ->
-                    Api.encodeResponse Api.session { email = "ada@example.com", username = "ada" }
-                        |> Decode.decodeValue (Api.responseDecoder Api.session)
-                        |> Expect.equal (Ok { email = "ada@example.com", username = "ada" })
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada"}"""
+                        |> Result.map (Api.encodeResponse Api.session >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada"}""")
             ]
         , describe "verification"
-            [ test "decodes what it encodes" <|
+            [ test "encodes what it decodes" <|
                 \() ->
-                    Api.encodeResponse Api.verification { email = "ada@example.com", username = "ada", newAccount = True }
-                        |> Decode.decodeValue (Api.responseDecoder Api.verification)
-                        |> Expect.equal (Ok { email = "ada@example.com", username = "ada", newAccount = True })
+                    Decode.decodeString (Api.responseDecoder Api.verification) """{"email":"ada@example.com","username":"ada","newAccount":true}"""
+                        |> Result.map (Api.encodeResponse Api.verification >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada","newAccount":true}""")
             ]
         , describe "verify"
-            [ test "decodes what it encodes" <|
+            [ test "encodes what it decodes" <|
                 \() ->
-                    Api.encodeResponse Api.verify { email = "ada@example.com", username = "ada" }
-                        |> Decode.decodeValue (Api.responseDecoder Api.verify)
-                        |> Expect.equal (Ok { email = "ada@example.com", username = "ada" })
+                    Decode.decodeString (Api.responseDecoder Api.verify) """{"email":"ada@example.com","username":"ada"}"""
+                        |> Result.map (Api.encodeResponse Api.verify >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada"}""")
             ]
         , describe "passkeys"
             [ test "decodes what it encodes" <|

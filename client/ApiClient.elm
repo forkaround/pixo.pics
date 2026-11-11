@@ -1,6 +1,7 @@
 module ApiClient exposing (Error(..), Request, errorToString, request, send, withToken)
 
 import Api exposing (Endpoint)
+import Data.LinkToken as LinkToken exposing (LinkToken)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -44,9 +45,9 @@ request endpoint body toMsg =
     }
 
 
-withToken : String -> Request msg -> Request msg
+withToken : LinkToken -> Request msg -> Request msg
 withToken token request_ =
-    { request_ | headers = ( "authorization", "Bearer " ++ token ) :: request_.headers }
+    { request_ | headers = ( "authorization", "Bearer " ++ LinkToken.toString token ) :: request_.headers }
 
 
 send : Request msg -> Cmd msg

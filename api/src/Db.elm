@@ -151,8 +151,8 @@ magicLink token =
     Neon.selectOne "SELECT email, username, new_account FROM magic_link($1)"
         [ Neon.text (LinkToken.toString token) ]
         (Decode.map3 Api.Verification
-            (Decode.field "email" Decode.string)
-            (Decode.field "username" Decode.string)
+            (Decode.field "email" Email.decoder)
+            (Decode.field "username" Username.decoder)
             (Decode.field "new_account" Decode.bool)
         )
 
@@ -182,8 +182,8 @@ consumedDecoder =
                                 Verified { sessionToken = sessionToken, account = { email = email, username = username } }
                             )
                             (Decode.field "session_token" SessionToken.decoder)
-                            (Decode.field "email" Decode.string)
-                            (Decode.field "username" Decode.string)
+                            (Decode.field "email" Email.decoder)
+                            (Decode.field "username" Username.decoder)
 
                     "invalid" ->
                         Decode.succeed InvalidLink
@@ -207,8 +207,8 @@ ownAccount =
     Neon.selectOne "SELECT email, username FROM users"
         []
         (Decode.map2 Api.Account
-            (Decode.field "email" Decode.string)
-            (Decode.field "username" Decode.string)
+            (Decode.field "email" Email.decoder)
+            (Decode.field "username" Username.decoder)
         )
 
 
@@ -409,8 +409,8 @@ signInWithPasskey { challenge, credentialId, signCount, backedUp, sessionSeconds
                                         }
                                 )
                                 (Decode.field "session_token" SessionToken.decoder)
-                                (Decode.field "email" Decode.string)
-                                (Decode.field "username" Decode.string)
+                                (Decode.field "email" Email.decoder)
+                                (Decode.field "username" Username.decoder)
 
                         "no-challenge" ->
                             Decode.succeed ChallengeSpent

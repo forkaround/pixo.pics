@@ -4,6 +4,9 @@ import Api
 import ApiClient
 import Browser
 import Browser.Navigation as Navigation
+import Data.Email as Email
+import Data.LinkToken exposing (LinkToken)
+import Data.Username as Username
 import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
 import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, href, id, name, rel, required, target, type_, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
@@ -111,8 +114,8 @@ type Attempt
 
 
 type Verification
-    = Looking String
-    | Found String Api.Verification Acceptance
+    = Looking LinkToken
+    | Found LinkToken Api.Verification Acceptance
     | Accepted
     | Refused String
 
@@ -922,8 +925,8 @@ viewDashboard session =
     case session of
         SignedIn account ->
             Card.new
-                |> Card.title [ text ("Welcome, " ++ account.username) ]
-                |> Card.description [ text ("Signed in as " ++ account.email) ]
+                |> Card.title [ text ("Welcome, " ++ Username.toString account.username) ]
+                |> Card.description [ text ("Signed in as " ++ Email.toString account.email) ]
                 |> Card.action
                     (Button.new
                         |> Button.text "Sign out"
@@ -1122,9 +1125,9 @@ viewFound found acceptance =
             [ div [ class "flex flex-col gap-5" ]
                 [ dl [ class "grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm" ]
                     [ dt [ class "text-muted-foreground" ] [ text "Username" ]
-                    , dd [ class "font-medium" ] [ text found.username ]
+                    , dd [ class "font-medium" ] [ text (Username.toString found.username) ]
                     , dt [ class "text-muted-foreground" ] [ text "Email" ]
-                    , dd [ class "font-medium break-all" ] [ text found.email ]
+                    , dd [ class "font-medium break-all" ] [ text (Email.toString found.email) ]
                     ]
                 , Button.new
                     |> Button.text

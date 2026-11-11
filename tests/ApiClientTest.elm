@@ -2,6 +2,7 @@ module ApiClientTest exposing (suite)
 
 import Api
 import ApiClient
+import Data.LinkToken as LinkToken
 import Expect
 import Http
 import Test exposing (Test, describe, test)
@@ -30,6 +31,11 @@ suite =
                         (response 503 """{"status":"fail","checks":{"database":{"status":"fail","output":"Database unreachable"}}}""")
                         |> Result.map .status
                         |> Expect.equal (Ok Api.Fail)
+            , test "sends a link's token as a bearer token" <|
+                \() ->
+                    LinkToken.fromString "Zm9vYmFy"
+                        |> Maybe.map (\token -> (ApiClient.request Api.verification () identity |> ApiClient.withToken token).headers)
+                        |> Expect.equal (Just [ ( "authorization", "Bearer Zm9vYmFy" ) ])
             ]
         ]
 

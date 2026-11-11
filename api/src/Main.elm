@@ -263,16 +263,16 @@ update msg model =
                 Db.SignUpLink token ->
                     sendLink model
                         resolver
-                        { to = Email.toString signUp.email, tag = "sign-up" }
+                        { to = signUp.email, tag = "sign-up" }
                         (Services.Mailer.SignUp.email
                             { url = verifyUrl model token
-                            , username = Username.toString signUp.username
+                            , username = signUp.username
                             , expiresInMinutes = linkMinutes
                             }
                         )
 
                 Db.SignInInstead token ->
-                    sendLink model resolver { to = Email.toString signUp.email, tag = "sign-in" } (signInEmail model token)
+                    sendLink model resolver { to = signUp.email, tag = "sign-in" } (signInEmail model token)
             )
 
         SignInLinkCreated resolver email link ->
@@ -282,7 +282,7 @@ update msg model =
                     respond resolver accepted
 
                 Db.SignInLink token ->
-                    sendLink model resolver { to = Email.toString email, tag = "sign-in" } (signInEmail model token)
+                    sendLink model resolver { to = email, tag = "sign-in" } (signInEmail model token)
             )
 
         LinkSent resolver (Ok _) ->
@@ -342,8 +342,8 @@ update msg model =
                         , rp = { id = Origin.rpId model.origin, name = "pixo" }
                         , user =
                             { id = ceremony.userId
-                            , name = ceremony.account.email
-                            , displayName = ceremony.account.username
+                            , name = Email.toString ceremony.account.email
+                            , displayName = Username.toString ceremony.account.username
                             }
                         , algorithms = WebAuthn.algorithms
                         , excludeCredentials = ceremony.passkeys
@@ -486,7 +486,7 @@ update msg model =
             ( model, NoEffect )
 
 
-sendLink : Model -> Interop.Resolver -> { to : String, tag : String } -> Layout.Message -> Effect
+sendLink : Model -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect
 sendLink model resolver envelope email =
     case model.email of
         Ok mailer ->
@@ -524,7 +524,7 @@ answered resolver step toMsg result =
             DatabaseFailed resolver step problem
 
 
-notify : Model -> Interop.Resolver -> Response -> { to : String, tag : String } -> Layout.Message -> Effect
+notify : Model -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect
 notify model resolver response envelope email =
     case model.email of
         Ok mailer ->
@@ -906,7 +906,7 @@ bearer request =
 
 verifyUrl : Model -> LinkToken -> String
 verifyUrl model token =
-    Origin.toString model.origin ++ Path.toString (Path.Verify (Just (LinkToken.toString token)))
+    Origin.toString model.origin ++ Path.toString (Path.Verify (Just token))
 
 
 dashboardUrl : Model -> String

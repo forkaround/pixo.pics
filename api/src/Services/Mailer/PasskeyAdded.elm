@@ -1,13 +1,18 @@
 module Services.Mailer.PasskeyAdded exposing (email)
 
+import Data.Username as Username exposing (Username)
 import Services.Mailer.Layout as Layout exposing (Message)
 
 
-email : { url : String, username : String, passkey : Maybe String } -> Message
+email : { url : String, username : Username, passkey : Maybe String } -> Message
 email { url, username, passkey } =
+    let
+        account =
+            Username.toString username
+    in
     Layout.render
         { subject = "A passkey was added to your pixo account"
-        , preview = "You can now sign in to " ++ username ++ " with it."
+        , preview = "You can now sign in to " ++ account ++ " with it."
         , blocks =
             [ Layout.Heading "A passkey was added"
             , Layout.Paragraph
@@ -19,7 +24,7 @@ email { url, username, passkey } =
                         "A passkey"
                  )
                     ++ " was added to the account "
-                    ++ username
+                    ++ account
                     ++ ". It can now sign in without an emailed link."
                 )
             , Layout.Button { label = "Review your passkeys", url = url }
