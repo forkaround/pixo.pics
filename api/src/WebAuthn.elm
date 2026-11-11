@@ -8,14 +8,16 @@ import Bytes.Encode
 import Cbor exposing (CborItem(..))
 import Cbor.Decode
 import Cbor.Encode
+import Data.Challenge as Challenge exposing (Challenge)
+import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Origin as Origin exposing (Origin)
 import Json.Decode as Decode exposing (Decoder)
 import SHA256
 
 
 type alias Registration =
-    { challenge : String
-    , credentialId : String
+    { challenge : Challenge
+    , credentialId : CredentialId
     , publicKey : String
     , aaguid : String
     , signCount : Int
@@ -26,7 +28,7 @@ type alias Registration =
 
 
 type alias Authentication =
-    { challenge : String
+    { challenge : Challenge
     , signCount : Int
     , backedUp : Bool
     , signed : String
@@ -107,7 +109,7 @@ type alias ClientData =
     }
 
 
-challengeOf : String -> String -> String -> Result String String
+challengeOf : String -> String -> String -> Result String Challenge
 challengeOf ceremony origin clientDataJSON =
     fromBase64Url clientDataJSON
         |> Maybe.andThen (\bytes -> Binary.decode (Binary.string (Bytes.width bytes)) bytes)
@@ -125,7 +127,8 @@ challengeOf ceremony origin clientDataJSON =
                     Err "The passkey was used in a frame of another origin."
 
                 else
-                    Ok clientData.challenge
+                    Challenge.fromString clientData.challenge
+                        |> Result.fromMaybe "The client data has no challenge."
             )
 
 
@@ -152,7 +155,7 @@ type alias Header =
 
 
 type alias Credential =
-    { id : String
+    { id : CredentialId
     , publicKey : String
     , aaguid : String
     , signCount : Int
@@ -262,6 +265,7 @@ credentialOf rp bytes =
                                         }
                                     )
                                     (toBase64Url attested.credentialId
+                                        |> Maybe.andThen CredentialId.fromString
                                         |> Result.fromMaybe "The credential id could not be read."
                                     )
                                     (publicKeyOf attested.rest)

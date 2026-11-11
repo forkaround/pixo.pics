@@ -1,5 +1,7 @@
 module InteropDefinitions exposing (Flags, FromElm(..), Level(..), Request, Resolver, Response, SignIn, ToElm(..), interop)
 
+import Data.Challenge as Challenge exposing (Challenge)
+import Data.CredentialId as CredentialId exposing (CredentialId)
 import Dict exposing (Dict)
 import Json.Encode as Encode
 import TsJson.Decode as TsDecode exposing (Decoder)
@@ -31,8 +33,8 @@ type FromElm
 
 
 type alias SignIn =
-    { challenge : String
-    , credentialId : String
+    { challenge : Challenge
+    , credentialId : CredentialId
     , signCount : Int
     , backedUp : Bool
     }
@@ -93,8 +95,8 @@ toElm =
                 (TsDecode.field "resolve" resolverDecoder)
                 (TsDecode.field "signIn"
                     (TsDecode.map4 SignIn
-                        (TsDecode.field "challenge" TsDecode.string)
-                        (TsDecode.field "credentialId" TsDecode.string)
+                        (TsDecode.field "challenge" challengeDecoder)
+                        (TsDecode.field "credentialId" credentialIdDecoder)
                         (TsDecode.field "signCount" TsDecode.int)
                         (TsDecode.field "backedUp" TsDecode.bool)
                     )
@@ -102,6 +104,38 @@ toElm =
                 (TsDecode.field "valid" TsDecode.bool)
           )
         ]
+
+
+challengeDecoder : Decoder Challenge
+challengeDecoder =
+    TsDecode.andThen
+        (TsDecode.andThenInit
+            (\value ->
+                case Challenge.fromString value of
+                    Just challenge ->
+                        TsDecode.succeed challenge
+
+                    Nothing ->
+                        TsDecode.fail "Expected a challenge, not an empty string."
+            )
+        )
+        TsDecode.string
+
+
+credentialIdDecoder : Decoder CredentialId
+credentialIdDecoder =
+    TsDecode.andThen
+        (TsDecode.andThenInit
+            (\value ->
+                case CredentialId.fromString value of
+                    Just id ->
+                        TsDecode.succeed id
+
+                    Nothing ->
+                        TsDecode.fail "Expected a credential id, not an empty string."
+            )
+        )
+        TsDecode.string
 
 
 resolverDecoder : Decoder Resolver
@@ -157,8 +191,8 @@ fromElm =
             , TsEncode.required "signIn"
                 (Tuple.second >> .signIn)
                 (TsEncode.object
-                    [ TsEncode.required "challenge" .challenge TsEncode.string
-                    , TsEncode.required "credentialId" .credentialId TsEncode.string
+                    [ TsEncode.required "challenge" (.challenge >> Challenge.toString) TsEncode.string
+                    , TsEncode.required "credentialId" (.credentialId >> CredentialId.toString) TsEncode.string
                     , TsEncode.required "signCount" .signCount TsEncode.int
                     , TsEncode.required "backedUp" .backedUp TsEncode.bool
                     ]

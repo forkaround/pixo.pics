@@ -46,6 +46,8 @@ module Api exposing
     , verify
     )
 
+import Data.Challenge as Challenge exposing (Challenge)
+import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
@@ -68,7 +70,7 @@ type Route
     | GetPasskeys
     | PostPasskey
     | PostPasskeyOptions
-    | DeletePasskey String
+    | DeletePasskey CredentialId
     | PostPasskeySignIn
     | PostPasskeySignInOptions
 
@@ -166,7 +168,7 @@ segments r =
             [ "auth", "passkeys", "options" ]
 
         DeletePasskey id ->
-            [ "auth", "passkeys", id ]
+            [ "auth", "passkeys", CredentialId.toString id ]
 
         PostPasskeySignIn ->
             [ "auth", "signin", "passkey" ]
@@ -238,10 +240,10 @@ routesAt rest =
             [ GetPasskeys, PostPasskey ]
 
         [ "auth", "passkeys", "options" ] ->
-            [ PostPasskeyOptions, DeletePasskey "options" ]
+            PostPasskeyOptions :: deletePasskeyAt "options"
 
         [ "auth", "passkeys", id ] ->
-            [ DeletePasskey id ]
+            deletePasskeyAt id
 
         [ "auth", "signin", "passkey" ] ->
             [ PostPasskeySignIn ]
@@ -251,6 +253,13 @@ routesAt rest =
 
         _ ->
             []
+
+
+deletePasskeyAt : String -> List Route
+deletePasskeyAt segment =
+    CredentialId.fromString segment
+        |> Maybe.map (\id -> [ DeletePasskey id ])
+        |> Maybe.withDefault []
 
 
 
@@ -326,7 +335,7 @@ addPasskey =
     Endpoint { route = PostPasskey, body = JsonBody attestationCodec, response = passkeyCodec }
 
 
-deletePasskey : String -> Endpoint () ()
+deletePasskey : CredentialId -> Endpoint () ()
 deletePasskey id =
     Endpoint { route = DeletePasskey id, body = NoBody (), response = emptyCodec }
 
@@ -469,7 +478,7 @@ accountCodec =
 
 
 type alias Passkey =
-    { id : String
+    { id : CredentialId
     , name : Maybe String
     , createdAt : String
     }
@@ -480,24 +489,24 @@ passkeyCodec =
     { encode =
         \p ->
             Encode.object
-                [ ( "id", Encode.string p.id )
+                [ ( "id", CredentialId.encode p.id )
                 , ( "name", Maybe.withDefault Encode.null (Maybe.map Encode.string p.name) )
                 , ( "createdAt", Encode.string p.createdAt )
                 ]
     , decoder =
         Decode.map3 Passkey
-            (Decode.field "id" Decode.string)
+            (Decode.field "id" CredentialId.decoder)
             (Decode.field "name" (Decode.nullable Decode.string))
             (Decode.field "createdAt" Decode.string)
     }
 
 
 type alias PasskeyOptions =
-    { challenge : String
+    { challenge : Challenge
     , rp : { id : String, name : String }
     , user : { id : String, name : String, displayName : String }
     , algorithms : List Int
-    , excludeCredentials : List String
+    , excludeCredentials : List CredentialId
     }
 
 
@@ -506,7 +515,7 @@ passkeyOptionsCodec =
     { encode =
         \o ->
             Encode.object
-                [ ( "challenge", Encode.string o.challenge )
+                [ ( "challenge", Challenge.encode o.challenge )
                 , ( "rp"
                   , Encode.object
                         [ ( "id", Encode.string o.rp.id )
@@ -521,11 +530,11 @@ passkeyOptionsCodec =
                         ]
                   )
                 , ( "algorithms", Encode.list Encode.int o.algorithms )
-                , ( "excludeCredentials", Encode.list Encode.string o.excludeCredentials )
+                , ( "excludeCredentials", Encode.list CredentialId.encode o.excludeCredentials )
                 ]
     , decoder =
         Decode.map5 PasskeyOptions
-            (Decode.field "challenge" Decode.string)
+            (Decode.field "challenge" Challenge.decoder)
             (Decode.field "rp"
                 (Decode.map2 (\id name -> { id = id, name = name })
                     (Decode.field "id" Decode.string)
@@ -540,7 +549,7 @@ passkeyOptionsCodec =
                 )
             )
             (Decode.field "algorithms" (Decode.list Decode.int))
-            (Decode.field "excludeCredentials" (Decode.list Decode.string))
+            (Decode.field "excludeCredentials" (Decode.list CredentialId.decoder))
     }
 
 
@@ -569,7 +578,7 @@ attestationCodec =
 
 
 type alias SignInOptions =
-    { challenge : String
+    { challenge : Challenge
     , rpId : String
     }
 
@@ -579,12 +588,12 @@ signInOptionsCodec =
     { encode =
         \o ->
             Encode.object
-                [ ( "challenge", Encode.string o.challenge )
+                [ ( "challenge", Challenge.encode o.challenge )
                 , ( "rpId", Encode.string o.rpId )
                 ]
     , decoder =
         Decode.map2 SignInOptions
-            (Decode.field "challenge" Decode.string)
+            (Decode.field "challenge" Challenge.decoder)
             (Decode.field "rpId" Decode.string)
     }
 

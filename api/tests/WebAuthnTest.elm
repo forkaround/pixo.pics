@@ -1,5 +1,7 @@
 module WebAuthnTest exposing (suite)
 
+import Data.Challenge as Challenge
+import Data.CredentialId as CredentialId
 import Data.Origin as Origin
 import Expect
 import Test exposing (Test, describe, test)
@@ -13,6 +15,18 @@ suite =
             [ test "reads the challenge, the credential, its flags and the transports it knows" <|
                 \() ->
                     register clientData synced
+                        |> Result.map
+                            (\found ->
+                                { challenge = Challenge.toString found.challenge
+                                , credentialId = CredentialId.toString found.credentialId
+                                , publicKey = found.publicKey
+                                , aaguid = found.aaguid
+                                , signCount = found.signCount
+                                , backupEligible = found.backupEligible
+                                , backedUp = found.backedUp
+                                , transports = found.transports
+                                }
+                            )
                         |> Expect.equal
                             (Ok
                                 { challenge = "Y2hhbGxlbmdl"
@@ -94,6 +108,14 @@ suite =
             [ test "reads the challenge and the flags, and joins what the passkey signed" <|
                 \() ->
                     authenticate clientDataGet "hc4asGtQ0lfqei0FVSxvDEzvgNF-FdmbKJXm3Ic-1uwdAAAAAA"
+                        |> Result.map
+                            (\found ->
+                                { challenge = Challenge.toString found.challenge
+                                , signCount = found.signCount
+                                , backedUp = found.backedUp
+                                , signed = found.signed
+                                }
+                            )
                         |> Expect.equal
                             (Ok
                                 { challenge = "Y2hhbGxlbmdl"

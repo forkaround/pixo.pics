@@ -2,6 +2,7 @@ module TokenTest exposing (suite)
 
 import Data.LinkToken as LinkToken
 import Data.SessionToken as SessionToken
+import Data.UserId as UserId
 import Expect
 import Json.Decode as Decode
 import Test exposing (Test, describe, test)
@@ -41,5 +42,18 @@ suite =
                         |> Maybe.map LinkToken.toString
                     )
                         |> Expect.equal ( Nothing, Nothing )
+            ]
+        , describe "UserId"
+            [ test "keeps the text it was decoded from" <|
+                \() ->
+                    Decode.decodeString UserId.decoder "\"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11\""
+                        |> Result.map UserId.toString
+                        |> Expect.equal (Ok "7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11")
+            , test "refuses the empty string" <|
+                \() ->
+                    Decode.decodeString UserId.decoder "\"\""
+                        |> Result.toMaybe
+                        |> Maybe.map UserId.toString
+                        |> Expect.equal Nothing
             ]
         ]

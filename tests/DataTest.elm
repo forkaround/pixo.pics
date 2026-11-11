@@ -1,5 +1,7 @@
 module DataTest exposing (suite)
 
+import Data.Challenge as Challenge
+import Data.CredentialId as CredentialId
 import Data.Email as Email
 import Data.Username as Username
 import Expect
@@ -46,5 +48,31 @@ suite =
                     Username.parse "ada_99"
                         |> Result.map (Username.encode >> Encode.encode 0)
                         |> Expect.equal (Ok "\"ada_99\"")
+            ]
+        , describe "CredentialId"
+            [ test "refuses the empty string" <|
+                \() ->
+                    CredentialId.fromString ""
+                        |> Maybe.map CredentialId.toString
+                        |> Expect.equal Nothing
+            , test "decodes and keeps its text" <|
+                \() ->
+                    Decode.decodeString CredentialId.decoder "\"Y2hhbGxlbmdl\""
+                        |> Result.mapError (\_ -> ())
+                        |> Result.map CredentialId.toString
+                        |> Expect.equal (Ok "Y2hhbGxlbmdl")
+            ]
+        , describe "Challenge"
+            [ test "refuses the empty string" <|
+                \() ->
+                    Challenge.fromString ""
+                        |> Maybe.map Challenge.toString
+                        |> Expect.equal Nothing
+            , test "decodes and keeps its text" <|
+                \() ->
+                    Decode.decodeString Challenge.decoder "\"Y2hhbGxlbmdl\""
+                        |> Result.mapError (\_ -> ())
+                        |> Result.map Challenge.toString
+                        |> Expect.equal (Ok "Y2hhbGxlbmdl")
             ]
         ]

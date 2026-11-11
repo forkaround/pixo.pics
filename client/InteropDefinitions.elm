@@ -1,6 +1,8 @@
 module InteropDefinitions exposing (Flags, FromElm(..), Theme(..), ToElm(..), interop, themeToString)
 
 import Api
+import Data.Challenge as Challenge
+import Data.CredentialId as CredentialId
 import TsJson.Decode as TsDecode exposing (Decoder)
 import TsJson.Encode as TsEncode exposing (Encoder)
 
@@ -77,7 +79,7 @@ fromElm =
             )
         |> TsEncode.variantTagged "CreatePasskey"
             (TsEncode.object
-                [ TsEncode.required "challenge" .challenge TsEncode.string
+                [ TsEncode.required "challenge" (.challenge >> Challenge.toString) TsEncode.string
                 , TsEncode.required "rp"
                     .rp
                     (TsEncode.object
@@ -94,12 +96,12 @@ fromElm =
                         ]
                     )
                 , TsEncode.required "algorithms" .algorithms (TsEncode.list TsEncode.int)
-                , TsEncode.required "excludeCredentials" .excludeCredentials (TsEncode.list TsEncode.string)
+                , TsEncode.required "excludeCredentials" (.excludeCredentials >> List.map CredentialId.toString) (TsEncode.list TsEncode.string)
                 ]
             )
         |> TsEncode.variantTagged "GetPasskey"
             (TsEncode.object
-                [ TsEncode.required "challenge" .challenge TsEncode.string
+                [ TsEncode.required "challenge" (.challenge >> Challenge.toString) TsEncode.string
                 , TsEncode.required "rpId" .rpId TsEncode.string
                 ]
             )

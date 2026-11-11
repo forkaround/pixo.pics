@@ -1,6 +1,7 @@
 module ApiTest exposing (suite)
 
 import Api
+import Data.CredentialId as CredentialId
 import Expect
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -31,6 +32,10 @@ suite =
                         \() ->
                             Api.parse "GET" [ "api", "auth", "passkeys", "options" ]
                                 |> Expect.equal (Err (Api.MethodNotAllowed [ Api.Post, Api.Delete ]))
+                   , test "finds no passkey to delete at an empty id" <|
+                        \() ->
+                            Api.parse "DELETE" [ "api", "auth", "passkeys", "" ]
+                                |> Expect.equal (Err Api.NotFound)
                    , test "finds nothing at an unknown path" <|
                         \() ->
                             Api.parse "GET" [ "api", "nowhere" ]
@@ -88,16 +93,24 @@ suite =
         , describe "passkeys"
             [ test "decodes what it encodes" <|
                 \() ->
-                    Api.encodeResponse Api.passkeys [ passkey, { passkey | name = Nothing } ]
-                        |> Decode.decodeValue (Api.responseDecoder Api.passkeys)
-                        |> Expect.equal (Ok [ passkey, { passkey | name = Nothing } ])
+                    let
+                        json =
+                            """[{"id":"oKGio6SlpqeoqaqrrK2urw","name":"Apple Passwords","createdAt":"2026-11-10T09:30:00Z"},{"id":"oKGio6SlpqeoqaqrrK2urw","name":null,"createdAt":"2026-11-10T09:30:00Z"}]"""
+                    in
+                    Decode.decodeString (Api.responseDecoder Api.passkeys) json
+                        |> Result.map (Api.encodeResponse Api.passkeys >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
             ]
         , describe "passkeySignInOptions"
             [ test "decodes what it encodes" <|
                 \() ->
-                    Api.encodeResponse Api.passkeySignInOptions { challenge = "Y2hhbGxlbmdl", rpId = "pixo.pics" }
-                        |> Decode.decodeValue (Api.responseDecoder Api.passkeySignInOptions)
-                        |> Expect.equal (Ok { challenge = "Y2hhbGxlbmdl", rpId = "pixo.pics" })
+                    let
+                        json =
+                            """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
+                    in
+                    Decode.decodeString (Api.responseDecoder Api.passkeySignInOptions) json
+                        |> Result.map (Api.encodeResponse Api.passkeySignInOptions >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
             ]
         , describe "passkeySignIn"
             [ test "sends what the passkey signed as JSON" <|
@@ -115,9 +128,13 @@ suite =
         , describe "passkeyOptions"
             [ test "decodes what it encodes" <|
                 \() ->
-                    Api.encodeResponse Api.passkeyOptions passkeyOptions
-                        |> Decode.decodeValue (Api.responseDecoder Api.passkeyOptions)
-                        |> Expect.equal (Ok passkeyOptions)
+                    let
+                        json =
+                            """{"challenge":"Y2hhbGxlbmdl","rp":{"id":"pixo.pics","name":"pixo"},"user":{"id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11","name":"ada@example.com","displayName":"ada"},"algorithms":[-8,-7,-257],"excludeCredentials":["oKGio6SlpqeoqaqrrK2urw"]}"""
+                    in
+                    Decode.decodeString (Api.responseDecoder Api.passkeyOptions) json
+                        |> Result.map (Api.encodeResponse Api.passkeyOptions >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
             ]
         , describe "addPasskey"
             [ test "sends what the browser made as JSON" <|
@@ -135,9 +152,13 @@ suite =
                             (Ok { clientDataJSON = "eyJ0eXBlIjo", attestationObject = "o2NmbXRkbm9uZQ", transports = [ "internal" ] })
             , test "answers with the passkey" <|
                 \() ->
-                    Api.encodeResponse Api.addPasskey passkey
-                        |> Encode.encode 0
-                        |> Expect.equal """{"id":"oKGio6SlpqeoqaqrrK2urw","name":"Apple Passwords","createdAt":"2026-11-10T09:30:00Z"}"""
+                    let
+                        json =
+                            """{"id":"oKGio6SlpqeoqaqrrK2urw","name":"Apple Passwords","createdAt":"2026-11-10T09:30:00Z"}"""
+                    in
+                    Decode.decodeString (Api.responseDecoder Api.addPasskey) json
+                        |> Result.map (Api.encodeResponse Api.addPasskey >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
             ]
         , describe "health"
             [ test "decodes what it encodes" <|
@@ -195,13 +216,14 @@ next route =
             Just Api.PostPasskeyOptions
 
         Api.PostPasskeyOptions ->
-            Just (Api.DeletePasskey "oKGio6SlpqeoqaqrrK2urw")
+            Maybe.map Api.DeletePasskey (CredentialId.fromString "oKGio6SlpqeoqaqrrK2urw")
 
-        Api.DeletePasskey "oKGio6SlpqeoqaqrrK2urw" ->
-            Just (Api.DeletePasskey "options")
+        Api.DeletePasskey id ->
+            if CredentialId.toString id == "oKGio6SlpqeoqaqrrK2urw" then
+                Maybe.map Api.DeletePasskey (CredentialId.fromString "options")
 
-        Api.DeletePasskey _ ->
-            Just Api.PostPasskeySignIn
+            else
+                Just Api.PostPasskeySignIn
 
         Api.PostPasskeySignIn ->
             Just Api.PostPasskeySignInOptions
@@ -216,21 +238,6 @@ assertion =
     , clientDataJSON = "eyJ0eXBlIjo"
     , authenticatorData = "hc4asGtQ"
     , signature = "MEQCIQCA"
-    }
-
-
-passkey : Api.Passkey
-passkey =
-    { id = "oKGio6SlpqeoqaqrrK2urw", name = Just "Apple Passwords", createdAt = "2026-11-10T09:30:00Z" }
-
-
-passkeyOptions : Api.PasskeyOptions
-passkeyOptions =
-    { challenge = "Y2hhbGxlbmdl"
-    , rp = { id = "pixo.pics", name = "pixo" }
-    , user = { id = "7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11", name = "ada@example.com", displayName = "ada" }
-    , algorithms = [ -8, -7, -257 ]
-    , excludeCredentials = [ "oKGio6SlpqeoqaqrrK2urw" ]
     }
 
 

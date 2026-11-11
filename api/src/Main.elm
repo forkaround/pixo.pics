@@ -2,11 +2,13 @@ module Main exposing (Effect(..), Model, Msg(..), init, main, update)
 
 import Aaguid
 import Api
+import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.Origin as Origin exposing (Origin)
 import Data.SessionToken as SessionToken exposing (SessionToken)
 import Data.SignUp as SignUp
+import Data.UserId as UserId
 import Data.Username as Username
 import Db
 import Dict
@@ -142,7 +144,7 @@ type Msg
     | PasskeysFound Interop.Resolver (Maybe (List Api.Passkey))
     | PasskeyStarted Interop.Resolver (Maybe Db.Ceremony)
     | PasskeyAdded Interop.Resolver (Maybe Db.Added)
-    | PasskeyRemoved Interop.Resolver (Maybe Db.Removed)
+    | PasskeyRemoved Interop.Resolver CredentialId (Maybe Db.Removed)
     | Notified Interop.Resolver Response (Result Brevo.Error Brevo.Sent)
     | SignInStarted Interop.Resolver Db.SignInChallenge
     | KeyFound Interop.Resolver { signed : String, signature : String, signIn : Interop.SignIn } (Maybe String)
@@ -341,7 +343,7 @@ update msg model =
                         { challenge = ceremony.challenge
                         , rp = { id = Origin.rpId model.origin, name = "pixo" }
                         , user =
-                            { id = ceremony.userId
+                            { id = UserId.toString ceremony.userId
                             , name = Email.toString ceremony.account.email
                             , displayName = Username.toString ceremony.account.username
                             }
@@ -375,11 +377,11 @@ update msg model =
         PasskeyAdded resolver Nothing ->
             ( model, respond resolver notSignedIn )
 
-        PasskeyRemoved resolver (Just (Db.Removed { name, account })) ->
+        PasskeyRemoved resolver id (Just (Db.Removed { name, account })) ->
             ( model
             , notify model
                 resolver
-                (json 200 (Api.encodeResponse (Api.deletePasskey "") ()))
+                (json 200 (Api.encodeResponse (Api.deletePasskey id) ()))
                 { to = account.email, tag = "passkey-removed" }
                 (Services.Mailer.PasskeyRemoved.email
                     { url = dashboardUrl model
@@ -389,10 +391,10 @@ update msg model =
                 )
             )
 
-        PasskeyRemoved resolver (Just Db.NotRemoved) ->
+        PasskeyRemoved resolver _ (Just Db.NotRemoved) ->
             ( model, respond resolver (error 404 "This account has no such passkey.") )
 
-        PasskeyRemoved resolver Nothing ->
+        PasskeyRemoved resolver _ Nothing ->
             ( model, respond resolver notSignedIn )
 
         Notified resolver response (Ok _) ->
@@ -755,7 +757,7 @@ handle model request r =
                         resolver
                         "Passkey removal failed"
                         (Db.removePasskey { token = token, id = id })
-                        (PasskeyRemoved resolver)
+                        (PasskeyRemoved resolver id)
                 )
 
         Api.PostPasskeySignInOptions ->
@@ -784,26 +786,29 @@ handle model request r =
                 ( Ok db, Ok assertion ) ->
                     Later
                         (\resolver ->
-                            case WebAuthn.authenticate model.origin assertion of
-                                Ok authentication ->
+                            case ( WebAuthn.authenticate model.origin assertion, CredentialId.fromString assertion.id ) of
+                                ( Ok authentication, Just credentialId ) ->
                                     query db
                                         resolver
                                         "Passkey sign-in failed at its key"
-                                        (Db.passkeyPublicKey assertion.id)
+                                        (Db.passkeyPublicKey credentialId)
                                         (KeyFound resolver
                                             { signed = authentication.signed
                                             , signature = assertion.signature
                                             , signIn =
                                                 { challenge = authentication.challenge
-                                                , credentialId = assertion.id
+                                                , credentialId = credentialId
                                                 , signCount = authentication.signCount
                                                 , backedUp = authentication.backedUp
                                                 }
                                             }
                                         )
 
-                                Err problem ->
+                                ( Err problem, _ ) ->
                                     refuse resolver problem
+
+                                ( Ok _, Nothing ) ->
+                                    refuse resolver "The assertion names no credential."
                         )
 
                 ( Ok _, Err _ ) ->

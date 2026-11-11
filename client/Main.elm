@@ -4,6 +4,7 @@ import Api
 import ApiClient
 import Browser
 import Browser.Navigation as Navigation
+import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
 import Data.LinkToken exposing (LinkToken)
 import Data.Username as Username
@@ -64,7 +65,7 @@ type Passkeys
 
 type alias DashboardState =
     { passkeys : Passkeys
-    , confirming : Maybe String
+    , confirming : Maybe CredentialId
     , removalProblem : Maybe String
     }
 
@@ -241,10 +242,10 @@ type Msg
     | PasskeyRequested
     | GotPasskeyOptions (Result ApiClient.Error Api.PasskeyOptions)
     | GotPasskey (Result ApiClient.Error Api.Passkey)
-    | PasskeyRemoveRequested String
+    | PasskeyRemoveRequested CredentialId
     | PasskeyRemoveCancelled
-    | PasskeyRemoveConfirmed String
-    | GotPasskeyRemoved String (Result ApiClient.Error ())
+    | PasskeyRemoveConfirmed CredentialId
+    | GotPasskeyRemoved CredentialId (Result ApiClient.Error ())
     | PasskeySignInRequested
     | GotSignInOptions (Result ApiClient.Error Api.SignInOptions)
     | GotPasskeySignIn (Result ApiClient.Error Api.Account)
@@ -992,7 +993,7 @@ viewPasskeys ceremony { passkeys, confirming, removalProblem } =
         |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewPasskey : Maybe String -> Api.Passkey -> Html Msg
+viewPasskey : Maybe CredentialId -> Api.Passkey -> Html Msg
 viewPasskey confirming passkey =
     let
         name =

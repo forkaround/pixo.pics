@@ -1,9 +1,12 @@
 module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), RateLimit(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
+import Data.Challenge as Challenge exposing (Challenge)
+import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.SessionToken as SessionToken exposing (SessionToken)
+import Data.UserId as UserId exposing (UserId)
 import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
@@ -47,13 +50,13 @@ ping =
         )
 
 
-signedIn : SessionToken -> (Maybe String -> a) -> Neon.Transaction a
+signedIn : SessionToken -> (Maybe UserId -> a) -> Neon.Transaction a
 signedIn token toResult =
     Neon.transaction toResult
         |> Neon.with
             (Neon.one "SELECT authenticate($1) AS user_id"
                 [ Neon.text (SessionToken.toString token) ]
-                (Decode.field "user_id" (Decode.nullable Decode.string))
+                (Decode.field "user_id" (Decode.nullable UserId.decoder))
             )
 
 
@@ -225,7 +228,7 @@ passkeys token =
 passkeyDecoder : Decoder Api.Passkey
 passkeyDecoder =
     Decode.map3 Api.Passkey
-        (Decode.field "credential_id" Decode.string)
+        (Decode.field "credential_id" CredentialId.decoder)
         (Decode.field "name" (Decode.nullable Decode.string))
         (Decode.field "created_at" Decode.string)
 
@@ -236,10 +239,10 @@ createdAt =
 
 
 type alias Ceremony =
-    { challenge : String
-    , userId : String
+    { challenge : Challenge
+    , userId : UserId
     , account : Api.Account
-    , passkeys : List String
+    , passkeys : List CredentialId
     }
 
 
@@ -269,13 +272,13 @@ startPasskey { token, ttlSeconds } =
                     ++ "RETURNING challenge"
                 )
                 [ Neon.int ttlSeconds ]
-                (Decode.field "challenge" Decode.string)
+                (Decode.field "challenge" Challenge.decoder)
             )
         |> Neon.with ownAccount
         |> Neon.with
             (Neon.select "SELECT credential_id FROM passkeys ORDER BY created_at"
                 []
-                (Decode.field "credential_id" Decode.string)
+                (Decode.field "credential_id" CredentialId.decoder)
             )
 
 
@@ -306,8 +309,8 @@ addPasskey { token, registration, name } =
                     ++ "RETURNING credential_id, name, "
                     ++ createdAt
                 )
-                [ Neon.text registration.challenge
-                , Neon.text registration.credentialId
+                [ Neon.text (Challenge.toString registration.challenge)
+                , Neon.text (CredentialId.toString registration.credentialId)
                 , Neon.text registration.publicKey
                 , Neon.int registration.signCount
                 , Neon.json (Encode.list Encode.string registration.transports)
@@ -325,7 +328,7 @@ type Removed
     | NotRemoved
 
 
-removePasskey : { token : SessionToken, id : String } -> Neon.Transaction (Maybe Removed)
+removePasskey : { token : SessionToken, id : CredentialId } -> Neon.Transaction (Maybe Removed)
 removePasskey { token, id } =
     signedIn token
         (\userId removed found ->
@@ -340,14 +343,14 @@ removePasskey { token, id } =
         )
         |> Neon.with
             (Neon.selectOne "DELETE FROM passkeys WHERE credential_id = $1 RETURNING name"
-                [ Neon.text id ]
+                [ Neon.text (CredentialId.toString id) ]
                 (Decode.field "name" (Decode.nullable Decode.string))
             )
         |> Neon.with ownAccount
 
 
 type SignInChallenge
-    = SignInChallenge String
+    = SignInChallenge Challenge
     | TooManyChallenges { retryAfter : Int }
 
 
@@ -358,7 +361,7 @@ signInChallenge { key, limit, windowSeconds, ttlSeconds } =
             ++ "FROM rate_limit($1, $2, $3) AS l"
         )
         [ Neon.text key, Neon.int limit, Neon.int windowSeconds, Neon.int ttlSeconds ]
-        (Decode.field "challenge" (Decode.nullable Decode.string)
+        (Decode.field "challenge" (Decode.nullable Challenge.decoder)
             |> Decode.andThen
                 (\challenge ->
                     case challenge of
@@ -372,10 +375,10 @@ signInChallenge { key, limit, windowSeconds, ttlSeconds } =
         )
 
 
-passkeyPublicKey : String -> Neon.Query (Maybe String)
+passkeyPublicKey : CredentialId -> Neon.Query (Maybe String)
 passkeyPublicKey credentialId =
     Neon.one "SELECT passkey_public_key($1) AS public_key"
-        [ Neon.text credentialId ]
+        [ Neon.text (CredentialId.toString credentialId) ]
         (Decode.field "public_key" (Decode.nullable Decode.string))
 
 
@@ -386,12 +389,12 @@ type PasskeySignIn
 
 
 signInWithPasskey :
-    { challenge : String, credentialId : String, signCount : Int, backedUp : Bool, sessionSeconds : Int }
+    { challenge : Challenge, credentialId : CredentialId, signCount : Int, backedUp : Bool, sessionSeconds : Int }
     -> Neon.Query PasskeySignIn
 signInWithPasskey { challenge, credentialId, signCount, backedUp, sessionSeconds } =
     Neon.one "SELECT outcome, session_token, email, username FROM sign_in_with_passkey($1, $2, $3, $4, $5)"
-        [ Neon.text challenge
-        , Neon.text credentialId
+        [ Neon.text (Challenge.toString challenge)
+        , Neon.text (CredentialId.toString credentialId)
         , Neon.int signCount
         , Neon.bool backedUp
         , Neon.int sessionSeconds

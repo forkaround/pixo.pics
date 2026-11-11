@@ -5,21 +5,21 @@ on Postgres (Neon), deployed to Vercel.
 
 ## Layout
 
-| Path                | What                                                                                    |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                           |
-| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`       |
-| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`                        |
-| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                       |
-| `api/tests/`        | elm-test suites for the server                                                          |
-| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `WebAuthn`, `Aaguid`                         |
-| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`                             |
-| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email)) |
-| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)              |
-| `api/index.ts`      | The only Vercel Function                                                                |
-| `migrations/`       | Graphile Migrate (`.gmrc`)                                                              |
-| `.scripts/neon.sh`  | Starts the local Neon proxy                                                             |
-| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                       |
+| Path                | What                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                 |
+| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`             |
+| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge` |
+| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                             |
+| `api/tests/`        | elm-test suites for the server                                                                |
+| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `WebAuthn`, `Aaguid`                               |
+| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`                         |
+| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))       |
+| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                    |
+| `api/index.ts`      | The only Vercel Function                                                                      |
+| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                    |
+| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                   |
+| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                             |
 
 ## Commands
 
@@ -273,7 +273,9 @@ link or passkey.
   whether an email has an account.
 - WebAuthn values (`credential_id`, `public_key`, `challenge`) are unpadded base64url text,
   as on the wire. `sign_count` is a `bigint`: it arrives as text. `public_key` is the COSE
-  key (see [WebAuthn](#webauthn)).
+  key (see [WebAuthn](#webauthn)). In Elm a credential id is a `CredentialId`, a challenge
+  a `Challenge` and a user's id a `UserId`; the public key and the signature stay text
+  inside `WebAuthn`.
 - A registration challenge is made by `api` itself, under `own_rows`: `Db.startPasskey`
   deletes the user's earlier ones and inserts a new one (two random UUIDs, as
   `new_token()` makes them). `Db.addPasskey` deletes it and inserts the passkey in one
@@ -490,8 +492,8 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   `Db.createSignInLink` take nothing else, so an unchecked address doesn't compile.
   `Mailer.send` takes an `Email` as well, and `Api.Account` and `Api.Verification` carry
   `Email` and `Username`: `Db` reads them with `Email.decoder` and `Username.decoder`,
-  which parse. Request bodies (`Api.SignUp`, `Api.SignIn`) stay raw strings, so the
-  server can tell a 400 from a 422.
+  which parse. Request bodies (`Api.SignUp`, `Api.SignIn`, `Api.Assertion`,
+  `Api.Attestation`) stay raw strings, so the server can tell a 400 from a 422.
 - Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
   reaches no server log. For the same reason the verify routes take it as
   `authorization: Bearer <token>`, and answer 401 without it.
@@ -524,7 +526,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   browser's answer with `WebAuthn.register`, then saves the passkey: 201 with the passkey,
   400 (not that JSON), 422 (refused: the reason is only logged, at `warn`) and 409 (the
   challenge is expired, used or unknown).
-- `DELETE /api/auth/passkeys/<id>` (`Api.deletePasskey id`) removes one of the account's
+- `DELETE /api/auth/passkeys/<id>` (`Api.deletePasskey id`, with a `CredentialId`) removes one of the account's
   passkeys (`Db.removePasskey`, under `own_rows`): 200 with `{}`, or 404. It is the only
   route with a parameter; at `/api/auth/passkeys/options` the method tells it from
   `Api.PostPasskeyOptions`.
