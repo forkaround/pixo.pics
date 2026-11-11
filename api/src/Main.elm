@@ -12,6 +12,7 @@ import Data.Username as Username
 import Db
 import Effect exposing (Effect(..), log, query, respond, transact)
 import Flow.Health
+import Flow.Session
 import InteropDefinitions as Interop
 import InteropPorts
 import Json.Decode as Decode
@@ -112,12 +113,11 @@ type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
     | DatabaseFailed Effect.Failure
     | Health Flow.Health.Msg
+    | Session Flow.Session.Msg
     | LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
-    | SessionFound Interop.Resolver (Maybe Api.Account)
-    | SessionEnded Interop.Resolver
     | VerificationFound Interop.Resolver (Maybe Api.Verification)
     | VerificationConsumed Interop.Resolver Db.Consumed
     | PasskeysFound Interop.Resolver (Maybe (List Api.Passkey))
@@ -236,6 +236,9 @@ running server msg =
         Health flowMsg ->
             Effect.map Health (Flow.Health.update server flowMsg)
 
+        Session flowMsg ->
+            Effect.map Session (Flow.Session.update server flowMsg)
+
         DatabaseFailed { resolver, step, problem } ->
             Batch
                 [ respond resolver Response.unavailable
@@ -303,15 +306,6 @@ running server msg =
                 [ respond resolver (Response.error 502 "The email could not be sent. Try again.")
                 , log Interop.Error ("Magic link failed at its email: " ++ Brevo.errorToString problem)
                 ]
-
-        SessionFound resolver (Just account) ->
-            respond resolver (Response.json 200 (Api.encodeResponse Api.session account))
-
-        SessionFound resolver Nothing ->
-            respond resolver Response.notSignedIn
-
-        SessionEnded resolver ->
-            respond resolver (signedOut server)
 
         VerificationFound resolver (Just found) ->
             respond resolver (Response.json 200 (Api.encodeResponse Api.verification found))
@@ -580,22 +574,10 @@ handle server request r =
                 )
 
         Api.GetSession ->
-            withSession
-                request
-                (\token resolver ->
-                    transact server.db resolver "Session lookup failed" (Db.account token) (SessionFound resolver)
-                )
+            Reply.map Session (Flow.Session.current server request)
 
         Api.DeleteSession ->
-            case SessionCookie.read request of
-                Just token ->
-                    Later
-                        (\resolver ->
-                            query server.db resolver "Sign-out failed" (Db.signOut token) (\() -> SessionEnded resolver)
-                        )
-
-                Nothing ->
-                    Now (signedOut server)
+            Reply.map Session (Flow.Session.end server request)
 
         Api.GetVerification ->
             withLink
@@ -773,9 +755,3 @@ linkMinutes =
 challengeSeconds : Int
 challengeSeconds =
     300
-
-
-signedOut : Server -> Response
-signedOut server =
-    Response.json 200 (Api.encodeResponse Api.signOut ())
-        |> SessionCookie.clear server.origin
