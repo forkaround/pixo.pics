@@ -1,7 +1,7 @@
 module Main exposing (Model, Msg(..), init, main, update)
 
 import Api
-import Data.Origin as Origin exposing (Origin)
+import Data.Origin as Origin
 import Db
 import Effect exposing (Effect(..), log, respond)
 import Flow.Health

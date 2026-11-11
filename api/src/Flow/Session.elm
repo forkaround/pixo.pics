@@ -6,7 +6,7 @@ import Effect exposing (Effect(..), query, respond, transact)
 import InteropDefinitions as Interop
 import Reply exposing (Reply(..), withSession)
 import Request exposing (Request)
-import Response
+import Response exposing (Response)
 import Server exposing (Server)
 import SessionCookie
 
@@ -51,7 +51,7 @@ update server msg =
             respond resolver (signedOut server)
 
 
-signedOut : Server -> Response.Response
+signedOut : Server -> Response
 signedOut server =
     Response.json 200 (Api.encodeResponse Api.signOut ())
         |> SessionCookie.clear server.origin
