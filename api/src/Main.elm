@@ -6,12 +6,12 @@ import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.Origin as Origin exposing (Origin)
-import Data.SessionToken as SessionToken exposing (SessionToken)
 import Data.SignUp as SignUp
 import Data.UserId as UserId
 import Data.Username as Username
 import Db
 import Effect exposing (Effect(..), log, query, respond, transact)
+import Flow.Health
 import InteropDefinitions as Interop
 import InteropPorts
 import Json.Decode as Decode
@@ -110,8 +110,8 @@ init flags =
 
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
-    | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error RateLimit.Outcome )
     | DatabaseFailed Effect.Failure
+    | Health Flow.Health.Msg
     | LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
@@ -233,32 +233,8 @@ running server msg =
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
             reply resolver (route server request)
 
-        DatabaseChecked resolver ( _, Ok (RateLimit.Limited limited) ) ->
-            respond resolver (Response.tooManyRequests limited.retryAfter)
-
-        DatabaseChecked resolver ( latency, Ok (RateLimit.Allowed _) ) ->
-            if latency > slowAfter then
-                Batch
-                    [ respond resolver
-                        (Response.health server.release
-                            { status = Api.Warn
-                            , latencyMs = Just latency
-                            , output = Just ("Slower than " ++ String.fromInt slowAfter ++ " ms.")
-                            }
-                        )
-                    , log Interop.Warn ("Health check slow: the database took " ++ String.fromInt latency ++ " ms.")
-                    ]
-
-            else
-                respond resolver
-                    (Response.health server.release { status = Api.Pass, latencyMs = Just latency, output = Nothing })
-
-        DatabaseChecked resolver ( latency, Err problem ) ->
-            Batch
-                [ respond resolver
-                    (Response.health server.release { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
-                , log Interop.Error ("Health check failed: " ++ Neon.errorToString problem)
-                ]
+        Health flowMsg ->
+            Effect.map Health (Flow.Health.update server flowMsg)
 
         DatabaseFailed { resolver, step, problem } ->
             Batch
@@ -583,18 +559,7 @@ handle : Server -> Request -> Api.Route -> Reply Msg
 handle server request r =
     case r of
         Api.GetHealth ->
-            Later
-                (\resolver ->
-                    Database
-                        (Neon.commit (Neon.withTimeout healthTimeout server.db)
-                            (Neon.transaction always
-                                |> Neon.with
-                                    (Db.rateLimit (RateLimit.healthChecks (Request.clientAddress request)))
-                                |> Neon.with Db.ping
-                            )
-                            (\result latency -> Ok (DatabaseChecked resolver ( latency, result )))
-                        )
-                )
+            Reply.map Health (Flow.Health.check server request)
 
         Api.PostSignUp ->
             askForLink server
@@ -808,38 +773,6 @@ linkMinutes =
 challengeSeconds : Int
 challengeSeconds =
     300
-
-
-healthTimeout : Float
-healthTimeout =
-    5000
-
-
-slowAfter : Int
-slowAfter =
-    1000
-
-
-failure : Neon.Error -> String
-failure problem =
-    case problem of
-        Neon.Timeout ->
-            "Timed out after " ++ String.fromFloat healthTimeout ++ " ms."
-
-        Neon.NetworkError ->
-            "Unreachable."
-
-        Neon.BadUrl _ ->
-            "Unreachable."
-
-        Neon.ServerError status _ ->
-            "Neon answered with HTTP " ++ String.fromInt status ++ "."
-
-        Neon.QueryFailed _ ->
-            "The query failed."
-
-        Neon.UnexpectedResult _ ->
-            "Unexpected result."
 
 
 signedOut : Server -> Response
