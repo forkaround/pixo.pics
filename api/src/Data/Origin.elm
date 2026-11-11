@@ -1,6 +1,6 @@
 module Data.Origin exposing (Origin, isSecure, local, parse, rpId, toString)
 
-import WebAuthn
+import Url exposing (Url)
 
 
 type Origin
@@ -12,19 +12,52 @@ type Origin
 
 
 parse : String -> Result String Origin
-parse url =
-    case WebAuthn.rpId url of
-        Just host ->
-            Ok
-                (Origin
-                    { url = url
-                    , rpId = host
-                    , secure = String.startsWith "https://" url
-                    }
-                )
+parse value =
+    case Url.fromString value of
+        Just url ->
+            if url.path == "/" && url.query == Nothing && url.fragment == Nothing then
+                Ok (fromUrl url)
+
+            else
+                Err ("Expected an origin without a path, like https://pixo.pics, got: " ++ value)
 
         Nothing ->
-            Err ("Expected an origin like https://pixo.pics, got: " ++ url)
+            Err ("Expected an origin like https://pixo.pics, got: " ++ value)
+
+
+fromUrl : Url -> Origin
+fromUrl url =
+    let
+        host =
+            String.toLower url.host
+
+        secure =
+            url.protocol == Url.Https
+
+        ( scheme, defaultPort ) =
+            if secure then
+                ( "https://", 443 )
+
+            else
+                ( "http://", 80 )
+
+        suffix =
+            case url.port_ of
+                Just number ->
+                    if number == defaultPort then
+                        ""
+
+                    else
+                        ":" ++ String.fromInt number
+
+                Nothing ->
+                    ""
+    in
+    Origin
+        { url = scheme ++ host ++ suffix
+        , rpId = host
+        , secure = secure
+        }
 
 
 local : Origin

@@ -1,5 +1,6 @@
 module WebAuthnTest exposing (suite)
 
+import Data.Origin as Origin
 import Expect
 import Test exposing (Test, describe, test)
 import WebAuthn
@@ -57,9 +58,13 @@ suite =
                         |> Expect.equal (Err "The client data is not the JSON of a ceremony.")
             , test "refuses a passkey created for another relying party" <|
                 \() ->
-                    WebAuthn.register { origin = "https://pixo.pics", rpId = "example.com" }
-                        { clientDataJSON = clientData, attestationObject = synced, transports = [] }
-                        |> Expect.equal (Err "The passkey is not for example.com.")
+                    register clientData
+                        (String.replace
+                            "hc4asGtQ0lfqei0FVSxvDEzvgNF-FdmbKJXm3Ic-1uxd"
+                            "o3mm9u6vuaVeN4wRgDTidR5oL6ufLTCrE9ISVYbOGUdd"
+                            synced
+                        )
+                        |> Expect.equal (Err "The passkey is not for pixo.pics.")
             , test "refuses a passkey created without the user" <|
                 \() ->
                     register clientData absent
@@ -170,32 +175,30 @@ suite =
                         |> Expect.equal
                             (Ok "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA")
             ]
-        , describe "rpId"
-            [ test "is the host of the origin" <|
-                \() ->
-                    WebAuthn.rpId "https://pixo.pics"
-                        |> Expect.equal (Just "pixo.pics")
-            , test "leaves out the port" <|
-                \() ->
-                    WebAuthn.rpId "http://localhost:5173"
-                        |> Expect.equal (Just "localhost")
-            ]
         ]
 
 
 register : String -> String -> Result String WebAuthn.Registration
 register clientDataJSON attestationObject =
-    WebAuthn.register { origin = "https://pixo.pics", rpId = "pixo.pics" }
-        { clientDataJSON = clientDataJSON
-        , attestationObject = attestationObject
-        , transports = [ "internal", "teleport", "hybrid" ]
-        }
+    Origin.parse "https://pixo.pics"
+        |> Result.andThen
+            (\origin ->
+                WebAuthn.register origin
+                    { clientDataJSON = clientDataJSON
+                    , attestationObject = attestationObject
+                    , transports = [ "internal", "teleport", "hybrid" ]
+                    }
+            )
 
 
 authenticate : String -> String -> Result String WebAuthn.Authentication
 authenticate clientDataJSON authenticatorData =
-    WebAuthn.authenticate { origin = "https://pixo.pics", rpId = "pixo.pics" }
-        { clientDataJSON = clientDataJSON, authenticatorData = authenticatorData }
+    Origin.parse "https://pixo.pics"
+        |> Result.andThen
+            (\origin ->
+                WebAuthn.authenticate origin
+                    { clientDataJSON = clientDataJSON, authenticatorData = authenticatorData }
+            )
 
 
 apple : String

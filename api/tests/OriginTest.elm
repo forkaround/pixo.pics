@@ -23,4 +23,29 @@ suite =
                 Origin.parse "pixo.pics"
                     |> Result.map Origin.toString
                     |> Expect.equal (Err "Expected an origin like https://pixo.pics, got: pixo.pics")
+        , test "drops a trailing slash" <|
+            \() ->
+                Origin.parse "https://pixo.pics/"
+                    |> Result.map Origin.toString
+                    |> Expect.equal (Ok "https://pixo.pics")
+        , test "lower-cases the host" <|
+            \() ->
+                Origin.parse "https://Pixo.PICS"
+                    |> Result.map (\origin -> ( Origin.toString origin, Origin.rpId origin ))
+                    |> Expect.equal (Ok ( "https://pixo.pics", "pixo.pics" ))
+        , test "drops the port its scheme implies" <|
+            \() ->
+                Origin.parse "https://pixo.pics:443"
+                    |> Result.map Origin.toString
+                    |> Expect.equal (Ok "https://pixo.pics")
+        , test "refuses a path" <|
+            \() ->
+                Origin.parse "https://pixo.pics/app"
+                    |> Result.map Origin.toString
+                    |> Expect.equal (Err "Expected an origin without a path, like https://pixo.pics, got: https://pixo.pics/app")
+        , test "refuses a query" <|
+            \() ->
+                Origin.parse "https://pixo.pics?next=1"
+                    |> Result.map Origin.toString
+                    |> Expect.equal (Err "Expected an origin without a path, like https://pixo.pics, got: https://pixo.pics?next=1")
         ]

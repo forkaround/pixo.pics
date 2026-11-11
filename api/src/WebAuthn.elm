@@ -1,4 +1,4 @@
-module WebAuthn exposing (Authentication, Key(..), Registration, algorithms, authenticate, key, register, rpId, signature)
+module WebAuthn exposing (Authentication, Key(..), Registration, algorithms, authenticate, key, register, signature)
 
 import Base64
 import Bitwise
@@ -8,9 +8,9 @@ import Bytes.Encode
 import Cbor exposing (CborItem(..))
 import Cbor.Decode
 import Cbor.Encode
+import Data.Origin as Origin exposing (Origin)
 import Json.Decode as Decode exposing (Decoder)
 import SHA256
-import Url
 
 
 type alias Registration =
@@ -49,14 +49,8 @@ knownTransports =
     [ "ble", "hybrid", "internal", "nfc", "smart-card", "usb" ]
 
 
-rpId : String -> Maybe String
-rpId origin =
-    Url.fromString origin
-        |> Maybe.map .host
-
-
 register :
-    { origin : String, rpId : String }
+    Origin
     -> { a | clientDataJSON : String, attestationObject : String, transports : List String }
     -> Result String Registration
 register expected { clientDataJSON, attestationObject, transports } =
@@ -72,17 +66,17 @@ register expected { clientDataJSON, attestationObject, transports } =
             , transports = List.filter (\transport -> List.member transport knownTransports) transports
             }
         )
-        (challengeOf "webauthn.create" expected.origin clientDataJSON)
+        (challengeOf "webauthn.create" (Origin.toString expected) clientDataJSON)
         (fromBase64Url attestationObject
             |> Maybe.andThen (Cbor.Decode.decode Cbor.Decode.any)
             |> Maybe.andThen authenticatorDataOf
             |> Result.fromMaybe "The attestation object is not CBOR with authenticator data."
-            |> Result.andThen (credentialOf expected.rpId)
+            |> Result.andThen (credentialOf (Origin.rpId expected))
         )
 
 
 authenticate :
-    { origin : String, rpId : String }
+    Origin
     -> { a | clientDataJSON : String, authenticatorData : String }
     -> Result String Authentication
 authenticate expected { clientDataJSON, authenticatorData } =
@@ -94,10 +88,10 @@ authenticate expected { clientDataJSON, authenticatorData } =
             , signed = assertion.signed
             }
         )
-        (challengeOf "webauthn.get" expected.origin clientDataJSON)
+        (challengeOf "webauthn.get" (Origin.toString expected) clientDataJSON)
         (Maybe.map2 Tuple.pair (fromBase64Url authenticatorData) (fromBase64Url clientDataJSON)
             |> Result.fromMaybe "The authenticator data is not base64url."
-            |> Result.andThen (assertionOf expected.rpId)
+            |> Result.andThen (assertionOf (Origin.rpId expected))
         )
 
 

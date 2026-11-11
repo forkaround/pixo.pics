@@ -720,7 +720,7 @@ handle model request r =
                         Decode.decodeString (Api.bodyDecoder Api.addPasskey) request.body
                             |> Result.mapError (\_ -> Nothing)
                             |> Result.andThen
-                                (WebAuthn.register { origin = Origin.toString model.origin, rpId = Origin.rpId model.origin }
+                                (WebAuthn.register model.origin
                                     >> Result.mapError Just
                                 )
                     of
@@ -784,7 +784,7 @@ handle model request r =
                 ( Ok db, Ok assertion ) ->
                     Later
                         (\resolver ->
-                            case WebAuthn.authenticate { origin = Origin.toString model.origin, rpId = Origin.rpId model.origin } assertion of
+                            case WebAuthn.authenticate model.origin assertion of
                                 Ok authentication ->
                                     query db
                                         resolver

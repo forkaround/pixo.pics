@@ -503,7 +503,9 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   `origin` comes from `app.ts`: `VERCEL_PROJECT_PRODUCTION_URL` in production,
   `VERCEL_URL` in a preview, else `http://localhost:5173`; never from the request.
 - `init` parses `origin` once into an `Origin`: the URL, its host as the passkeys' `rpId`,
-  and whether it is https (the cookie's `Secure`). One that is no URL logs `Bad origin` at
+  and whether it is https (the cookie's `Secure`). `Origin.parse` rebuilds it from the
+  scheme, host and port: a trailing slash, an upper-case host and a default port are
+  dropped, and a path, query or fragment is refused. One that is no URL logs `Bad origin` at
   `error` and leaves the server as broken flags do: no database, so those routes answer 503.
 - The passkey routes read the `session` cookie and answer 401 without a session.
   `GET /api/auth/passkeys` (`Api.passkeys`) lists the account's passkeys: `id` (the
@@ -575,10 +577,10 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 ## WebAuthn
 
 - `WebAuthn.elm` checks a registration in Elm, with no port: `WebAuthn.register` takes the
-  expected `origin` and `rpId` and the browser's answer, and gives a `Registration` (the
+  expected `Origin` and the browser's answer, and gives a `Registration` (the
   challenge to use up, the credential id, the public key, the counter, the backup flags
   and the transports it knows) or the reason as text, for the log.
-- The relying party's id is the origin's host (`WebAuthn.rpId`), so a passkey belongs to
+- The relying party's id is the origin's host (`Origin.rpId`), so a passkey belongs to
   one host: production's, a preview's own, or `localhost`.
 - It checks the client data (`webauthn.create`, the origin, not cross-origin) and the
   authenticator data (the hash of the id, user present, a credential, backed up only if
