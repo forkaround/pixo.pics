@@ -1,5 +1,6 @@
 module Request exposing (Request, clientAddress, header, linkToken)
 
+import Data.ClientAddress as ClientAddress exposing (ClientAddress)
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Dict exposing (Dict)
 
@@ -32,14 +33,6 @@ linkToken request =
         |> Maybe.andThen LinkToken.fromString
 
 
-clientAddress : Request -> String
+clientAddress : Request -> ClientAddress
 clientAddress request =
-    case header "x-real-ip" request of
-        Just address ->
-            String.trim address
-
-        Nothing ->
-            header "x-forwarded-for" request
-                |> Maybe.andThen (String.split "," >> List.head)
-                |> Maybe.map String.trim
-                |> Maybe.withDefault "unknown"
+    ClientAddress.fromHeaders request.headers

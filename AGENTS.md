@@ -5,21 +5,21 @@ on Postgres (Neon), deployed to Vercel.
 
 ## Layout
 
-| Path                | What                                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                           |
-| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                       |
-| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`           |
-| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                       |
-| `api/tests/`        | elm-test suites for the server                                                                          |
-| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `Request`, `Response`, `SessionCookie`, `WebAuthn`, `Aaguid` |
-| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`                                   |
-| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                 |
-| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                              |
-| `api/index.ts`      | The only Vercel Function                                                                                |
-| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                              |
-| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                             |
-| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                                       |
+| Path                | What                                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                                        |
+| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                                    |
+| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`                        |
+| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                                    |
+| `api/tests/`        | elm-test suites for the server                                                                                       |
+| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `Request`, `Response`, `RateLimit`, `SessionCookie`, `WebAuthn`, `Aaguid` |
+| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`, `ClientAddress`                               |
+| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                              |
+| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                                           |
+| `api/index.ts`      | The only Vercel Function                                                                                             |
+| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                                           |
+| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                                          |
+| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                                                    |
 
 ## Commands
 
@@ -344,15 +344,17 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
 
 ## Rate limiting
 
-`Db.rateLimit { key, limit, windowSeconds }` runs `rate_limit(key, limit, window_seconds)`
-and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
+`Db.rateLimit policy` runs `rate_limit(key, limit, window_seconds)` and gives
+`RateLimit.Allowed { remaining }` or `RateLimit.Limited { retryAfter }`, in seconds.
 
 - GCRA: `limit` hits at once, then one more every `window / limit`. A denied hit writes
   nothing and takes no lock: `rate_limit` reads the row first and answers from it, so a
   flood on one key doesn't queue. Only a hit that may be allowed runs the upsert, which
   locks the key's row until its transaction ends.
 - One policy per key: name it after what it limits and whom, like
-  `magic-link:email:<email>`. At most 512 bytes.
+  `magic-link:email:<email>`. At most 512 bytes. Each policy is a function in
+  `RateLimit.elm` that takes what it limits (`ClientAddress`, `Email`); a key is written
+  nowhere else. A new limit is a new function there.
 - Several keys in one transaction (`Neon.commit`): always in the same order, or two
   requests deadlock.
 - `rate_limits` is a logged table on purpose: Neon drops unlogged tables when the compute

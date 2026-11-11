@@ -1,5 +1,6 @@
 module RequestTest exposing (suite)
 
+import Data.ClientAddress as ClientAddress
 import Data.LinkToken as LinkToken
 import Dict
 import Expect
@@ -24,17 +25,26 @@ suite =
             \() ->
                 requestWith [ ( "x-real-ip", " 203.0.113.7 " ), ( "x-forwarded-for", "198.51.100.1" ) ]
                     |> Request.clientAddress
+                    |> ClientAddress.toString
                     |> Expect.equal "203.0.113.7"
         , test "falls back to the first forwarded address" <|
             \() ->
                 requestWith [ ( "x-forwarded-for", "198.51.100.1, 10.0.0.1" ) ]
                     |> Request.clientAddress
+                    |> ClientAddress.toString
                     |> Expect.equal "198.51.100.1"
         , test "says unknown without either header" <|
             \() ->
                 requestWith []
                     |> Request.clientAddress
+                    |> ClientAddress.toString
                     |> Expect.equal "unknown"
+        , test "cuts an address that is too long to be one" <|
+            \() ->
+                requestWith [ ( "x-real-ip", String.repeat 200 "9" ) ]
+                    |> Request.clientAddress
+                    |> ClientAddress.toString
+                    |> Expect.equal (String.repeat 64 "9")
         , test "reads a bearer token" <|
             \() ->
                 requestWith [ ( "authorization", "Bearer Zm9vYmFy" ) ]

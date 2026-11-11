@@ -16,6 +16,7 @@ import InteropPorts
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Path
+import RateLimit
 import Request exposing (Request)
 import Response exposing (Response)
 import Services.Brevo as Brevo
@@ -124,9 +125,9 @@ respond resolver response =
 
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
-    | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error Db.RateLimit )
+    | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error RateLimit.Outcome )
     | DatabaseFailed Interop.Resolver String Neon.Error
-    | LinkLimited Interop.Resolver Mailer.Mailer Ask ( Db.RateLimit, Db.RateLimit )
+    | LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
@@ -252,10 +253,10 @@ running server msg =
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
             reply resolver (route server request)
 
-        DatabaseChecked resolver ( _, Ok (Db.Limited limited) ) ->
+        DatabaseChecked resolver ( _, Ok (RateLimit.Limited limited) ) ->
             respond resolver (Response.tooManyRequests limited.retryAfter)
 
-        DatabaseChecked resolver ( latency, Ok (Db.Allowed _) ) ->
+        DatabaseChecked resolver ( latency, Ok (RateLimit.Allowed _) ) ->
             if latency > slowAfter then
                 Batch
                     [ respond resolver
@@ -286,7 +287,7 @@ running server msg =
                 ]
 
         LinkLimited resolver mailer ask ( byAddress, byEmail ) ->
-            case retryAfter [ byAddress, byEmail ] of
+            case RateLimit.retryAfter [ byAddress, byEmail ] of
                 Just seconds ->
                     respond resolver (Response.tooManyRequests seconds)
 
@@ -628,12 +629,7 @@ handle server request r =
                         (Neon.commit (Neon.withTimeout healthTimeout server.db)
                             (Neon.transaction always
                                 |> Neon.with
-                                    (Db.rateLimit
-                                        { key = "health:ip:" ++ Request.clientAddress request
-                                        , limit = 60
-                                        , windowSeconds = 60
-                                        }
-                                    )
+                                    (Db.rateLimit (RateLimit.healthChecks (Request.clientAddress request)))
                                 |> Neon.with Db.ping
                             )
                             (\result latency -> DatabaseChecked resolver ( latency, result ))
@@ -765,9 +761,7 @@ handle server request r =
                         resolver
                         "Passkey sign-in failed at its challenge"
                         (Db.signInChallenge
-                            { key = "passkey:ip:" ++ Request.clientAddress request
-                            , limit = 20
-                            , windowSeconds = 900
+                            { policy = RateLimit.passkeyChallenges (Request.clientAddress request)
                             , ttlSeconds = challengeSeconds
                             }
                         )
@@ -819,19 +813,9 @@ askForLink server request parsed =
                         "Magic link failed at its rate limits"
                         (Neon.transaction Tuple.pair
                             |> Neon.with
-                                (Db.rateLimit
-                                    { key = "magic-link:ip:" ++ Request.clientAddress request
-                                    , limit = 10
-                                    , windowSeconds = 900
-                                    }
-                                )
+                                (Db.rateLimit (RateLimit.magicLinksByAddress (Request.clientAddress request)))
                             |> Neon.with
-                                (Db.rateLimit
-                                    { key = "magic-link:email:" ++ Email.toString (askedBy ask)
-                                    , limit = 3
-                                    , windowSeconds = 900
-                                    }
-                                )
+                                (Db.rateLimit (RateLimit.magicLinksByEmail (askedBy ask)))
                         )
                         (LinkLimited resolver mailer ask)
                 )
@@ -874,21 +858,6 @@ linkMinutes =
 challengeSeconds : Int
 challengeSeconds =
     300
-
-
-retryAfter : List Db.RateLimit -> Maybe Int
-retryAfter limits =
-    limits
-        |> List.filterMap
-            (\limit ->
-                case limit of
-                    Db.Allowed _ ->
-                        Nothing
-
-                    Db.Limited limited ->
-                        Just limited.retryAfter
-            )
-        |> List.maximum
 
 
 healthTimeout : Float

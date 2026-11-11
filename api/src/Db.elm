@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), RateLimit(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
+module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -10,6 +10,7 @@ import Data.UserId as UserId exposing (UserId)
 import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
+import RateLimit
 import Services.Neon as Neon
 import WebAuthn
 
@@ -60,30 +61,29 @@ signedIn token toResult =
             )
 
 
-type RateLimit
-    = Allowed { remaining : Int }
-    | Limited { retryAfter : Int }
-
-
-rateLimit : { key : String, limit : Int, windowSeconds : Int } -> Neon.Query RateLimit
-rateLimit { key, limit, windowSeconds } =
+rateLimit : RateLimit.Policy -> Neon.Query RateLimit.Outcome
+rateLimit policy =
+    let
+        { key, limit, windowSeconds } =
+            RateLimit.describe policy
+    in
     Neon.one "SELECT allowed, remaining, retry_after FROM rate_limit($1, $2, $3)"
         [ Neon.text key, Neon.int limit, Neon.int windowSeconds ]
         rateLimitDecoder
 
 
-rateLimitDecoder : Decoder RateLimit
+rateLimitDecoder : Decoder RateLimit.Outcome
 rateLimitDecoder =
     Decode.field "allowed" Decode.bool
         |> Decode.andThen
             (\allowed ->
                 if allowed then
                     Decode.field "remaining" Decode.int
-                        |> Decode.map (\remaining -> Allowed { remaining = remaining })
+                        |> Decode.map (\remaining -> RateLimit.Allowed { remaining = remaining })
 
                 else
                     Decode.field "retry_after" Decode.int
-                        |> Decode.map (\retryAfter -> Limited { retryAfter = retryAfter })
+                        |> Decode.map (\retryAfter -> RateLimit.Limited { retryAfter = retryAfter })
             )
 
 
@@ -354,8 +354,12 @@ type SignInChallenge
     | TooManyChallenges { retryAfter : Int }
 
 
-signInChallenge : { key : String, limit : Int, windowSeconds : Int, ttlSeconds : Int } -> Neon.Query SignInChallenge
-signInChallenge { key, limit, windowSeconds, ttlSeconds } =
+signInChallenge : { policy : RateLimit.Policy, ttlSeconds : Int } -> Neon.Query SignInChallenge
+signInChallenge { policy, ttlSeconds } =
+    let
+        { key, limit, windowSeconds } =
+            RateLimit.describe policy
+    in
     Neon.one
         ("SELECT l.retry_after, CASE WHEN l.allowed THEN create_authentication_challenge($4) END AS challenge "
             ++ "FROM rate_limit($1, $2, $3) AS l"
