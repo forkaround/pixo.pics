@@ -250,24 +250,18 @@ perform effect =
             InteropPorts.fromElm value
 
         Database request ->
-            Time.now
-                |> Task.andThen
-                    (\start ->
-                        Neon.send request
-                            |> Task.andThen
-                                (\toResult ->
-                                    Time.now
-                                        |> Task.map
-                                            (\end ->
-                                                case toResult (Time.posixToMillis end - Time.posixToMillis start) of
-                                                    Ok msg ->
-                                                        msg
+            Task.map3
+                (\start toResult end ->
+                    case toResult (Time.posixToMillis end - Time.posixToMillis start) of
+                        Ok msg ->
+                            msg
 
-                                                    Err failed ->
-                                                        DatabaseFailed failed
-                                            )
-                                )
-                    )
+                        Err failed ->
+                            DatabaseFailed failed
+                )
+                Time.now
+                (Neon.send request)
+                Time.now
                 |> Task.perform identity
 
         Http request ->

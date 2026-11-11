@@ -1536,31 +1536,26 @@ simulateEffects effect =
                 (TsEncode.encoder Interop.interop.fromElm value)
 
         Effect.Database { method, headers, url, body, timeout, onResponse } ->
-            SimulatedEffect.Time.now
-                |> SimulatedEffect.Task.andThen
-                    (\begin ->
-                        SimulatedEffect.Http.task
-                            { method = method
-                            , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers
-                            , url = url
-                            , body = SimulatedEffect.Http.jsonBody body
-                            , resolver = SimulatedEffect.Http.stringResolver (onResponse >> Ok)
-                            , timeout = timeout
-                            }
-                            |> SimulatedEffect.Task.andThen
-                                (\toResult ->
-                                    SimulatedEffect.Time.now
-                                        |> SimulatedEffect.Task.map
-                                            (\end ->
-                                                case toResult (Time.posixToMillis end - Time.posixToMillis begin) of
-                                                    Ok msg ->
-                                                        msg
+            SimulatedEffect.Task.map3
+                (\begin toResult end ->
+                    case toResult (Time.posixToMillis end - Time.posixToMillis begin) of
+                        Ok msg ->
+                            msg
 
-                                                    Err queryFailure ->
-                                                        Main.DatabaseFailed queryFailure
-                                            )
-                                )
-                    )
+                        Err queryFailure ->
+                            Main.DatabaseFailed queryFailure
+                )
+                SimulatedEffect.Time.now
+                (SimulatedEffect.Http.task
+                    { method = method
+                    , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers
+                    , url = url
+                    , body = SimulatedEffect.Http.jsonBody body
+                    , resolver = SimulatedEffect.Http.stringResolver (onResponse >> Ok)
+                    , timeout = timeout
+                    }
+                )
+                SimulatedEffect.Time.now
                 |> SimulatedEffect.Task.perform identity
 
         Effect.Http { method, headers, url, body, timeout, onResponse } ->
