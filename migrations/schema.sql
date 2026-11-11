@@ -348,28 +348,35 @@ BEGIN
   v_interval := (p_window_seconds::bigint * 1000000 / p_limit) * interval '1 microsecond';
   v_burst := v_interval * p_limit;
 
-  INSERT INTO rate_limits AS r (key, tat)
-  VALUES (p_key, v_now + v_interval)
-  ON CONFLICT (key) DO UPDATE
-    SET tat = GREATEST(r.tat, v_now) + v_interval
-    WHERE GREATEST(r.tat, v_now) + v_interval <= v_now + v_burst
-  RETURNING r.tat INTO v_tat;
+  SELECT r.tat INTO v_tat FROM rate_limits AS r WHERE r.key = p_key;
 
-  IF FOUND THEN
-    allowed := true;
-    remaining := floor(
-      extract(epoch FROM v_now + v_burst - v_tat) / extract(epoch FROM v_interval)
-    )::integer;
-    retry_after := 0;
-  ELSE
+  IF NOT FOUND OR GREATEST(v_tat, v_now) + v_interval <= v_now + v_burst THEN
+    INSERT INTO rate_limits AS r (key, tat)
+    VALUES (p_key, v_now + v_interval)
+    ON CONFLICT (key) DO UPDATE
+      SET tat = GREATEST(r.tat, v_now) + v_interval
+      WHERE GREATEST(r.tat, v_now) + v_interval <= v_now + v_burst
+    RETURNING r.tat INTO v_tat;
+
+    IF FOUND THEN
+      allowed := true;
+      remaining := floor(
+        extract(epoch FROM v_now + v_burst - v_tat) / extract(epoch FROM v_interval)
+      )::integer;
+      retry_after := 0;
+      RETURN NEXT;
+      RETURN;
+    END IF;
+
     SELECT r.tat INTO v_tat FROM rate_limits AS r WHERE r.key = p_key;
-    allowed := false;
-    remaining := 0;
-    retry_after := GREATEST(
-      1,
-      ceil(extract(epoch FROM COALESCE(v_tat, v_now) + v_interval - v_burst - v_now))
-    )::integer;
   END IF;
+
+  allowed := false;
+  remaining := 0;
+  retry_after := GREATEST(
+    1,
+    ceil(extract(epoch FROM COALESCE(v_tat, v_now) + v_interval - v_burst - v_now))
+  )::integer;
 
   RETURN NEXT;
 END;

@@ -338,7 +338,9 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
 and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
 
 - GCRA: `limit` hits at once, then one more every `window / limit`. A denied hit writes
-  nothing.
+  nothing and takes no lock: `rate_limit` reads the row first and answers from it, so a
+  flood on one key doesn't queue. Only a hit that may be allowed runs the upsert, which
+  locks the key's row until its transaction ends.
 - One policy per key: name it after what it limits and whom, like
   `magic-link:email:<email>`. At most 512 bytes.
 - Several keys in one transaction (`Neon.commit`): always in the same order, or two
