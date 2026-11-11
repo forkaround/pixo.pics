@@ -25,7 +25,7 @@ export type FromElm = { key : { e : string; n : string; tag : "RS256" } | { tag 
 
 export type ToElm = { request : ({ method : string } & { path : string[] } & { query : { [key: string]: string } } & { headers : { [key: string]: string } } & { body : string }); resolve : JsonValue; tag : "Request" } | { resolve : JsonValue; signIn : ({ challenge : string } & { credentialId : string } & { signCount : number } & { backedUp : boolean }); tag : "SignatureChecked"; valid : boolean };
 
-export type Flags = ({ databaseUrl : string | null } & { neonEndpoint : string | null } & { brevoApiKey : string | null } & { emailFrom : string | null } & { origin : string } & { releaseId : string | null } & { releaseUrl : string | null } & { region : string | null });
+export type Flags = ({ local : boolean } & ({ databaseUrl : string | null } & { neonEndpoint : string | null } & { brevoApiKey : string | null } & { emailFrom : string | null } & { origin : string } & { releaseId : string | null } & { releaseUrl : string | null } & { region : string | null }));
 
 export namespace Main {
   function init(options: { node?: HTMLElement | null; flags: Flags }): ElmApp;

@@ -181,9 +181,4 @@ update server msg =
 
 notify : Server -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
 notify server resolver response envelope email =
-    case server.mailer of
-        Ok mailer ->
-            Mail (Mailer.send mailer envelope email (Notified resolver response))
-
-        Err _ ->
-            respond resolver response
+    Mail (Mailer.send server.mailer envelope email (Notified resolver response))

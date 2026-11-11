@@ -106,6 +106,7 @@ const app = Elm.Main.init({
     releaseId: process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || local,
     releaseUrl: commitUrl(),
     region: process.env.VERCEL_REGION || local,
+    local: local !== null,
   },
 });
 

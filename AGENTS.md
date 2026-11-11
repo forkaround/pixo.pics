@@ -15,7 +15,7 @@ on Postgres (Neon), deployed to Vercel.
 | `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Server`, `Effect`, `Reply`, `Db`, `Request`, `Response`, `RateLimit`, `SessionCookie`, `WebAuthn`, `Aaguid` |
 | `api/src/Flow/`     | One module per request flow: `Health`, `MagicLink`, `Session`, `Passkeys`, `PasskeySignIn`                                                        |
 | `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`, `ClientAddress`                                                            |
-| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                                                           |
+| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `LogMailer`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                                              |
 | `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                                                                        |
 | `api/index.ts`      | The only Vercel Function                                                                                                                          |
 | `migrations/`       | Graphile Migrate (`.gmrc`)                                                                                                                        |
@@ -128,15 +128,15 @@ pull requests and on `main`; it needs no database.
 
 ## Environment
 
-| Variable                | Used by                                                      |
-| ----------------------- | ------------------------------------------------------------ |
-| `DATABASE_URL`          | Migrations, as the owner; the server takes host and database |
-| `API_DATABASE_PASSWORD` | Server: the password of `api`, the role it connects as       |
-| `NEON_ENDPOINT`         | Server (local proxy instead of Neon), `dev:proxy`'s port     |
-| `BREVO_API_KEY`         | Server: Brevo's API key; empty locally, so nothing is sent   |
-| `EMAIL_FROM`            | Server: the sender's address, verified in Brevo              |
-| `SHADOW_DATABASE_URL`   | `bun db watch` and `commit`                                  |
-| `ROOT_DATABASE_URL`     | `bun db reset`, the proxy's own connection                   |
+| Variable                | Used by                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `DATABASE_URL`          | Migrations, as the owner; the server takes host and database  |
+| `API_DATABASE_PASSWORD` | Server: the password of `api`, the role it connects as        |
+| `NEON_ENDPOINT`         | Server (local proxy instead of Neon), `dev:proxy`'s port      |
+| `BREVO_API_KEY`         | Server: Brevo's API key; empty locally, so emails are printed |
+| `EMAIL_FROM`            | Server: the sender's address, verified in Brevo               |
+| `SHADOW_DATABASE_URL`   | `bun db watch` and `commit`                                   |
+| `ROOT_DATABASE_URL`     | `bun db reset`, the proxy's own connection                    |
 
 - Bun loads `.env`, then `.env.local`, then the shell wins, but only when it runs a file
   itself (`bun <file>`): that's why `dev:vite`, `preview` and `db` call
@@ -446,7 +446,8 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - `init` and `update` return an `Effect Msg` (`Effect.elm`), never a `Cmd`: `Batch`,
   `SendToJs` (a response, a log or a signature to check), `Database`, a `Neon.Request`
   whose message also takes the latency in ms and may be an `Err Failure`, and `Mail`, a
-  `Brevo.Request`. `Main.perform` turns it into a `Cmd`, and a failed query into
+  `Mailer.Delivery`: a `Brevo.Request` to send, or an email to print. `Main.perform` turns
+  it into a `Cmd`, and a failed query into
   `DatabaseFailed`, answered once with a 503; the tests simulate it (see
   [Tests](#tests)).
 - `Main` is wiring: `init`, `update`, `perform`, and `handle`, the one match on
@@ -457,8 +458,8 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   and a function in the flow it belongs to; a new flow is a new module and a new
   `Main.Msg` variant. Flows never import `Main` or each other.
 - The model is set once: `Running` with a `Server` (the connection, the origin, the
-  release and the mailer, which may be an `Err`), or `Broken` with the reason (flags that
-  don't decode, an origin that is no URL, or no database). A broken server answers 503 to
+  release and the mailer), or `Broken` with the reason (flags that don't decode, an origin
+  that is no URL, no database, or no mailer on Vercel). A broken server answers 503 to
   every route but health, which fails with the reason, and still answers 404 and 405.
 - `dev.ts` reloads the server on any `.elm`/`.ts` change in `api/` or `shared/`
   (restarting from `init`); `preview` runs `dist/server/app.js`.
@@ -551,7 +552,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   `Api.PostPasskeyOptions`.
 - Adding and removing a passkey email the account (`notify`): the answer waits for Brevo,
   since nothing may run after it on Vercel, but is the same when the email fails (logged
-  at `error`) or isn't configured. Removing a passkey leaves its sessions alone.
+  at `error`). Removing a passkey leaves its sessions alone.
 - The report's `releaseId` (`VERCEL_GIT_COMMIT_SHA`, else `VERCEL_DEPLOYMENT_ID`),
   `region` (`VERCEL_REGION`, our own field) and `links.release` (GitHub commit URL from
   `VERCEL_GIT_*`) come from `app.ts`. Off Vercel they are `local`.
@@ -592,11 +593,17 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - Templates: `Services.Mailer.SignIn` and `Services.Mailer.SignUp`, for the two kinds of magic link;
   `Services.Mailer.PasskeyAdded` and `Services.Mailer.PasskeyRemoved`, which tell the account what happened
   to it and link to `<origin>/dashboard`.
-- `Mailer.configure` (`api/src/Services/Mailer.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
-  an address verified as a sender in Brevo; its name is `pixo`. Without either the server
-  starts anyway, warns, and `server.mailer` is an `Err`. `EMAIL_FROM` is parsed as an `Email`;
-  one that isn't leaves `server.mailer` an `Err` (`EMAIL_FROM is not an email address.`).
-- `Mailer.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient, whose
+- `Services/Mailer.elm` is the one way to send an email, with two mailers behind it.
+  `Mailer.configure` picks one from `BREVO_API_KEY`, `EMAIL_FROM` and the `local` flag.
+  With both variables it is a `BrevoMailer`: it sends through `Services/Brevo.elm`, from
+  `EMAIL_FROM`, an address verified as a sender there and parsed as an `Email`; its name
+  is `pixo`. Without them, a local server (`local`, which `app.ts` sets when `VERCEL` is
+  unset) gets a `LogMailer` (`Services/LogMailer.elm`), which prints each email to the
+  terminal instead, so sign-up works on a fresh checkout and the magic link shows in
+  the log; on Vercel the server is `Broken`. `local` is never inferred from a request
+  or the origin: a `LogMailer` in production would write link tokens to the logs.
+- `Mailer.send mailer { to, tag } email toMsg` is the `Mailer.Delivery` for one
+  recipient (`Send`, a `Brevo.Request`, or `Print`), whose
   `to` is an `Email`, with a 10 s timeout; wrap it in the `Mail` effect. The tag names the
   template (`sign-in`) and shows in Brevo's logs.
 - `POST /api/auth/signup` sends `Services.Mailer.SignUp`, or `Services.Mailer.SignIn` (see [Server](#server)).

@@ -2,7 +2,7 @@ module Effect exposing (Effect(..), Failure, log, map, query, respond, transact)
 
 import InteropDefinitions as Interop
 import Response exposing (Response)
-import Services.Brevo as Brevo
+import Services.Mailer as Mailer
 import Services.Neon as Neon
 
 
@@ -11,7 +11,7 @@ type Effect msg
     | Batch (List (Effect msg))
     | SendToJs Interop.FromElm
     | Database (Neon.Request (Int -> Result Failure msg))
-    | Mail (Brevo.Request msg)
+    | Mail (Mailer.Delivery msg)
 
 
 type alias Failure =
@@ -43,15 +43,8 @@ map toMsg effect =
                 , onResponse = \response latency -> Result.map toMsg (request.onResponse response latency)
                 }
 
-        Mail request ->
-            Mail
-                { method = request.method
-                , headers = request.headers
-                , url = request.url
-                , body = request.body
-                , timeout = request.timeout
-                , onResponse = request.onResponse >> toMsg
-                }
+        Mail delivery ->
+            Mail (Mailer.mapDelivery toMsg delivery)
 
 
 query : Neon.Connection -> Interop.Resolver -> String -> Neon.Query a -> (a -> msg) -> Effect msg

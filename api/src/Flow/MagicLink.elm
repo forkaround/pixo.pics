@@ -25,9 +25,9 @@ import SessionCookie
 
 
 type Msg
-    = LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
-    | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
-    | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
+    = LinkLimited Interop.Resolver Ask ( RateLimit.Outcome, RateLimit.Outcome )
+    | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
+    | SignInLinkCreated Interop.Resolver Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | VerificationFound Interop.Resolver (Maybe Api.Verification)
     | VerificationConsumed Interop.Resolver Db.Consumed
@@ -95,7 +95,7 @@ verify server request =
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
-        LinkLimited resolver mailer ask ( byAddress, byEmail ) ->
+        LinkLimited resolver ask ( byAddress, byEmail ) ->
             case RateLimit.retryAfter [ byAddress, byEmail ] of
                 Just seconds ->
                     respond resolver (Response.tooManyRequests seconds)
@@ -112,22 +112,22 @@ update server msg =
                                     , ttlSeconds = linkMinutes * 60
                                     }
                                 )
-                                (SignUpLinkCreated resolver mailer signUp)
+                                (SignUpLinkCreated resolver signUp)
 
                         SignInAsked email ->
                             query server.db
                                 resolver
                                 "Magic link failed at its link"
                                 (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
-                                (SignInLinkCreated resolver mailer email)
+                                (SignInLinkCreated resolver email)
 
-        SignUpLinkCreated resolver mailer signUp link ->
+        SignUpLinkCreated resolver signUp link ->
             case link of
                 Db.UsernameTaken ->
                     respond resolver (Response.error 409 "That username is taken.")
 
                 Db.SignUpLink token ->
-                    sendLink mailer
+                    sendLink server
                         resolver
                         { to = signUp.email, tag = "sign-up" }
                         (Services.Mailer.SignUp.email
@@ -138,15 +138,15 @@ update server msg =
                         )
 
                 Db.SignInInstead token ->
-                    sendLink mailer resolver { to = signUp.email, tag = "sign-in" } (signInEmail server token)
+                    sendLink server resolver { to = signUp.email, tag = "sign-in" } (signInEmail server token)
 
-        SignInLinkCreated resolver mailer email link ->
+        SignInLinkCreated resolver email link ->
             case link of
                 Db.NoAccount ->
                     respond resolver Response.accepted
 
                 Db.SignInLink token ->
-                    sendLink mailer resolver { to = email, tag = "sign-in" } (signInEmail server token)
+                    sendLink server resolver { to = email, tag = "sign-in" } (signInEmail server token)
 
         LinkSent resolver (Ok _) ->
             respond resolver Response.accepted
@@ -176,9 +176,9 @@ update server msg =
             respond resolver (Response.error 409 "That username was taken in the meantime. Sign up again with another.")
 
 
-sendLink : Mailer.Mailer -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
-sendLink mailer resolver envelope message =
-    Mail (Mailer.send mailer envelope message (LinkSent resolver))
+sendLink : Server -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
+sendLink server resolver envelope message =
+    Mail (Mailer.send server.mailer envelope message (LinkSent resolver))
 
 
 signInEmail : Server -> LinkToken -> Layout.Message
@@ -191,8 +191,8 @@ signInEmail server token =
 
 askForLink : Server -> Request -> Result Response Ask -> Reply Msg
 askForLink server request parsed =
-    case ( server.mailer, parsed ) of
-        ( Ok mailer, Ok ask ) ->
+    case parsed of
+        Ok ask ->
             Later
                 (\resolver ->
                     transact server.db
@@ -204,14 +204,11 @@ askForLink server request parsed =
                             |> Neon.with
                                 (Db.rateLimit (RateLimit.magicLinksByEmail (askedBy ask)))
                         )
-                        (LinkLimited resolver mailer ask)
+                        (LinkLimited resolver ask)
                 )
 
-        ( Ok _, Err response ) ->
+        Err response ->
             Now response
-
-        ( Err _, _ ) ->
-            Now Response.unavailable
 
 
 withLink : Request -> (LinkToken -> Interop.Resolver -> Effect Msg) -> Reply Msg

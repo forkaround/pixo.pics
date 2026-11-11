@@ -8,7 +8,7 @@ import Services.Neon as Neon
 
 type alias Server =
     { db : Neon.Connection
-    , mailer : Result String Mailer.Mailer
+    , mailer : Mailer.Mailer
     , origin : Origin
     , release : Api.Release
     }

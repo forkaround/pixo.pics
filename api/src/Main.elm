@@ -54,32 +54,34 @@ init flags =
             let
                 release =
                     { releaseId = config.releaseId, releaseUrl = config.releaseUrl, region = config.region }
-
-                mailer =
-                    Mailer.configure config
-
-                noMailer =
-                    case mailer of
-                        Ok _ ->
-                            NoEffect
-
-                        Err problem ->
-                            log Interop.Warn ("No email, so nothing is sent: " ++ problem)
             in
-            case ( Origin.parse config.origin, Db.connect config ) of
-                ( Ok origin, Ok db ) ->
+            case ( Origin.parse config.origin, Db.connect config, Mailer.configure config ) of
+                ( Ok origin, Ok db, Ok mailer ) ->
                     ( Running { db = db, mailer = mailer, origin = origin, release = release }
-                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), noMailer ]
+                    , Batch
+                        [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db)
+                        , case Mailer.warning mailer of
+                            Just printing ->
+                                log Interop.Warn printing
+
+                            Nothing ->
+                                NoEffect
+                        ]
                     )
 
-                ( Ok _, Err problem ) ->
-                    ( Broken { problem = problem, release = release }
-                    , Batch [ log Interop.Warn ("No database, so database routes answer 503: " ++ problem), noMailer ]
-                    )
-
-                ( Err problem, _ ) ->
+                ( Err problem, _, _ ) ->
                     ( Broken { problem = problem, release = release }
                     , log Interop.Error ("Bad origin: " ++ problem)
+                    )
+
+                ( Ok _, Err problem, _ ) ->
+                    ( Broken { problem = problem, release = release }
+                    , log Interop.Warn ("No database, so database routes answer 503: " ++ problem)
+                    )
+
+                ( Ok _, Ok _, Err problem ) ->
+                    ( Broken { problem = problem, release = release }
+                    , log Interop.Error ("No email, so every route but health answers 503: " ++ problem)
                     )
 
         Err problem ->
@@ -258,9 +260,16 @@ perform effect =
                     )
                 |> Task.perform identity
 
-        Mail request ->
+        Mail (Mailer.Send request) ->
             Brevo.send request
                 |> Task.perform identity
+
+        Mail (Mailer.Print text msg) ->
+            Cmd.batch
+                [ InteropPorts.fromElm (Interop.Log Interop.Info text)
+                , Task.succeed msg
+                    |> Task.perform identity
+                ]
 
 
 

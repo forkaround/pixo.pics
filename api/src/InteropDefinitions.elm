@@ -56,6 +56,7 @@ type alias Flags =
     , releaseId : Maybe String
     , releaseUrl : Maybe String
     , region : Maybe String
+    , local : Bool
     }
 
 
@@ -253,3 +254,4 @@ flags =
         (TsDecode.field "releaseId" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "releaseUrl" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "region" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "local" TsDecode.bool)
