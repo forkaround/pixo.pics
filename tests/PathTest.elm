@@ -24,6 +24,16 @@ suite =
                             Url.fromString "https://pixo.pics/auth/verify#"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just (Path.Verify Nothing))
+                   , test "takes a trailing slash for the same page" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/dashboard/"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.Dashboard)
+                   , test "leaves a query string out of it" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/auth/signin?from=email"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.SignIn)
                    , test "takes an unknown address for not found" <|
                         \() ->
                             Url.fromString "https://pixo.pics/nowhere/at/all"

@@ -360,11 +360,12 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`), which names every
   address: `/`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
-  `Path.NotFound` for the rest. Links, `PushUrl` and the server's emails write the same
-  addresses with `Path.toString`. A new page needs only a `Path` variant: `open` doesn't
-  compile until it handles it. `open` also ends a passkey ceremony left unfinished.
-  `NotFound` always links home and adds what fits the session: the dashboard, sign-in
-  and sign-up, or "Try again".
+  `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
+  query string leads to the same page. Links, `PushUrl` and the server's emails write the
+  same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
+  compile until it handles it) and its line in `Path.parse`'s parser. `open` also ends a
+  passkey ceremony left unfinished. `NotFound` always links home and adds what fits the
+  session: the dashboard, sign-in and sign-up, or "Try again".
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
   (only on a 401), `SignedIn account`, or `Unavailable reason` when the check failed some
   other way: the page then says so and offers "Try again" (`SessionRetried`), and sends

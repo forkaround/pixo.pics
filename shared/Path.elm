@@ -1,6 +1,7 @@
 module Path exposing (Path(..), parse, toString)
 
 import Url exposing (Url)
+import Url.Parser as Parser exposing ((</>), Parser)
 
 
 type Path
@@ -39,28 +40,26 @@ toString path =
 
 parse : Url -> Path
 parse url =
-    case url.path of
-        "/" ->
-            Home
+    Parser.parse parser url
+        |> Maybe.withDefault NotFound
 
-        "/auth/signup" ->
-            SignUp
 
-        "/auth/signin" ->
-            SignIn
+parser : Parser (Path -> a) a
+parser =
+    Parser.oneOf
+        [ Parser.map Home Parser.top
+        , Parser.map SignUp (Parser.s "auth" </> Parser.s "signup")
+        , Parser.map SignIn (Parser.s "auth" </> Parser.s "signin")
+        , Parser.map Verify (Parser.s "auth" </> Parser.s "verify" </> Parser.fragment nonEmpty)
+        , Parser.map Dashboard (Parser.s "dashboard")
+        ]
 
-        "/auth/verify" ->
-            Verify
-                (case url.fragment of
-                    Just "" ->
-                        Nothing
 
-                    fragment ->
-                        fragment
-                )
-
-        "/dashboard" ->
-            Dashboard
+nonEmpty : Maybe String -> Maybe String
+nonEmpty fragment =
+    case fragment of
+        Just "" ->
+            Nothing
 
         _ ->
-            NotFound
+            fragment
