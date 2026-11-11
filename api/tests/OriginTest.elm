@@ -2,6 +2,7 @@ module OriginTest exposing (suite)
 
 import Data.Origin as Origin
 import Expect
+import Path
 import Test exposing (Test, describe, test)
 
 
@@ -48,4 +49,9 @@ suite =
                 Origin.parse "https://pixo.pics?next=1"
                     |> Result.map Origin.toString
                     |> Expect.equal (Err "Expected an origin without a path, like https://pixo.pics, got: https://pixo.pics?next=1")
+        , test "writes a path after the origin" <|
+            \() ->
+                Origin.parse "https://pixo.pics"
+                    |> Result.map (\origin -> Origin.href origin Path.Dashboard)
+                    |> Expect.equal (Ok "https://pixo.pics/dashboard")
         ]

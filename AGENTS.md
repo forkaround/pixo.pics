@@ -5,21 +5,21 @@ on Postgres (Neon), deployed to Vercel.
 
 ## Layout
 
-| Path                | What                                                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                 |
-| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`             |
-| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge` |
-| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                             |
-| `api/tests/`        | elm-test suites for the server                                                                |
-| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `WebAuthn`, `Aaguid`                               |
-| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`                         |
-| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))       |
-| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                    |
-| `api/index.ts`      | The only Vercel Function                                                                      |
-| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                    |
-| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                   |
-| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                             |
+| Path                | What                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                           |
+| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                       |
+| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`           |
+| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                       |
+| `api/tests/`        | elm-test suites for the server                                                                          |
+| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `Request`, `Response`, `SessionCookie`, `WebAuthn`, `Aaguid` |
+| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`                                   |
+| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                 |
+| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                              |
+| `api/index.ts`      | The only Vercel Function                                                                                |
+| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                              |
+| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                             |
+| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                                       |
 
 ## Commands
 
@@ -454,6 +454,9 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - Errors are `{ "error": "..." }` (`Api.encodeError`). JSON is `cache-control: no-store`.
   Without `DATABASE_URL` or `API_DATABASE_PASSWORD` the server starts anyway and the health
   check fails.
+- Answers are built in `Response.elm` (`Response.json`, `Response.error`,
+  `Response.withHeader`); the `session` cookie is read, set and cleared only in
+  `SessionCookie.elm`, which also holds its 30 days.
 - Logging: `log Interop.Info|Warn|Error message`; `app.ts` calls `console[level]` with the
   message unchanged, which Vercel reads as the level. Database errors log at `error`.
 - `GET /api/health` (IETF health check draft, `application/health+json`) runs one
@@ -502,7 +505,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   reaches no server log. For the same reason the verify routes take it as
   `authorization: Bearer <token>`, and answer 401 without it.
 - The two secrets have their own types: a `SessionToken` comes from the `session` cookie
-  (`cookieToken`) or new from `Db`, a `LinkToken` from the bearer header (`bearer`) or new
+  (`SessionCookie.read`) or new from `Db`, a `LinkToken` from the bearer header (`Request.linkToken`) or new
   from `Db`. Neither is ever empty, and `Db` takes each by its type, so one can't be passed
   for the other.
 - `GET /api/auth/verify` (`Api.verification`) answers `{ email, username, newAccount }`

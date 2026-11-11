@@ -1,5 +1,6 @@
-module Data.Origin exposing (Origin, isSecure, parse, rpId, toString)
+module Data.Origin exposing (Origin, href, isSecure, parse, rpId, toString)
 
+import Path exposing (Path)
 import Url exposing (Url)
 
 
@@ -73,3 +74,8 @@ rpId (Origin origin) =
 isSecure : Origin -> Bool
 isSecure (Origin origin) =
     origin.secure
+
+
+href : Origin -> Path -> String
+href origin path =
+    toString origin ++ Path.toString path

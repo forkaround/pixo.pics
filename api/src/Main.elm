@@ -11,12 +11,13 @@ import Data.SignUp as SignUp
 import Data.UserId as UserId
 import Data.Username as Username
 import Db
-import Dict
-import InteropDefinitions as Interop exposing (Request, Response)
+import InteropDefinitions as Interop
 import InteropPorts
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Path
+import Request exposing (Request)
+import Response exposing (Response)
 import Services.Brevo as Brevo
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
@@ -25,6 +26,7 @@ import Services.Mailer.PasskeyRemoved
 import Services.Mailer.SignIn
 import Services.Mailer.SignUp
 import Services.Neon as Neon
+import SessionCookie
 import Task
 import Time
 import WebAuthn
@@ -184,7 +186,7 @@ whenBroken broken msg =
                         brokenAnswer broken found
 
                     Err refused ->
-                        notRouted refused
+                        Response.notRouted refused
                 )
 
         _ ->
@@ -195,43 +197,43 @@ brokenAnswer : { problem : String, release : Api.Release } -> Api.Route -> Respo
 brokenAnswer { problem, release } found =
     case found of
         Api.GetHealth ->
-            health release { status = Api.Fail, latencyMs = Nothing, output = Just ("Not configured: " ++ problem) }
+            Response.health release { status = Api.Fail, latencyMs = Nothing, output = Just ("Not configured: " ++ problem) }
 
         Api.PostSignUp ->
-            unavailable
+            Response.unavailable
 
         Api.PostSignIn ->
-            unavailable
+            Response.unavailable
 
         Api.GetSession ->
-            unavailable
+            Response.unavailable
 
         Api.DeleteSession ->
-            unavailable
+            Response.unavailable
 
         Api.GetVerification ->
-            unavailable
+            Response.unavailable
 
         Api.PostVerification ->
-            unavailable
+            Response.unavailable
 
         Api.GetPasskeys ->
-            unavailable
+            Response.unavailable
 
         Api.PostPasskey ->
-            unavailable
+            Response.unavailable
 
         Api.PostPasskeyOptions ->
-            unavailable
+            Response.unavailable
 
         Api.DeletePasskey _ ->
-            unavailable
+            Response.unavailable
 
         Api.PostPasskeySignIn ->
-            unavailable
+            Response.unavailable
 
         Api.PostPasskeySignInOptions ->
-            unavailable
+            Response.unavailable
 
 
 reply : Interop.Resolver -> Reply -> Effect
@@ -251,13 +253,13 @@ running server msg =
             reply resolver (route server request)
 
         DatabaseChecked resolver ( _, Ok (Db.Limited limited) ) ->
-            respond resolver (tooManyRequests limited.retryAfter)
+            respond resolver (Response.tooManyRequests limited.retryAfter)
 
         DatabaseChecked resolver ( latency, Ok (Db.Allowed _) ) ->
             if latency > slowAfter then
                 Batch
                     [ respond resolver
-                        (health server.release
+                        (Response.health server.release
                             { status = Api.Warn
                             , latencyMs = Just latency
                             , output = Just ("Slower than " ++ String.fromInt slowAfter ++ " ms.")
@@ -268,25 +270,25 @@ running server msg =
 
             else
                 respond resolver
-                    (health server.release { status = Api.Pass, latencyMs = Just latency, output = Nothing })
+                    (Response.health server.release { status = Api.Pass, latencyMs = Just latency, output = Nothing })
 
         DatabaseChecked resolver ( latency, Err problem ) ->
             Batch
                 [ respond resolver
-                    (health server.release { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
+                    (Response.health server.release { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
                 , log Interop.Error ("Health check failed: " ++ Neon.errorToString problem)
                 ]
 
         DatabaseFailed resolver step problem ->
             Batch
-                [ respond resolver unavailable
+                [ respond resolver Response.unavailable
                 , log Interop.Error (step ++ ": " ++ Neon.errorToString problem)
                 ]
 
         LinkLimited resolver mailer ask ( byAddress, byEmail ) ->
             case retryAfter [ byAddress, byEmail ] of
                 Just seconds ->
-                    respond resolver (tooManyRequests seconds)
+                    respond resolver (Response.tooManyRequests seconds)
 
                 Nothing ->
                     case ask of
@@ -312,14 +314,14 @@ running server msg =
         SignUpLinkCreated resolver mailer signUp link ->
             case link of
                 Db.UsernameTaken ->
-                    respond resolver (error 409 "That username is taken.")
+                    respond resolver (Response.error 409 "That username is taken.")
 
                 Db.SignUpLink token ->
                     sendLink mailer
                         resolver
                         { to = signUp.email, tag = "sign-up" }
                         (Services.Mailer.SignUp.email
-                            { url = verifyUrl server token
+                            { url = Origin.href server.origin (Path.Verify (Just token))
                             , username = signUp.username
                             , expiresInMinutes = linkMinutes
                             }
@@ -331,58 +333,56 @@ running server msg =
         SignInLinkCreated resolver mailer email link ->
             case link of
                 Db.NoAccount ->
-                    respond resolver accepted
+                    respond resolver Response.accepted
 
                 Db.SignInLink token ->
                     sendLink mailer resolver { to = email, tag = "sign-in" } (signInEmail server token)
 
         LinkSent resolver (Ok _) ->
-            respond resolver accepted
+            respond resolver Response.accepted
 
         LinkSent resolver (Err problem) ->
             Batch
-                [ respond resolver (error 502 "The email could not be sent. Try again.")
+                [ respond resolver (Response.error 502 "The email could not be sent. Try again.")
                 , log Interop.Error ("Magic link failed at its email: " ++ Brevo.errorToString problem)
                 ]
 
         SessionFound resolver (Just account) ->
-            respond resolver (json 200 (Api.encodeResponse Api.session account))
+            respond resolver (Response.json 200 (Api.encodeResponse Api.session account))
 
         SessionFound resolver Nothing ->
-            respond resolver notSignedIn
+            respond resolver Response.notSignedIn
 
         SessionEnded resolver ->
             respond resolver (signedOut server)
 
         VerificationFound resolver (Just found) ->
-            respond resolver (json 200 (Api.encodeResponse Api.verification found))
+            respond resolver (Response.json 200 (Api.encodeResponse Api.verification found))
 
         VerificationFound resolver Nothing ->
-            respond resolver invalidLink
+            respond resolver Response.invalidLink
 
         VerificationConsumed resolver (Db.Verified { sessionToken, account }) ->
-            let
-                response =
-                    json 200 (Api.encodeResponse Api.verify account)
-            in
             respond resolver
-                { response | headers = ( "set-cookie", sessionCookie server sessionToken ) :: response.headers }
+                (Response.json 200 (Api.encodeResponse Api.verify account)
+                    |> SessionCookie.set server.origin sessionToken
+                )
 
         VerificationConsumed resolver Db.InvalidLink ->
-            respond resolver invalidLink
+            respond resolver Response.invalidLink
 
         VerificationConsumed resolver Db.UsernameTakenMeanwhile ->
-            respond resolver (error 409 "That username was taken in the meantime. Sign up again with another.")
+            respond resolver (Response.error 409 "That username was taken in the meantime. Sign up again with another.")
 
         PasskeysFound resolver (Just found) ->
-            respond resolver (json 200 (Api.encodeResponse Api.passkeys found))
+            respond resolver (Response.json 200 (Api.encodeResponse Api.passkeys found))
 
         PasskeysFound resolver Nothing ->
-            respond resolver notSignedIn
+            respond resolver Response.notSignedIn
 
         PasskeyStarted resolver (Just ceremony) ->
             respond resolver
-                (json 200
+                (Response.json 200
                     (Api.encodeResponse Api.passkeyOptions
                         { challenge = ceremony.challenge
                         , rp = { id = Origin.rpId server.origin, name = "pixo" }
@@ -398,43 +398,43 @@ running server msg =
                 )
 
         PasskeyStarted resolver Nothing ->
-            respond resolver notSignedIn
+            respond resolver Response.notSignedIn
 
         PasskeyAdded resolver (Just (Db.Added passkey account)) ->
             notify server
                 resolver
-                (json 201 (Api.encodeResponse Api.addPasskey passkey))
+                (Response.json 201 (Api.encodeResponse Api.addPasskey passkey))
                 { to = account.email, tag = "passkey-added" }
                 (Services.Mailer.PasskeyAdded.email
-                    { url = dashboardUrl server
+                    { url = Origin.href server.origin Path.Dashboard
                     , username = account.username
                     , passkey = passkey.name
                     }
                 )
 
         PasskeyAdded resolver (Just Db.NotAdded) ->
-            respond resolver (error 409 "This passkey request expired or was used already. Try again.")
+            respond resolver (Response.error 409 "This passkey request expired or was used already. Try again.")
 
         PasskeyAdded resolver Nothing ->
-            respond resolver notSignedIn
+            respond resolver Response.notSignedIn
 
         PasskeyRemoved resolver id (Just (Db.Removed { name, account })) ->
             notify server
                 resolver
-                (json 200 (Api.encodeResponse (Api.deletePasskey id) ()))
+                (Response.json 200 (Api.encodeResponse (Api.deletePasskey id) ()))
                 { to = account.email, tag = "passkey-removed" }
                 (Services.Mailer.PasskeyRemoved.email
-                    { url = dashboardUrl server
+                    { url = Origin.href server.origin Path.Dashboard
                     , username = account.username
                     , passkey = name
                     }
                 )
 
         PasskeyRemoved resolver _ (Just Db.NotRemoved) ->
-            respond resolver (error 404 "This account has no such passkey.")
+            respond resolver (Response.error 404 "This account has no such passkey.")
 
         PasskeyRemoved resolver _ Nothing ->
-            respond resolver notSignedIn
+            respond resolver Response.notSignedIn
 
         Notified resolver response (Ok _) ->
             respond resolver response
@@ -447,10 +447,10 @@ running server msg =
 
         SignInStarted resolver (Db.SignInChallenge challenge) ->
             respond resolver
-                (json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId server.origin }))
+                (Response.json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId server.origin }))
 
         SignInStarted resolver (Db.TooManyChallenges limited) ->
-            respond resolver (tooManyRequests limited.retryAfter)
+            respond resolver (Response.tooManyRequests limited.retryAfter)
 
         KeyFound resolver assertion (Just publicKey) ->
             case
@@ -487,7 +487,7 @@ running server msg =
                         , credentialId = signIn.credentialId
                         , signCount = signIn.signCount
                         , backedUp = signIn.backedUp
-                        , sessionSeconds = sessionSeconds
+                        , sessionSeconds = SessionCookie.lifetimeSeconds
                         }
                     )
                     (PasskeySignedIn resolver)
@@ -496,12 +496,10 @@ running server msg =
                 refuse resolver "The signature does not match the passkey."
 
         PasskeySignedIn resolver (Db.PasskeySignedIn { sessionToken, account }) ->
-            let
-                response =
-                    json 200 (Api.encodeResponse Api.passkeySignIn account)
-            in
             respond resolver
-                { response | headers = ( "set-cookie", sessionCookie server sessionToken ) :: response.headers }
+                (Response.json 200 (Api.encodeResponse Api.passkeySignIn account)
+                    |> SessionCookie.set server.origin sessionToken
+                )
 
         PasskeySignedIn resolver Db.ChallengeSpent ->
             refuse resolver "The challenge is expired, used or unknown."
@@ -521,7 +519,7 @@ sendLink mailer resolver envelope message =
 signInEmail : Server -> LinkToken -> Layout.Message
 signInEmail server token =
     Services.Mailer.SignIn.email
-        { url = verifyUrl server token
+        { url = Origin.href server.origin (Path.Verify (Just token))
         , expiresInMinutes = linkMinutes
         }
 
@@ -559,7 +557,7 @@ notify server resolver response envelope email =
 refuse : Interop.Resolver -> String -> Effect
 refuse resolver problem =
     Batch
-        [ respond resolver (error 401 "This passkey could not be verified. Try again, or sign in with an emailed link.")
+        [ respond resolver (Response.error 401 "This passkey could not be verified. Try again, or sign in with an emailed link.")
         , log Interop.Warn ("Passkey sign-in refused: " ++ String.left 200 problem)
         ]
 
@@ -617,25 +615,7 @@ route server request =
             handle server request found
 
         Err refused ->
-            Now (notRouted refused)
-
-
-notRouted : Api.Problem -> Response
-notRouted refused =
-    case refused of
-        Api.NotFound ->
-            error 404 "Not found."
-
-        Api.MethodNotAllowed allowed ->
-            let
-                response =
-                    error 405 "Method not allowed."
-            in
-            { response
-                | headers =
-                    ( "allow", String.join ", " (List.map Api.methodToString allowed) )
-                        :: response.headers
-            }
+            Now (Response.notRouted refused)
 
 
 handle : Server -> Request -> Api.Route -> Reply
@@ -649,7 +629,7 @@ handle server request r =
                             (Neon.transaction always
                                 |> Neon.with
                                     (Db.rateLimit
-                                        { key = "health:ip:" ++ clientAddress request
+                                        { key = "health:ip:" ++ Request.clientAddress request
                                         , limit = 60
                                         , windowSeconds = 60
                                         }
@@ -664,8 +644,8 @@ handle server request r =
             askForLink server
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signUp) request.body
-                    |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email and a username.")
-                    |> Result.andThen (SignUp.parse >> Result.mapError (error 422))
+                    |> Result.mapError (\_ -> Response.error 400 "Expected a JSON object with an email and a username.")
+                    |> Result.andThen (SignUp.parse >> Result.mapError (Response.error 422))
                     |> Result.map SignUpAsked
                 )
 
@@ -673,8 +653,8 @@ handle server request r =
             askForLink server
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signIn) request.body
-                    |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email.")
-                    |> Result.andThen (.email >> Email.parse >> Result.mapError (error 422))
+                    |> Result.mapError (\_ -> Response.error 400 "Expected a JSON object with an email.")
+                    |> Result.andThen (.email >> Email.parse >> Result.mapError (Response.error 422))
                     |> Result.map SignInAsked
                 )
 
@@ -686,7 +666,7 @@ handle server request r =
                 )
 
         Api.DeleteSession ->
-            case cookieToken request of
+            case SessionCookie.read request of
                 Just token ->
                     Later
                         (\resolver ->
@@ -710,7 +690,7 @@ handle server request r =
                     query server.db
                         resolver
                         "Verification failed at its session"
-                        (Db.consumeMagicLink { token = token, sessionSeconds = sessionSeconds })
+                        (Db.consumeMagicLink { token = token, sessionSeconds = SessionCookie.lifetimeSeconds })
                         (VerificationConsumed resolver)
                 )
 
@@ -758,11 +738,11 @@ handle server request r =
 
                         Err Nothing ->
                             respond resolver
-                                (error 400 "Expected a JSON object with a clientDataJSON, an attestationObject and transports.")
+                                (Response.error 400 "Expected a JSON object with a clientDataJSON, an attestationObject and transports.")
 
                         Err (Just problem) ->
                             Batch
-                                [ respond resolver (error 422 "This passkey could not be verified. Try again.")
+                                [ respond resolver (Response.error 422 "This passkey could not be verified. Try again.")
                                 , log Interop.Warn ("Passkey refused: " ++ String.left 200 problem)
                                 ]
                 )
@@ -785,7 +765,7 @@ handle server request r =
                         resolver
                         "Passkey sign-in failed at its challenge"
                         (Db.signInChallenge
-                            { key = "passkey:ip:" ++ clientAddress request
+                            { key = "passkey:ip:" ++ Request.clientAddress request
                             , limit = 20
                             , windowSeconds = 900
                             , ttlSeconds = challengeSeconds
@@ -825,7 +805,7 @@ handle server request r =
                         )
 
                 Err _ ->
-                    Now (error 400 "Expected a JSON object with an id, a clientDataJSON, an authenticatorData and a signature.")
+                    Now (Response.error 400 "Expected a JSON object with an id, a clientDataJSON, an authenticatorData and a signature.")
 
 
 askForLink : Server -> Request -> Result Response Ask -> Reply
@@ -840,7 +820,7 @@ askForLink server request parsed =
                         (Neon.transaction Tuple.pair
                             |> Neon.with
                                 (Db.rateLimit
-                                    { key = "magic-link:ip:" ++ clientAddress request
+                                    { key = "magic-link:ip:" ++ Request.clientAddress request
                                     , limit = 10
                                     , windowSeconds = 900
                                     }
@@ -860,96 +840,30 @@ askForLink server request parsed =
             Now response
 
         ( Err _, _ ) ->
-            Now unavailable
+            Now Response.unavailable
 
 
 withSession : Request -> (SessionToken -> Interop.Resolver -> Effect) -> Reply
 withSession request toEffect =
-    case cookieToken request of
+    case SessionCookie.read request of
         Just token ->
             Later (toEffect token)
 
         Nothing ->
-            Now notSignedIn
-
-
-cookieToken : Request -> Maybe SessionToken
-cookieToken request =
-    Dict.get "cookie" request.headers
-        |> Maybe.withDefault ""
-        |> String.split ";"
-        |> List.map String.trim
-        |> List.filter (String.startsWith "session=")
-        |> List.head
-        |> Maybe.map (String.dropLeft 8)
-        |> Maybe.andThen SessionToken.fromString
+            Now Response.notSignedIn
 
 
 withLink : Request -> (LinkToken -> Interop.Resolver -> Effect) -> Reply
 withLink request toEffect =
-    case bearer request of
+    case Request.linkToken request of
         Just token ->
             Later (toEffect token)
 
         Nothing ->
-            let
-                response =
-                    error 401 "Send the link's token as a bearer token."
-            in
-            Now { response | headers = ( "www-authenticate", "Bearer" ) :: response.headers }
-
-
-bearer : Request -> Maybe LinkToken
-bearer request =
-    Dict.get "authorization" request.headers
-        |> Maybe.andThen
-            (\value ->
-                if String.toLower (String.left 7 value) == "bearer " then
-                    Just (String.trim (String.dropLeft 7 value))
-
-                else
-                    Nothing
-            )
-        |> Maybe.andThen LinkToken.fromString
-
-
-verifyUrl : Server -> LinkToken -> String
-verifyUrl server token =
-    Origin.toString server.origin ++ Path.toString (Path.Verify (Just token))
-
-
-dashboardUrl : Server -> String
-dashboardUrl server =
-    Origin.toString server.origin ++ Path.toString Path.Dashboard
-
-
-sessionSeconds : Int
-sessionSeconds =
-    30 * 24 * 60 * 60
-
-
-sessionCookie : Server -> SessionToken -> String
-sessionCookie server token =
-    cookie server (SessionToken.toString token) sessionSeconds
-
-
-cookie : Server -> String -> Int -> String
-cookie server token maxAge =
-    String.join "; "
-        (List.concat
-            [ [ "session=" ++ token
-              , "Path=/"
-              , "Max-Age=" ++ String.fromInt maxAge
-              , "HttpOnly"
-              , "SameSite=Lax"
-              ]
-            , if Origin.isSecure server.origin then
-                [ "Secure" ]
-
-              else
-                []
-            ]
-        )
+            Now
+                (Response.error 401 "Send the link's token as a bearer token."
+                    |> Response.withHeader "www-authenticate" "Bearer"
+                )
 
 
 linkMinutes : Int
@@ -960,19 +874,6 @@ linkMinutes =
 challengeSeconds : Int
 challengeSeconds =
     300
-
-
-clientAddress : Request -> String
-clientAddress request =
-    case Dict.get "x-real-ip" request.headers of
-        Just address ->
-            String.trim address
-
-        Nothing ->
-            Dict.get "x-forwarded-for" request.headers
-                |> Maybe.andThen (String.split "," >> List.head)
-                |> Maybe.map String.trim
-                |> Maybe.withDefault "unknown"
 
 
 retryAfter : List Db.RateLimit -> Maybe Int
@@ -1022,77 +923,7 @@ failure problem =
             "Unexpected result."
 
 
-
--- RESPONSES
-
-
-json : Int -> Encode.Value -> Response
-json status value =
-    { status = status
-    , headers = [ ( "content-type", "application/json" ), ( "cache-control", "no-store" ) ]
-    , body = Encode.encode 0 value
-    }
-
-
-health : Api.Release -> Api.Check -> Response
-health release check =
-    let
-        report =
-            Api.healthOf release check
-    in
-    { status =
-        case report.status of
-            Api.Pass ->
-                200
-
-            Api.Warn ->
-                200
-
-            Api.Fail ->
-                503
-    , headers = [ ( "content-type", "application/health+json" ), ( "cache-control", "no-store" ) ]
-    , body = Encode.encode 0 (Api.encodeResponse Api.health report)
-    }
-
-
-unavailable : Response
-unavailable =
-    error 503 "Not available right now. Try again later."
-
-
-accepted : Response
-accepted =
-    json 202 (Api.encodeResponse Api.signUp ())
-
-
-notSignedIn : Response
-notSignedIn =
-    error 401 "Not signed in."
-
-
 signedOut : Server -> Response
 signedOut server =
-    let
-        response =
-            json 200 (Api.encodeResponse Api.signOut ())
-    in
-    { response | headers = ( "set-cookie", cookie server "" 0 ) :: response.headers }
-
-
-invalidLink : Response
-invalidLink =
-    error 404 "This link is not valid any more. Sign up again to get a new one."
-
-
-tooManyRequests : Int -> Response
-tooManyRequests seconds =
-    let
-        response =
-            error 429 "Too many attempts. Try again later."
-    in
-    { response | headers = ( "retry-after", String.fromInt seconds ) :: response.headers }
-
-
-error : Int -> String -> Response
-error status message =
-    json status (Api.encodeError message)
+    Response.json 200 (Api.encodeResponse Api.signOut ())
+        |> SessionCookie.clear server.origin

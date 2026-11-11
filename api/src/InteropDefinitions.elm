@@ -1,9 +1,10 @@
-module InteropDefinitions exposing (Flags, FromElm(..), Level(..), Request, Resolver, Response, SignIn, ToElm(..), interop)
+module InteropDefinitions exposing (Flags, FromElm(..), Level(..), Resolver, SignIn, ToElm(..), interop)
 
 import Data.Challenge as Challenge exposing (Challenge)
 import Data.CredentialId as CredentialId exposing (CredentialId)
-import Dict exposing (Dict)
 import Json.Encode as Encode
+import Request exposing (Request)
+import Response exposing (Response)
 import TsJson.Decode as TsDecode exposing (Decoder)
 import TsJson.Encode as TsEncode exposing (Encoder)
 import WebAuthn
@@ -60,22 +61,6 @@ type alias Flags =
 
 type Resolver
     = Resolver Encode.Value
-
-
-type alias Request =
-    { method : String
-    , path : List String
-    , query : Dict String String
-    , headers : Dict String String
-    , body : String
-    }
-
-
-type alias Response =
-    { status : Int
-    , headers : List ( String, String )
-    , body : String
-    }
 
 
 
