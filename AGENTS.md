@@ -635,7 +635,8 @@ The Vercel project `pixo.pics` (team `forkaround`) deploys from GitHub: a push t
 deploys production, a push to any other branch a preview. `vercel.json` configures it. The
 Neon project `pixo` (`small-lab-61985339`, `aws-eu-central-1`) was created from the Vercel
 Marketplace and is connected as the store `pixo`, which manages the variables. Keep
-`regions` next to Neon's region.
+`regions` next to Neon's region: the function runs in `fra1`, Frankfurt, where
+`aws-eu-central-1` is.
 
 | Vercel            | Neon branch                 | Variables                               |
 | ----------------- | --------------------------- | --------------------------------------- |

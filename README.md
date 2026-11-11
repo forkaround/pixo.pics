@@ -78,7 +78,7 @@ create `api` in SQL and set `API_DATABASE_PASSWORD` on Vercel: see
 {
   "status": "pass",
   "releaseId": "7990ba2…",
-  "region": "arn1",
+  "region": "fra1",
   "links": { "release": "https://github.com/…/commit/7990ba2…" },
   "checks": { "database": { "status": "pass", "latencyMs": 25 } }
 }
