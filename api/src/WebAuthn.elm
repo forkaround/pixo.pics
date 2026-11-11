@@ -1,4 +1,4 @@
-module WebAuthn exposing (Authentication, Key(..), Registration, algorithms, authenticate, key, register, signature)
+module WebAuthn exposing (Authentication, Key(..), Registration, algorithms, authenticate, challengeSeconds, key, register, signature)
 
 import Base64
 import Bitwise
@@ -44,6 +44,11 @@ type Key
 algorithms : List Int
 algorithms =
     [ -8, -7, -257 ]
+
+
+challengeSeconds : Int
+challengeSeconds =
+    300
 
 
 knownTransports : List String

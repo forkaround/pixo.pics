@@ -1,17 +1,15 @@
 module Main exposing (Model, Msg(..), init, main, update)
 
-import Aaguid
 import Api
 import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.Origin as Origin exposing (Origin)
 import Data.SignUp as SignUp
-import Data.UserId as UserId
-import Data.Username as Username
 import Db
 import Effect exposing (Effect(..), log, query, respond, transact)
 import Flow.Health
+import Flow.Passkeys
 import Flow.Session
 import InteropDefinitions as Interop
 import InteropPorts
@@ -26,8 +24,6 @@ import Server exposing (Server)
 import Services.Brevo as Brevo
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
-import Services.Mailer.PasskeyAdded
-import Services.Mailer.PasskeyRemoved
 import Services.Mailer.SignIn
 import Services.Mailer.SignUp
 import Services.Neon as Neon
@@ -114,17 +110,13 @@ type Msg
     | DatabaseFailed Effect.Failure
     | Health Flow.Health.Msg
     | Session Flow.Session.Msg
+    | Passkeys Flow.Passkeys.Msg
     | LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | VerificationFound Interop.Resolver (Maybe Api.Verification)
     | VerificationConsumed Interop.Resolver Db.Consumed
-    | PasskeysFound Interop.Resolver (Maybe (List Api.Passkey))
-    | PasskeyStarted Interop.Resolver (Maybe Db.Ceremony)
-    | PasskeyAdded Interop.Resolver (Maybe Db.Added)
-    | PasskeyRemoved Interop.Resolver CredentialId (Maybe Db.Removed)
-    | Notified Interop.Resolver Response (Result Brevo.Error Brevo.Sent)
     | SignInStarted Interop.Resolver Db.SignInChallenge
     | KeyFound Interop.Resolver { signed : String, signature : String, signIn : Interop.SignIn } (Maybe String)
     | PasskeySignedIn Interop.Resolver Db.PasskeySignIn
@@ -239,6 +231,9 @@ running server msg =
         Session flowMsg ->
             Effect.map Session (Flow.Session.update server flowMsg)
 
+        Passkeys flowMsg ->
+            Effect.map Passkeys (Flow.Passkeys.update server flowMsg)
+
         DatabaseFailed { resolver, step, problem } ->
             Batch
                 [ respond resolver Response.unavailable
@@ -325,77 +320,6 @@ running server msg =
         VerificationConsumed resolver Db.UsernameTakenMeanwhile ->
             respond resolver (Response.error 409 "That username was taken in the meantime. Sign up again with another.")
 
-        PasskeysFound resolver (Just found) ->
-            respond resolver (Response.json 200 (Api.encodeResponse Api.passkeys found))
-
-        PasskeysFound resolver Nothing ->
-            respond resolver Response.notSignedIn
-
-        PasskeyStarted resolver (Just ceremony) ->
-            respond resolver
-                (Response.json 200
-                    (Api.encodeResponse Api.passkeyOptions
-                        { challenge = ceremony.challenge
-                        , rp = { id = Origin.rpId server.origin, name = "pixo" }
-                        , user =
-                            { id = UserId.toString ceremony.userId
-                            , name = Email.toString ceremony.account.email
-                            , displayName = Username.toString ceremony.account.username
-                            }
-                        , algorithms = WebAuthn.algorithms
-                        , excludeCredentials = ceremony.passkeys
-                        }
-                    )
-                )
-
-        PasskeyStarted resolver Nothing ->
-            respond resolver Response.notSignedIn
-
-        PasskeyAdded resolver (Just (Db.Added passkey account)) ->
-            notify server
-                resolver
-                (Response.json 201 (Api.encodeResponse Api.addPasskey passkey))
-                { to = account.email, tag = "passkey-added" }
-                (Services.Mailer.PasskeyAdded.email
-                    { url = Origin.href server.origin Path.Dashboard
-                    , username = account.username
-                    , passkey = passkey.name
-                    }
-                )
-
-        PasskeyAdded resolver (Just Db.NotAdded) ->
-            respond resolver (Response.error 409 "This passkey request expired or was used already. Try again.")
-
-        PasskeyAdded resolver Nothing ->
-            respond resolver Response.notSignedIn
-
-        PasskeyRemoved resolver id (Just (Db.Removed { name, account })) ->
-            notify server
-                resolver
-                (Response.json 200 (Api.encodeResponse (Api.deletePasskey id) ()))
-                { to = account.email, tag = "passkey-removed" }
-                (Services.Mailer.PasskeyRemoved.email
-                    { url = Origin.href server.origin Path.Dashboard
-                    , username = account.username
-                    , passkey = name
-                    }
-                )
-
-        PasskeyRemoved resolver _ (Just Db.NotRemoved) ->
-            respond resolver (Response.error 404 "This account has no such passkey.")
-
-        PasskeyRemoved resolver _ Nothing ->
-            respond resolver Response.notSignedIn
-
-        Notified resolver response (Ok _) ->
-            respond resolver response
-
-        Notified resolver response (Err problem) ->
-            Batch
-                [ respond resolver response
-                , log Interop.Error ("Passkey notice failed at its email: " ++ Brevo.errorToString problem)
-                ]
-
         SignInStarted resolver (Db.SignInChallenge challenge) ->
             respond resolver
                 (Response.json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId server.origin }))
@@ -473,16 +397,6 @@ signInEmail server token =
         { url = Origin.href server.origin (Path.Verify (Just token))
         , expiresInMinutes = linkMinutes
         }
-
-
-notify : Server -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
-notify server resolver response envelope email =
-    case server.mailer of
-        Ok mailer ->
-            Mail (Mailer.send mailer envelope email (Notified resolver response))
-
-        Err _ ->
-            respond resolver response
 
 
 refuse : Interop.Resolver -> String -> Effect Msg
@@ -598,68 +512,16 @@ handle server request r =
                 )
 
         Api.GetPasskeys ->
-            withSession
-                request
-                (\token resolver ->
-                    transact server.db resolver "Passkey list failed" (Db.passkeys token) (PasskeysFound resolver)
-                )
+            Reply.map Passkeys (Flow.Passkeys.list server request)
 
         Api.PostPasskeyOptions ->
-            withSession
-                request
-                (\token resolver ->
-                    transact server.db
-                        resolver
-                        "Passkey failed at its challenge"
-                        (Db.startPasskey { token = token, ttlSeconds = challengeSeconds })
-                        (PasskeyStarted resolver)
-                )
+            Reply.map Passkeys (Flow.Passkeys.options server request)
 
         Api.PostPasskey ->
-            withSession
-                request
-                (\token resolver ->
-                    case
-                        Decode.decodeString (Api.bodyDecoder Api.addPasskey) request.body
-                            |> Result.mapError (\_ -> Nothing)
-                            |> Result.andThen
-                                (WebAuthn.register server.origin
-                                    >> Result.mapError Just
-                                )
-                    of
-                        Ok registration ->
-                            transact server.db
-                                resolver
-                                "Passkey failed at its credential"
-                                (Db.addPasskey
-                                    { token = token
-                                    , registration = registration
-                                    , name = Aaguid.name registration.aaguid
-                                    }
-                                )
-                                (PasskeyAdded resolver)
-
-                        Err Nothing ->
-                            respond resolver
-                                (Response.error 400 "Expected a JSON object with a clientDataJSON, an attestationObject and transports.")
-
-                        Err (Just problem) ->
-                            Batch
-                                [ respond resolver (Response.error 422 "This passkey could not be verified. Try again.")
-                                , log Interop.Warn ("Passkey refused: " ++ String.left 200 problem)
-                                ]
-                )
+            Reply.map Passkeys (Flow.Passkeys.add server request)
 
         Api.DeletePasskey id ->
-            withSession
-                request
-                (\token resolver ->
-                    transact server.db
-                        resolver
-                        "Passkey removal failed"
-                        (Db.removePasskey { token = token, id = id })
-                        (PasskeyRemoved resolver id)
-                )
+            Reply.map Passkeys (Flow.Passkeys.remove id server request)
 
         Api.PostPasskeySignInOptions ->
             Later
@@ -669,7 +531,7 @@ handle server request r =
                         "Passkey sign-in failed at its challenge"
                         (Db.signInChallenge
                             { policy = RateLimit.passkeyChallenges (Request.clientAddress request)
-                            , ttlSeconds = challengeSeconds
+                            , ttlSeconds = WebAuthn.challengeSeconds
                             }
                         )
                         (SignInStarted resolver)
@@ -750,8 +612,3 @@ withLink request toEffect =
 linkMinutes : Int
 linkMinutes =
     15
-
-
-challengeSeconds : Int
-challengeSeconds =
-    300
