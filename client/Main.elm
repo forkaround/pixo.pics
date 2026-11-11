@@ -153,16 +153,16 @@ open url opened =
             { opened | ceremony = Resting Nothing }
     in
     case Path.parse url of
-        Just Path.Home ->
+        Path.Home ->
             ( { model | page = Home, health = Checking (lastReport model.health) }, checkHealth )
 
-        Just Path.SignUp ->
+        Path.SignUp ->
             ( { model | page = SignUp { email = "", username = "", state = Open (Editing Nothing) } }, NoEffect )
 
-        Just Path.SignIn ->
+        Path.SignIn ->
             ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
 
-        Just Path.Dashboard ->
+        Path.Dashboard ->
             ( { model | page = Dashboard { passkeys = Loading, confirming = Nothing, removalProblem = Nothing } }
             , if model.session == SignedOut then
                 PushUrl (Path.toString Path.SignIn)
@@ -171,7 +171,7 @@ open url opened =
                 Request (ApiClient.request Api.passkeys () GotPasskeys)
             )
 
-        Just (Path.Verify (Just token)) ->
+        Path.Verify (Just token) ->
             ( { model | page = Verify (Looking token) }
             , Request
                 (ApiClient.request Api.verification () GotVerification
@@ -179,10 +179,10 @@ open url opened =
                 )
             )
 
-        Just (Path.Verify Nothing) ->
+        Path.Verify Nothing ->
             ( { model | page = Verify (Refused missingToken) }, NoEffect )
 
-        Nothing ->
+        Path.NotFound ->
             ( { model | page = NotFound }, NoEffect )
 
 
@@ -752,7 +752,10 @@ viewPage model =
             [ viewVerification model.ceremony verification ]
 
         NotFound ->
-            [ notice "Not found" "There is nothing at this address." [ link Path.Home "Go home" ] ]
+            [ notice "Not found"
+                "There is nothing at this address."
+                (link Path.Home "Go home" :: notFoundOptions model.session)
+            ]
 
 
 link : Path.Path -> String -> Html Msg
@@ -772,7 +775,7 @@ notice heading body actions =
                 identity
 
             else
-                Card.footer [] actions
+                Card.footer [ class "gap-2" ] actions
            )
         |> Card.toHtml [ class "w-full max-w-sm" ]
 
@@ -784,6 +787,24 @@ retry =
         |> Button.outline
         |> Button.small
         |> Button.toHtml [ onClick SessionRetried ]
+
+
+notFoundOptions : Session -> List (Html Msg)
+notFoundOptions session =
+    case session of
+        Unknown ->
+            []
+
+        Unavailable _ ->
+            [ retry ]
+
+        SignedOut ->
+            [ link Path.SignIn "Sign in"
+            , link Path.SignUp "Create an account"
+            ]
+
+        SignedIn _ ->
+            [ link Path.Dashboard "Dashboard" ]
 
 
 viewSignUp : SignUpForm -> Html Msg

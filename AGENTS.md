@@ -358,11 +358,13 @@ and gives `Allowed { remaining }` or `Limited { retryAfter }`, in seconds.
   each with the text to show (`ApiClient.errorToString`).
 - A `Browser.application` without the `Navigation.Key` in its model: `main` keeps it
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
-  `open` picks the `Page` from `Path.parse` (`shared/Path.elm`): `/`, `/auth/signup`,
-  `/auth/signin`, `/auth/verify`, `/dashboard`, else `NotFound`. Links, `PushUrl` and the
-  server's emails write the same addresses with `Path.toString`. A new page needs a `Path`
-  variant and, outside `/auth/`, its rewrite in `vercel.json`. `open` also ends a passkey
-  ceremony left unfinished.
+  `open` picks the `Page` from `Path.parse` (`shared/Path.elm`), which names every
+  address: `/`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
+  `Path.NotFound` for the rest. Links, `PushUrl` and the server's emails write the same
+  addresses with `Path.toString`. A new page needs only a `Path` variant: `open` doesn't
+  compile until it handles it. `open` also ends a passkey ceremony left unfinished.
+  `NotFound` always links home and adds what fits the session: the dashboard, sign-in
+  and sign-up, or "Try again".
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
   (only on a 401), `SignedIn account`, or `Unavailable reason` when the check failed some
   other way: the page then says so and offers "Try again" (`SessionRetried`), and sends
@@ -670,9 +672,10 @@ Marketplace and is connected as the store `pixo`, which manages the variables. K
   `~/.elm` at once corrupt it ("PROBLEM BUILDING DEPENDENCIES"), and elm-ts-interop still
   exits 0. `types:api` must `cd api`, as elm-ts-interop uses the nearest `elm.json`.
 - `dist/client` is served; `dist/server` is bundled into `api/index.ts`, which every
-  `/api/*` rewrites to (Vercel keeps the original URL in `request.url`). `/auth/*`
-  and `/dashboard` rewrite to `index.html`, for the browser app's pages. Bun runtime
-  (`"bunVersion": "1.x"`, beta).
+  `/api/*` rewrites to (Vercel keeps the original URL in `request.url`). Every other
+  address that is not a file rewrites to `index.html`, so the browser app starts anywhere
+  and answers an unknown address with its own not-found page (and a 200, not a 404).
+  Bun runtime (`"bunVersion": "1.x"`, beta).
 - Nothing is linked locally (`.vercel` and `.neon` are not committed): pass
   `--scope forkaround --project pixo.pics` to `vercel` and
   `--project-id small-lab-61985339` to `bunx neon@latest`. Use `--no-env-pull` with

@@ -9,6 +9,7 @@ type Path
     | SignIn
     | Verify (Maybe String)
     | Dashboard
+    | NotFound
 
 
 toString : Path -> String
@@ -32,33 +33,34 @@ toString path =
         Dashboard ->
             "/dashboard"
 
+        NotFound ->
+            "/404"
 
-parse : Url -> Maybe Path
+
+parse : Url -> Path
 parse url =
     case url.path of
         "/" ->
-            Just Home
+            Home
 
         "/auth/signup" ->
-            Just SignUp
+            SignUp
 
         "/auth/signin" ->
-            Just SignIn
+            SignIn
 
         "/auth/verify" ->
-            Just
-                (Verify
-                    (case url.fragment of
-                        Just "" ->
-                            Nothing
+            Verify
+                (case url.fragment of
+                    Just "" ->
+                        Nothing
 
-                        fragment ->
-                            fragment
-                    )
+                    fragment ->
+                        fragment
                 )
 
         "/dashboard" ->
-            Just Dashboard
+            Dashboard
 
         _ ->
-            Nothing
+            NotFound

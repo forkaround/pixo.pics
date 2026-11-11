@@ -469,6 +469,26 @@ suite =
                 \() ->
                     startAt "/nowhere" defaultFlags
                         |> ProgramTest.expectViewHas [ text "There is nothing at this address." ]
+            , test "offers the dashboard at an unknown address when signed in" <|
+                \() ->
+                    startAt "/nowhere" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickLink "Dashboard" "/dashboard"
+                        |> ProgramTest.expectViewHas [ text "Welcome, ada" ]
+            , test "offers to sign in or sign up at an unknown address when signed out" <|
+                \() ->
+                    startAt "/nowhere" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.ensureViewHas [ text "Create an account" ]
+                        |> ProgramTest.clickLink "Sign in" "/auth/signin"
+                        |> ProgramTest.expectViewHas [ text "We'll email you a link. No password needed." ]
+            , test "offers to check the session again at an unknown address" <|
+                \() ->
+                    startAt "/nowhere" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" Test.Http.networkError
+                        |> ProgramTest.clickButton "Try again"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.expectViewHas [ text "Dashboard" ]
             ]
         , describe "Theme"
             [ test "follows the system when none is stored" <|

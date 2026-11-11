@@ -15,20 +15,20 @@ suite =
                     test ("finds " ++ Path.toString path) <|
                         \() ->
                             Url.fromString ("https://pixo.pics" ++ Path.toString path)
-                                |> Maybe.andThen Path.parse
+                                |> Maybe.map Path.parse
                                 |> Expect.equal (Just path)
                 )
                 paths
                 ++ [ test "takes an empty fragment for no token" <|
                         \() ->
                             Url.fromString "https://pixo.pics/auth/verify#"
-                                |> Maybe.andThen Path.parse
+                                |> Maybe.map Path.parse
                                 |> Expect.equal (Just (Path.Verify Nothing))
-                   , test "finds nothing at an unknown address" <|
+                   , test "takes an unknown address for not found" <|
                         \() ->
-                            Url.fromString "https://pixo.pics/nowhere"
-                                |> Maybe.andThen Path.parse
-                                |> Expect.equal Nothing
+                            Url.fromString "https://pixo.pics/nowhere/at/all"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.NotFound)
                    ]
             )
         ]
@@ -68,4 +68,7 @@ next path =
             Just Path.Dashboard
 
         Path.Dashboard ->
+            Just Path.NotFound
+
+        Path.NotFound ->
             Nothing
