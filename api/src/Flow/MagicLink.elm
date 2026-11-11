@@ -15,7 +15,6 @@ import Reply exposing (Reply(..))
 import Request exposing (Request)
 import Response exposing (Response)
 import Server exposing (Server)
-import Services.Brevo as Brevo
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
 import Services.Mailer.SignIn
@@ -28,7 +27,7 @@ type Msg
     = LinkLimited Interop.Resolver Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Email Db.SignInLink
-    | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
+    | LinkSent Interop.Resolver Mailer.Outcome
     | VerificationFound Interop.Resolver (Maybe Api.Verification)
     | VerificationConsumed Interop.Resolver Db.Consumed
 
@@ -154,7 +153,7 @@ update server msg =
         LinkSent resolver (Err problem) ->
             Batch
                 [ respond resolver (Response.error 502 "The email could not be sent. Try again.")
-                , log Interop.Error ("Magic link failed at its email: " ++ Brevo.errorToString problem)
+                , log Interop.Error ("Magic link failed at its email: " ++ problem)
                 ]
 
         VerificationFound resolver (Just found) ->
@@ -178,7 +177,7 @@ update server msg =
 
 sendLink : Server -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
 sendLink server resolver envelope message =
-    Mail (Mailer.send server.mailer envelope message (LinkSent resolver))
+    Mailer.send server.mailer envelope message (LinkSent resolver)
 
 
 signInEmail : Server -> LinkToken -> Layout.Message

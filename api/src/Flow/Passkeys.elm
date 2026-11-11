@@ -16,7 +16,6 @@ import Reply exposing (Reply(..), withSession)
 import Request exposing (Request)
 import Response exposing (Response)
 import Server exposing (Server)
-import Services.Brevo as Brevo
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
 import Services.Mailer.PasskeyAdded
@@ -29,7 +28,7 @@ type Msg
     | Started Interop.Resolver (Maybe Db.Ceremony)
     | Added Interop.Resolver (Maybe Db.Added)
     | Removed Interop.Resolver CredentialId (Maybe Db.Removed)
-    | Notified Interop.Resolver Response (Result Brevo.Error Brevo.Sent)
+    | Notified Interop.Resolver Response Mailer.Outcome
 
 
 list : Server -> Request -> Reply Msg
@@ -175,10 +174,10 @@ update server msg =
         Notified resolver response (Err problem) ->
             Batch
                 [ respond resolver response
-                , log Interop.Error ("Passkey notice failed at its email: " ++ Brevo.errorToString problem)
+                , log Interop.Error ("Passkey notice failed at its email: " ++ problem)
                 ]
 
 
 notify : Server -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
 notify server resolver response envelope email =
-    Mail (Mailer.send server.mailer envelope email (Notified resolver response))
+    Mailer.send server.mailer envelope email (Notified resolver response)

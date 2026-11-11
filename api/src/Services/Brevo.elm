@@ -10,14 +10,12 @@ module Services.Brevo exposing
     , email
     , endpoint
     , errorToString
-    , send
     , withTimeout
     )
 
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
-import Task exposing (Task)
 
 
 type Client
@@ -165,18 +163,6 @@ type alias Request msg =
     , timeout : Maybe Float
     , onResponse : Http.Response String -> msg
     }
-
-
-send : Request msg -> Task x msg
-send { method, headers, url, body, timeout, onResponse } =
-    Http.task
-        { method = method
-        , headers = List.map (\( name, value ) -> Http.header name value) headers
-        , url = url
-        , body = Http.jsonBody body
-        , resolver = Http.stringResolver (onResponse >> Ok)
-        , timeout = timeout
-        }
 
 
 resolve : Http.Response String -> Result Error Sent

@@ -8,7 +8,6 @@ import Json.Encode as Encode
 import Main
 import ProgramTest exposing (ProgramTest)
 import Services.Brevo as Brevo
-import Services.Mailer as Mailer
 import SimulatedEffect.Cmd
 import SimulatedEffect.Http
 import SimulatedEffect.Ports
@@ -210,7 +209,7 @@ suite =
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "prints the sign-up link instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics", local = True }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
@@ -305,7 +304,7 @@ suite =
                             ( [ "info", "error" ], [ 503 ] )
             , test "answers 503 when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -717,7 +716,7 @@ suite =
                             ( [ "info", "error" ], [ added ] )
             , test "prints the notice instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics", local = True }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.ensureHttpRequests "POST" Brevo.endpoint (List.length >> Expect.equal 0)
@@ -974,14 +973,14 @@ suite =
         , describe "init"
             [ test "warns that emails are printed when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics", local = True }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
                         |> expectSent logs
                             [ ( "info", "Sending queries to " ++ endpoint )
                             , ( "warn", "No BREVO_API_KEY, so emails are printed here instead of sent." )
                             ]
             , test "is broken, and logs why, when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -989,16 +988,32 @@ suite =
                             )
             , test "fails the health check when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectResponses
                             [ health "first"
                                 503
                                 """{"status":"fail","releaseId":"0641607","region":"arn1","checks":{"database":{"status":"fail","output":"Not configured: BREVO_API_KEY and EMAIL_FROM must both be set."}}}"""
                             ]
+            , test "is broken, and logs why, when the sender isn't configured on Vercel" <|
+                \() ->
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False }
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
+                            ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
+                            , [ 503 ]
+                            )
+            , test "is broken, and logs why, when the sender is not an address" <|
+                \() ->
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False }
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
+                            ( [ ( "error", "No email, so every route but health answers 503: EMAIL_FROM is not an email address." ) ]
+                            , [ 503 ]
+                            )
             , test "answers 503 and logs why when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", origin = "pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
@@ -1006,12 +1021,12 @@ suite =
                             )
             , test "fails the health check when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", origin = "pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectSent (responses >> List.map .status) [ 503 ]
             , test "still answers 404 at an unknown path when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", origin = "pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False }
                         |> request "first" "GET" [ "api", "nowhere" ]
                         |> expectSent (responses >> List.map .status) [ 404 ]
             ]
@@ -1327,10 +1342,10 @@ jsonHeaders =
 
 start : Maybe String -> App
 start url =
-    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", origin = "https://pixo.pics", local = False }
+    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
 
 
-startWith : { databaseUrl : Maybe String, brevoApiKey : Maybe String, origin : String, local : Bool } -> App
+startWith : { databaseUrl : Maybe String, brevoApiKey : Maybe String, emailFrom : Maybe String, origin : String, local : Bool } -> App
 startWith config =
     ProgramTest.createWorker
         { init = Main.init
@@ -1343,7 +1358,7 @@ startWith config =
                 [ ( "databaseUrl", Maybe.withDefault Encode.null (Maybe.map Encode.string config.databaseUrl) )
                 , ( "neonEndpoint", Encode.null )
                 , ( "brevoApiKey", Maybe.withDefault Encode.null (Maybe.map Encode.string config.brevoApiKey) )
-                , ( "emailFrom", Encode.string "hello@pixo.pics" )
+                , ( "emailFrom", Maybe.withDefault Encode.null (Maybe.map Encode.string config.emailFrom) )
                 , ( "origin", Encode.string config.origin )
                 , ( "releaseId", Encode.string "0641607" )
                 , ( "releaseUrl", Encode.null )
@@ -1548,7 +1563,7 @@ simulateEffects effect =
                     )
                 |> SimulatedEffect.Task.perform identity
 
-        Effect.Mail (Mailer.Send { method, headers, url, body, timeout, onResponse }) ->
+        Effect.Http { method, headers, url, body, timeout, onResponse } ->
             SimulatedEffect.Http.task
                 { method = method
                 , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers
@@ -1559,13 +1574,9 @@ simulateEffects effect =
                 }
                 |> SimulatedEffect.Task.perform identity
 
-        Effect.Mail (Mailer.Print text msg) ->
-            SimulatedEffect.Cmd.batch
-                [ SimulatedEffect.Ports.send "interopFromElm"
-                    (TsEncode.encoder Interop.interop.fromElm (Interop.Log Interop.Info text))
-                , SimulatedEffect.Task.succeed msg
-                    |> SimulatedEffect.Task.perform identity
-                ]
+        Effect.Succeed msg ->
+            SimulatedEffect.Task.succeed msg
+                |> SimulatedEffect.Task.perform identity
 
 
 simulateSubscriptions : Main.Model -> ProgramTest.SimulatedSub Main.Msg

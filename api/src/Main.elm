@@ -1,6 +1,7 @@
 module Main exposing (Model, Msg(..), init, main, update)
 
 import Api
+import Data.Email as Email
 import Data.Origin as Origin
 import Db
 import Effect exposing (Effect(..), log, respond)
@@ -16,8 +17,8 @@ import Reply exposing (Reply(..))
 import Request exposing (Request)
 import Response exposing (Response)
 import Server exposing (Server)
-import Services.Brevo as Brevo
-import Services.Mailer as Mailer
+import Services.BrevoMailer as BrevoMailer
+import Services.LogMailer as LogMailer
 import Services.Neon as Neon
 import Task
 import Time
@@ -54,19 +55,28 @@ init flags =
             let
                 release =
                     { releaseId = config.releaseId, releaseUrl = config.releaseUrl, region = config.region }
-            in
-            case ( Origin.parse config.origin, Db.connect config, Mailer.configure config ) of
-                ( Ok origin, Ok db, Ok mailer ) ->
-                    ( Running { db = db, mailer = mailer, origin = origin, release = release }
-                    , Batch
-                        [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db)
-                        , case Mailer.warning mailer of
-                            Just printing ->
-                                log Interop.Warn printing
 
-                            Nothing ->
-                                NoEffect
-                        ]
+                mailer =
+                    case ( config.brevoApiKey, config.emailFrom ) of
+                        ( Just apiKey, Just from ) ->
+                            Email.parse from
+                                |> Result.mapError (\_ -> "EMAIL_FROM is not an email address.")
+                                |> Result.map (\sender -> ( BrevoMailer.mailer { apiKey = apiKey, from = sender }, NoEffect ))
+
+                        _ ->
+                            if config.local then
+                                Ok
+                                    ( LogMailer.mailer
+                                    , log Interop.Warn "No BREVO_API_KEY, so emails are printed here instead of sent."
+                                    )
+
+                            else
+                                Err "BREVO_API_KEY and EMAIL_FROM must both be set."
+            in
+            case ( Origin.parse config.origin, Db.connect config, mailer ) of
+                ( Ok origin, Ok db, Ok ( chosen, notice ) ) ->
+                    ( Running { db = db, mailer = chosen, origin = origin, release = release }
+                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice ]
                     )
 
                 ( Err problem, _, _ ) ->
@@ -260,16 +270,13 @@ perform effect =
                     )
                 |> Task.perform identity
 
-        Mail (Mailer.Send request) ->
-            Brevo.send request
+        Http request ->
+            Effect.toTask request
                 |> Task.perform identity
 
-        Mail (Mailer.Print text msg) ->
-            Cmd.batch
-                [ InteropPorts.fromElm (Interop.Log Interop.Info text)
-                , Task.succeed msg
-                    |> Task.perform identity
-                ]
+        Succeed msg ->
+            Task.succeed msg
+                |> Task.perform identity
 
 
 

@@ -2,8 +2,8 @@ module MailerTest exposing (suite)
 
 import Data.Email as Email
 import Data.Username as Username
+import Effect
 import Expect exposing (Expectation)
-import Json.Decode as Decode
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
 import Services.Mailer.PasskeyAdded
@@ -16,85 +16,20 @@ import Test exposing (Test, describe, test)
 suite : Test
 suite =
     describe "Mailer"
-        [ describe "configure"
-            [ test "needs the API key" <|
+        [ describe "send"
+            [ test "hands the mailer's outcome to the caller's message" <|
                 \() ->
-                    Mailer.configure { brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", local = False }
-                        |> Result.map (\_ -> ())
-                        |> Expect.equal (Err "BREVO_API_KEY and EMAIL_FROM must both be set.")
-            , test "needs the sender" <|
-                \() ->
-                    Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, local = False }
-                        |> Result.map (\_ -> ())
-                        |> Expect.equal (Err "BREVO_API_KEY and EMAIL_FROM must both be set.")
-            , test "refuses a sender that is not an address" <|
-                \() ->
-                    Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", local = False }
-                        |> Result.map (\_ -> ())
-                        |> Expect.equal (Err "EMAIL_FROM is not an email address.")
-            , test "is the log mailer when nothing is set locally" <|
-                \() ->
-                    Mailer.configure { brevoApiKey = Nothing, emailFrom = Nothing, local = True }
-                        |> Result.map Mailer.warning
-                        |> Expect.equal (Ok (Just "No BREVO_API_KEY, so emails are printed here instead of sent."))
-            ]
-        , describe "send"
-            [ test "sends a template from the configured sender, tagged, with a timeout" <|
-                \() ->
-                    case ( Mailer.configure { brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", local = False }, Email.parse "ada@example.com" ) of
-                        ( Ok mailer, Ok to ) ->
-                            let
-                                delivery =
-                                    Mailer.send mailer
-                                        { to = to, tag = "sign-in" }
-                                        (Services.Mailer.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 })
-                                        identity
-                            in
-                            case delivery of
-                                Mailer.Send request ->
-                                    ( request.headers
-                                    , request.timeout
-                                    , Decode.decodeValue envelope request.body
-                                    )
-                                        |> Expect.equal
-                                            ( [ ( "api-key", "xkeysib-secret" ), ( "accept", "application/json" ) ]
-                                            , Just 10000
-                                            , Ok
-                                                { from = "hello@pixo.pics"
-                                                , name = "pixo"
-                                                , to = [ "ada@example.com" ]
-                                                , subject = "Sign in to pixo"
-                                                , tags = [ "sign-in" ]
-                                                }
-                                            )
+                    case Email.parse "ada@example.com" of
+                        Ok to ->
+                            Mailer.send
+                                { send = \_ _ -> Effect.Succeed (Err "No luck.") }
+                                { to = to, tag = "sign-in" }
+                                (Services.Mailer.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 })
+                                (Tuple.pair "told")
+                                |> Expect.equal (Effect.Succeed ( "told", Err "No luck." ))
 
-                                Mailer.Print _ _ ->
-                                    Expect.fail "The mailer printed instead of sending."
-
-                        _ ->
-                            Expect.fail "The mailer or the address did not parse."
-            , test "prints the email, and carries on as if it was sent, without a key" <|
-                \() ->
-                    case ( Mailer.configure { brevoApiKey = Nothing, emailFrom = Nothing, local = True }, Email.parse "ada@example.com" ) of
-                        ( Ok mailer, Ok to ) ->
-                            case
-                                Mailer.send mailer
-                                    { to = to, tag = "sign-in" }
-                                    (Services.Mailer.SignIn.email { url = "https://pixo.pics/sign-in?token=abc", expiresInMinutes = 15 })
-                                    identity
-                            of
-                                Mailer.Print text result ->
-                                    ( [ "(sign-in)", "To: ada@example.com", "Subject: Sign in to pixo", "https://pixo.pics/sign-in?token=abc" ]
-                                        |> List.map (\part -> String.contains part text)
-                                    , result
-                                    )
-                                        |> Expect.equal ( [ True, True, True, True ], Ok { messageId = Nothing } )
-
-                                Mailer.Send _ ->
-                                    Expect.fail "The mailer sent instead of printing."
-
-                        _ ->
-                            Expect.fail "The mailer or the address did not parse."
+                        Err problem ->
+                            Expect.fail problem
             ]
         , describe "Layout"
             [ test "writes the text version from the same blocks" <|
@@ -244,22 +179,3 @@ excludes part whole =
 
     else
         Expect.pass
-
-
-type alias Envelope =
-    { from : String
-    , name : String
-    , to : List String
-    , subject : String
-    , tags : List String
-    }
-
-
-envelope : Decode.Decoder Envelope
-envelope =
-    Decode.map5 Envelope
-        (Decode.at [ "sender", "email" ] Decode.string)
-        (Decode.at [ "sender", "name" ] Decode.string)
-        (Decode.field "to" (Decode.list (Decode.field "email" Decode.string)))
-        (Decode.field "subject" Decode.string)
-        (Decode.field "tags" (Decode.list Decode.string))
