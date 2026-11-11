@@ -5,21 +5,22 @@ on Postgres (Neon), deployed to Vercel.
 
 ## Layout
 
-| Path                | What                                                                                                                 |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                                        |
-| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                                    |
-| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`                        |
-| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                                    |
-| `api/tests/`        | elm-test suites for the server                                                                                       |
-| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Db`, `Request`, `Response`, `RateLimit`, `SessionCookie`, `WebAuthn`, `Aaguid` |
-| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`, `ClientAddress`                               |
-| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                              |
-| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                                           |
-| `api/index.ts`      | The only Vercel Function                                                                                             |
-| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                                           |
-| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                                          |
-| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                                                    |
+| Path                | What                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                                                                     |
+| `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                                                                 |
+| `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`                                                     |
+| `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                                                                 |
+| `api/tests/`        | elm-test suites for the server                                                                                                                    |
+| `api/src/`          | Server Elm (`api/elm.json`): `Main`, `Server`, `Effect`, `Reply`, `Db`, `Request`, `Response`, `RateLimit`, `SessionCookie`, `WebAuthn`, `Aaguid` |
+| `api/src/Flow/`     | One module per request flow: `Health`, `MagicLink`, `Session`, `Passkeys`, `PasskeySignIn`                                                        |
+| `api/src/Data/`     | Server-only value types: `SessionToken`, `Origin`, `SignUp`, `UserId`, `ClientAddress`                                                            |
+| `api/src/Services/` | Drivers: `Neon`, `Brevo`, `Mailer` and its templates in `Mailer/` (see [Email](#email))                                                           |
+| `api/_ts/`          | Server TypeScript: `app.ts` (starts Elm), `xhr.ts`, `dev.ts` (Vite plugin)                                                                        |
+| `api/index.ts`      | The only Vercel Function                                                                                                                          |
+| `migrations/`       | Graphile Migrate (`.gmrc`)                                                                                                                        |
+| `.scripts/neon.sh`  | Starts the local Neon proxy                                                                                                                       |
+| `.agents/`          | Agent skills, tracked by `skills-lock.json`; `.claude` links here                                                                                 |
 
 ## Commands
 
@@ -442,10 +443,19 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
 - `api/src/Main.elm` is a `Platform.worker`. `app.ts` exports `handle(request)`: each
   request carries its Promise's `resolve` into Elm, which sends it back with the
   response. The Vercel Function and the `app:api` plugin (`dev.ts`) serve `handle`.
-- `init` and `update` return a `Main.Effect`, never a `Cmd`: `Batch`, `SendToJs` (a
-  response, a log or a signature to check), `Database`, a `Neon.Request` whose message also takes the
-  latency in ms, and `Mail`, a `Brevo.Request`. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
-  (see [Tests](#tests)).
+- `init` and `update` return an `Effect Msg` (`Effect.elm`), never a `Cmd`: `Batch`,
+  `SendToJs` (a response, a log or a signature to check), `Database`, a `Neon.Request`
+  whose message also takes the latency in ms and may be an `Err Failure`, and `Mail`, a
+  `Brevo.Request`. `Main.perform` turns it into a `Cmd`, and a failed query into
+  `DatabaseFailed`, answered once with a 503; the tests simulate it (see
+  [Tests](#tests)).
+- `Main` is wiring: `init`, `update`, `perform`, and `handle`, the one match on
+  `Api.Route` for a running server (`brokenAnswer` is the one for a broken server). Each
+  flow is a module in `api/src/Flow/` with its own `Msg`, a function per route that
+  returns a `Reply Msg`, and an `update : Server -> Msg -> Effect Msg`; `Main.Msg` wraps
+  each flow's `Msg`. A new route is a branch in `Main.handle`, one in `brokenAnswer`,
+  and a function in the flow it belongs to; a new flow is a new module and a new
+  `Main.Msg` variant. Flows never import `Main` or each other.
 - The model is set once: `Running` with a `Server` (the connection, the origin, the
   release and the mailer, which may be an `Err`), or `Broken` with the reason (flags that
   don't decode, an origin that is no URL, or no database). A broken server answers 503 to
@@ -633,7 +643,7 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   [elm-program-test](https://elm-program-test.netlify.app/): `start`, then what happens
   to the program, ending in one `expect*` (`ensure*` in between).
 - `simulateEffects` there mirrors `Main.perform`, and `simulateSubscriptions` mirrors
-  `main`'s `subscriptions`. Both match `Main.Effect` without a wildcard, so a new variant
+  `main`'s `subscriptions`. Both match `Effect.Effect` without a wildcard, so a new variant
   doesn't compile until `perform` and `simulateEffects` handle it.
 - A new endpoint, query, email or `FromElm` variant needs no new simulation: reuse
   `Request`, `Database`, `Mail` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
