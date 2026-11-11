@@ -1,4 +1,4 @@
-module Main exposing (Effect(..), Model, Msg(..), init, main, update)
+module Main exposing (Model, Msg(..), init, main, update)
 
 import Aaguid
 import Api
@@ -11,6 +11,7 @@ import Data.SignUp as SignUp
 import Data.UserId as UserId
 import Data.Username as Username
 import Db
+import Effect exposing (Effect(..), log, query, respond, transact)
 import InteropDefinitions as Interop
 import InteropPorts
 import Json.Decode as Decode
@@ -65,7 +66,7 @@ type alias Server =
     }
 
 
-init : Decode.Value -> ( Model, Effect )
+init : Decode.Value -> ( Model, Effect Msg )
 init flags =
     case InteropPorts.decodeFlags flags of
         Ok config ->
@@ -109,16 +110,6 @@ init flags =
             )
 
 
-log : Interop.Level -> String -> Effect
-log level message =
-    SendToJs (Interop.Log level message)
-
-
-respond : Interop.Resolver -> Response -> Effect
-respond resolver response =
-    SendToJs (Interop.Respond resolver response)
-
-
 
 -- UPDATE
 
@@ -126,7 +117,7 @@ respond resolver response =
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
     | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error RateLimit.Outcome )
-    | DatabaseFailed Interop.Resolver String Neon.Error
+    | DatabaseFailed Effect.Failure
     | LinkLimited Interop.Resolver Mailer.Mailer Ask ( RateLimit.Outcome, RateLimit.Outcome )
     | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
@@ -162,10 +153,10 @@ askedBy ask =
 
 type Reply
     = Now Response
-    | Later (Interop.Resolver -> Effect)
+    | Later (Interop.Resolver -> Effect Msg)
 
 
-update : Msg -> Model -> ( Model, Effect )
+update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     ( model
     , case model of
@@ -177,7 +168,7 @@ update msg model =
     )
 
 
-whenBroken : { problem : String, release : Api.Release } -> Msg -> Effect
+whenBroken : { problem : String, release : Api.Release } -> Msg -> Effect Msg
 whenBroken broken msg =
     case msg of
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
@@ -237,7 +228,7 @@ brokenAnswer { problem, release } found =
             Response.unavailable
 
 
-reply : Interop.Resolver -> Reply -> Effect
+reply : Interop.Resolver -> Reply -> Effect Msg
 reply resolver answer =
     case answer of
         Now response ->
@@ -247,7 +238,7 @@ reply resolver answer =
             toEffect resolver
 
 
-running : Server -> Msg -> Effect
+running : Server -> Msg -> Effect Msg
 running server msg =
     case msg of
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
@@ -280,7 +271,7 @@ running server msg =
                 , log Interop.Error ("Health check failed: " ++ Neon.errorToString problem)
                 ]
 
-        DatabaseFailed resolver step problem ->
+        DatabaseFailed { resolver, step, problem } ->
             Batch
                 [ respond resolver Response.unavailable
                 , log Interop.Error (step ++ ": " ++ Neon.errorToString problem)
@@ -512,7 +503,7 @@ running server msg =
             NoEffect
 
 
-sendLink : Mailer.Mailer -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect
+sendLink : Mailer.Mailer -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
 sendLink mailer resolver envelope message =
     Mail (Mailer.send mailer envelope message (LinkSent resolver))
 
@@ -525,27 +516,7 @@ signInEmail server token =
         }
 
 
-query : Neon.Connection -> Interop.Resolver -> String -> Neon.Query a -> (a -> Msg) -> Effect
-query db resolver step wanted toMsg =
-    Database (Neon.run db wanted (\result _ -> answered resolver step toMsg result))
-
-
-transact : Neon.Connection -> Interop.Resolver -> String -> Neon.Transaction a -> (a -> Msg) -> Effect
-transact db resolver step wanted toMsg =
-    Database (Neon.commit db wanted (\result _ -> answered resolver step toMsg result))
-
-
-answered : Interop.Resolver -> String -> (a -> Msg) -> Result Neon.Error a -> Msg
-answered resolver step toMsg result =
-    case result of
-        Ok value ->
-            toMsg value
-
-        Err problem ->
-            DatabaseFailed resolver step problem
-
-
-notify : Server -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect
+notify : Server -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect Msg
 notify server resolver response envelope email =
     case server.mailer of
         Ok mailer ->
@@ -555,7 +526,7 @@ notify server resolver response envelope email =
             respond resolver response
 
 
-refuse : Interop.Resolver -> String -> Effect
+refuse : Interop.Resolver -> String -> Effect Msg
 refuse resolver problem =
     Batch
         [ respond resolver (Response.error 401 "This passkey could not be verified. Try again, or sign in with an emailed link.")
@@ -567,15 +538,7 @@ refuse resolver problem =
 -- EFFECTS
 
 
-type Effect
-    = NoEffect
-    | Batch (List Effect)
-    | SendToJs Interop.FromElm
-    | Database (Neon.Request (Int -> Msg))
-    | Mail (Brevo.Request Msg)
-
-
-perform : Effect -> Cmd Msg
+perform : Effect Msg -> Cmd Msg
 perform effect =
     case effect of
         NoEffect ->
@@ -593,9 +556,17 @@ perform effect =
                     (\start ->
                         Neon.send request
                             |> Task.andThen
-                                (\toMsg ->
+                                (\toResult ->
                                     Time.now
-                                        |> Task.map (\end -> toMsg (Time.posixToMillis end - Time.posixToMillis start))
+                                        |> Task.map
+                                            (\end ->
+                                                case toResult (Time.posixToMillis end - Time.posixToMillis start) of
+                                                    Ok msg ->
+                                                        msg
+
+                                                    Err failed ->
+                                                        DatabaseFailed failed
+                                            )
                                 )
                     )
                 |> Task.perform identity
@@ -632,7 +603,7 @@ handle server request r =
                                     (Db.rateLimit (RateLimit.healthChecks (Request.clientAddress request)))
                                 |> Neon.with Db.ping
                             )
-                            (\result latency -> DatabaseChecked resolver ( latency, result ))
+                            (\result latency -> Ok (DatabaseChecked resolver ( latency, result )))
                         )
                 )
 
@@ -827,7 +798,7 @@ askForLink server request parsed =
             Now Response.unavailable
 
 
-withSession : Request -> (SessionToken -> Interop.Resolver -> Effect) -> Reply
+withSession : Request -> (SessionToken -> Interop.Resolver -> Effect Msg) -> Reply
 withSession request toEffect =
     case SessionCookie.read request of
         Just token ->
@@ -837,7 +808,7 @@ withSession request toEffect =
             Now Response.notSignedIn
 
 
-withLink : Request -> (LinkToken -> Interop.Resolver -> Effect) -> Reply
+withLink : Request -> (LinkToken -> Interop.Resolver -> Effect Msg) -> Reply
 withLink request toEffect =
     case Request.linkToken request of
         Just token ->

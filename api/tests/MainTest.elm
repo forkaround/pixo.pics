@@ -1,5 +1,6 @@
 module MainTest exposing (suite)
 
+import Effect
 import Expect exposing (Expectation)
 import InteropDefinitions as Interop
 import Json.Decode as Decode
@@ -1002,7 +1003,7 @@ suite =
 
 
 type alias App =
-    ProgramTest Main.Model Main.Msg Main.Effect
+    ProgramTest Main.Model Main.Msg (Effect.Effect Main.Msg)
 
 
 type alias Response =
@@ -1465,20 +1466,20 @@ sent =
             )
 
 
-simulateEffects : Main.Effect -> ProgramTest.SimulatedEffect Main.Msg
+simulateEffects : Effect.Effect Main.Msg -> ProgramTest.SimulatedEffect Main.Msg
 simulateEffects effect =
     case effect of
-        Main.NoEffect ->
+        Effect.NoEffect ->
             SimulatedEffect.Cmd.none
 
-        Main.Batch effects ->
+        Effect.Batch effects ->
             SimulatedEffect.Cmd.batch (List.map simulateEffects effects)
 
-        Main.SendToJs value ->
+        Effect.SendToJs value ->
             SimulatedEffect.Ports.send "interopFromElm"
                 (TsEncode.encoder Interop.interop.fromElm value)
 
-        Main.Database { method, headers, url, body, timeout, onResponse } ->
+        Effect.Database { method, headers, url, body, timeout, onResponse } ->
             SimulatedEffect.Time.now
                 |> SimulatedEffect.Task.andThen
                     (\begin ->
@@ -1491,15 +1492,22 @@ simulateEffects effect =
                             , timeout = timeout
                             }
                             |> SimulatedEffect.Task.andThen
-                                (\toMsg ->
+                                (\toResult ->
                                     SimulatedEffect.Time.now
                                         |> SimulatedEffect.Task.map
-                                            (\end -> toMsg (Time.posixToMillis end - Time.posixToMillis begin))
+                                            (\end ->
+                                                case toResult (Time.posixToMillis end - Time.posixToMillis begin) of
+                                                    Ok msg ->
+                                                        msg
+
+                                                    Err queryFailure ->
+                                                        Main.DatabaseFailed queryFailure
+                                            )
                                 )
                     )
                 |> SimulatedEffect.Task.perform identity
 
-        Main.Mail { method, headers, url, body, timeout, onResponse } ->
+        Effect.Mail { method, headers, url, body, timeout, onResponse } ->
             SimulatedEffect.Http.task
                 { method = method
                 , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers
