@@ -444,6 +444,10 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   response, a log or a signature to check), `Database`, a `Neon.Request` whose message also takes the
   latency in ms, and `Mail`, a `Brevo.Request`. `perform` turns it into a `Cmd` in `main`, and the tests simulate it
   (see [Tests](#tests)).
+- The model is set once: `Running` with a `Server` (the connection, the origin, the
+  release and the mailer, which may be an `Err`), or `Broken` with the reason (flags that
+  don't decode, an origin that is no URL, or no database). A broken server answers 503 to
+  every route but health, which fails with the reason, and still answers 404 and 405.
 - `dev.ts` reloads the server on any `.elm`/`.ts` change in `api/` or `shared/`
   (restarting from `init`); `preview` runs `dist/server/app.js`.
 - Routes are real URLs under `/api`: entry points pass requests through unchanged.
@@ -513,7 +517,7 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   and whether it is https (the cookie's `Secure`). `Origin.parse` rebuilds it from the
   scheme, host and port: a trailing slash, an upper-case host and a default port are
   dropped, and a path, query or fragment is refused. One that is no URL logs `Bad origin` at
-  `error` and leaves the server as broken flags do: no database, so those routes answer 503.
+  `error` and leaves the server `Broken`.
 - The passkey routes read the `session` cookie and answer 401 without a session.
   `GET /api/auth/passkeys` (`Api.passkeys`) lists the account's passkeys: `id` (the
   credential id) and `createdAt` (ISO 8601, UTC).
@@ -575,8 +579,8 @@ mv -n src/UI/*.elm client/UI/ && ls src/UI
   to it and link to `<origin>/dashboard`.
 - `Mailer.configure` (`api/src/Services/Mailer.elm`) builds the `Mailer` in the model from `BREVO_API_KEY` and `EMAIL_FROM`,
   an address verified as a sender in Brevo; its name is `pixo`. Without either the server
-  starts anyway, warns, and `model.email` is an `Err`. `EMAIL_FROM` is parsed as an `Email`;
-  one that isn't leaves `model.email` an `Err` (`EMAIL_FROM is not an email address.`).
+  starts anyway, warns, and `server.mailer` is an `Err`. `EMAIL_FROM` is parsed as an `Email`;
+  one that isn't leaves `server.mailer` an `Err` (`EMAIL_FROM is not an email address.`).
 - `Mailer.send mailer { to, tag } email toMsg` is the `Brevo.Request` for one recipient, whose
   `to` is an `Email`, with a 10 s timeout; wrap it in the `Mail` effect. The tag names the
   template (`sign-in`) and shows in Brevo's logs.

@@ -963,6 +963,16 @@ suite =
                             ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
                             , [ 503 ]
                             )
+            , test "fails the health check when the origin is not a URL" <|
+                \() ->
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", origin = "pixo.pics" }
+                        |> request "first" "GET" [ "api", "health" ]
+                        |> expectSent (responses >> List.map .status) [ 503 ]
+            , test "still answers 404 at an unknown path when the origin is not a URL" <|
+                \() ->
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", origin = "pixo.pics" }
+                        |> request "first" "GET" [ "api", "nowhere" ]
+                        |> expectSent (responses >> List.map .status) [ 404 ]
             ]
         , describe "routing"
             [ test "answers 404 at an unknown path" <|

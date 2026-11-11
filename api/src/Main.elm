@@ -49,9 +49,14 @@ main =
 -- MODEL
 
 
-type alias Model =
-    { db : Result String Neon.Connection
-    , email : Result String Mailer.Mailer
+type Model
+    = Running Server
+    | Broken { problem : String, release : Api.Release }
+
+
+type alias Server =
+    { db : Neon.Connection
+    , mailer : Result String Mailer.Mailer
     , origin : Origin
     , release : Api.Release
     }
@@ -64,55 +69,41 @@ init flags =
             let
                 release =
                     { releaseId = config.releaseId, releaseUrl = config.releaseUrl, region = config.region }
+
+                mailer =
+                    Mailer.configure config
+
+                noMailer =
+                    case mailer of
+                        Ok _ ->
+                            NoEffect
+
+                        Err problem ->
+                            log Interop.Warn ("No email, so nothing is sent: " ++ problem)
             in
-            case Origin.parse config.origin of
-                Ok origin ->
-                    let
-                        db =
-                            Db.connect config
-
-                        email =
-                            Mailer.configure config
-                    in
-                    ( { db = db
-                      , email = email
-                      , origin = origin
-                      , release = release
-                      }
-                    , Batch
-                        [ case db of
-                            Ok connection ->
-                                log Interop.Info ("Sending queries to " ++ Neon.endpoint connection)
-
-                            Err problem ->
-                                log Interop.Warn ("No database, so database routes answer 503: " ++ problem)
-                        , case email of
-                            Ok _ ->
-                                NoEffect
-
-                            Err problem ->
-                                log Interop.Warn ("No email, so nothing is sent: " ++ problem)
-                        ]
+            case ( Origin.parse config.origin, Db.connect config ) of
+                ( Ok origin, Ok db ) ->
+                    ( Running { db = db, mailer = mailer, origin = origin, release = release }
+                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), noMailer ]
                     )
 
-                Err problem ->
-                    ( broken problem release
+                ( Ok _, Err problem ) ->
+                    ( Broken { problem = problem, release = release }
+                    , Batch [ log Interop.Warn ("No database, so database routes answer 503: " ++ problem), noMailer ]
+                    )
+
+                ( Err problem, _ ) ->
+                    ( Broken { problem = problem, release = release }
                     , log Interop.Error ("Bad origin: " ++ problem)
                     )
 
         Err problem ->
-            ( broken "The server's flags did not decode." { releaseId = Nothing, releaseUrl = Nothing, region = Nothing }
+            ( Broken
+                { problem = "The server's flags did not decode."
+                , release = { releaseId = Nothing, releaseUrl = Nothing, region = Nothing }
+                }
             , log Interop.Error ("Bad flags: " ++ Decode.errorToString problem)
             )
-
-
-broken : String -> Api.Release -> Model
-broken problem release =
-    { db = Err problem
-    , email = Err problem
-    , origin = Origin.local
-    , release = release
-    }
 
 
 log : Interop.Level -> String -> Effect
@@ -133,9 +124,9 @@ type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
     | DatabaseChecked Interop.Resolver ( Int, Result Neon.Error Db.RateLimit )
     | DatabaseFailed Interop.Resolver String Neon.Error
-    | LinkLimited Interop.Resolver Ask ( Db.RateLimit, Db.RateLimit )
-    | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
-    | SignInLinkCreated Interop.Resolver Email Db.SignInLink
+    | LinkLimited Interop.Resolver Mailer.Mailer Ask ( Db.RateLimit, Db.RateLimit )
+    | SignUpLinkCreated Interop.Resolver Mailer.Mailer SignUp.SignUp Db.SignUpLink
+    | SignInLinkCreated Interop.Resolver Mailer.Mailer Email Db.SignInLink
     | LinkSent Interop.Resolver (Result Brevo.Error Brevo.Sent)
     | SessionFound Interop.Resolver (Maybe Api.Account)
     | SessionEnded Interop.Resolver
@@ -173,26 +164,100 @@ type Reply
 
 update : Msg -> Model -> ( Model, Effect )
 update msg model =
+    ( model
+    , case model of
+        Running server ->
+            running server msg
+
+        Broken broken ->
+            whenBroken broken msg
+    )
+
+
+whenBroken : { problem : String, release : Api.Release } -> Msg -> Effect
+whenBroken broken msg =
     case msg of
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
-            ( model
-            , case route model request of
-                Now response ->
-                    respond resolver response
+            respond resolver
+                (case Api.parse request.method request.path of
+                    Ok found ->
+                        brokenAnswer broken found
 
-                Later toEffect ->
-                    toEffect resolver
-            )
+                    Err refused ->
+                        notRouted refused
+                )
+
+        _ ->
+            NoEffect
+
+
+brokenAnswer : { problem : String, release : Api.Release } -> Api.Route -> Response
+brokenAnswer { problem, release } found =
+    case found of
+        Api.GetHealth ->
+            health release { status = Api.Fail, latencyMs = Nothing, output = Just ("Not configured: " ++ problem) }
+
+        Api.PostSignUp ->
+            unavailable
+
+        Api.PostSignIn ->
+            unavailable
+
+        Api.GetSession ->
+            unavailable
+
+        Api.DeleteSession ->
+            unavailable
+
+        Api.GetVerification ->
+            unavailable
+
+        Api.PostVerification ->
+            unavailable
+
+        Api.GetPasskeys ->
+            unavailable
+
+        Api.PostPasskey ->
+            unavailable
+
+        Api.PostPasskeyOptions ->
+            unavailable
+
+        Api.DeletePasskey _ ->
+            unavailable
+
+        Api.PostPasskeySignIn ->
+            unavailable
+
+        Api.PostPasskeySignInOptions ->
+            unavailable
+
+
+reply : Interop.Resolver -> Reply -> Effect
+reply resolver answer =
+    case answer of
+        Now response ->
+            respond resolver response
+
+        Later toEffect ->
+            toEffect resolver
+
+
+running : Server -> Msg -> Effect
+running server msg =
+    case msg of
+        GotInterop (Ok (Interop.GotRequest resolver request)) ->
+            reply resolver (route server request)
 
         DatabaseChecked resolver ( _, Ok (Db.Limited limited) ) ->
-            ( model, respond resolver (tooManyRequests limited.retryAfter) )
+            respond resolver (tooManyRequests limited.retryAfter)
 
         DatabaseChecked resolver ( latency, Ok (Db.Allowed _) ) ->
             if latency > slowAfter then
-                ( model
-                , Batch
+                Batch
                     [ respond resolver
-                        (health model
+                        (health server.release
                             { status = Api.Warn
                             , latencyMs = Just latency
                             , output = Just ("Slower than " ++ String.fromInt slowAfter ++ " ms.")
@@ -200,41 +265,33 @@ update msg model =
                         )
                     , log Interop.Warn ("Health check slow: the database took " ++ String.fromInt latency ++ " ms.")
                     ]
-                )
 
             else
-                ( model
-                , respond resolver
-                    (health model { status = Api.Pass, latencyMs = Just latency, output = Nothing })
-                )
+                respond resolver
+                    (health server.release { status = Api.Pass, latencyMs = Just latency, output = Nothing })
 
         DatabaseChecked resolver ( latency, Err problem ) ->
-            ( model
-            , Batch
+            Batch
                 [ respond resolver
-                    (health model { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
+                    (health server.release { status = Api.Fail, latencyMs = Just latency, output = Just (failure problem) })
                 , log Interop.Error ("Health check failed: " ++ Neon.errorToString problem)
                 ]
-            )
 
         DatabaseFailed resolver step problem ->
-            ( model
-            , Batch
+            Batch
                 [ respond resolver unavailable
                 , log Interop.Error (step ++ ": " ++ Neon.errorToString problem)
                 ]
-            )
 
-        LinkLimited resolver ask ( byAddress, byEmail ) ->
-            ( model
-            , case ( retryAfter [ byAddress, byEmail ], model.db ) of
-                ( Just seconds, _ ) ->
+        LinkLimited resolver mailer ask ( byAddress, byEmail ) ->
+            case retryAfter [ byAddress, byEmail ] of
+                Just seconds ->
                     respond resolver (tooManyRequests seconds)
 
-                ( Nothing, Ok db ) ->
+                Nothing ->
                     case ask of
                         SignUpAsked signUp ->
-                            query db
+                            query server.db
                                 resolver
                                 "Magic link failed at its link"
                                 (Db.createSignUpLink
@@ -243,105 +300,92 @@ update msg model =
                                     , ttlSeconds = linkMinutes * 60
                                     }
                                 )
-                                (SignUpLinkCreated resolver signUp)
+                                (SignUpLinkCreated resolver mailer signUp)
 
                         SignInAsked email ->
-                            query db
+                            query server.db
                                 resolver
                                 "Magic link failed at its link"
                                 (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
-                                (SignInLinkCreated resolver email)
+                                (SignInLinkCreated resolver mailer email)
 
-                ( Nothing, Err _ ) ->
-                    respond resolver unavailable
-            )
-
-        SignUpLinkCreated resolver signUp link ->
-            ( model
-            , case link of
+        SignUpLinkCreated resolver mailer signUp link ->
+            case link of
                 Db.UsernameTaken ->
                     respond resolver (error 409 "That username is taken.")
 
                 Db.SignUpLink token ->
-                    sendLink model
+                    sendLink mailer
                         resolver
                         { to = signUp.email, tag = "sign-up" }
                         (Services.Mailer.SignUp.email
-                            { url = verifyUrl model token
+                            { url = verifyUrl server token
                             , username = signUp.username
                             , expiresInMinutes = linkMinutes
                             }
                         )
 
                 Db.SignInInstead token ->
-                    sendLink model resolver { to = signUp.email, tag = "sign-in" } (signInEmail model token)
-            )
+                    sendLink mailer resolver { to = signUp.email, tag = "sign-in" } (signInEmail server token)
 
-        SignInLinkCreated resolver email link ->
-            ( model
-            , case link of
+        SignInLinkCreated resolver mailer email link ->
+            case link of
                 Db.NoAccount ->
                     respond resolver accepted
 
                 Db.SignInLink token ->
-                    sendLink model resolver { to = email, tag = "sign-in" } (signInEmail model token)
-            )
+                    sendLink mailer resolver { to = email, tag = "sign-in" } (signInEmail server token)
 
         LinkSent resolver (Ok _) ->
-            ( model, respond resolver accepted )
+            respond resolver accepted
 
         LinkSent resolver (Err problem) ->
-            ( model
-            , Batch
+            Batch
                 [ respond resolver (error 502 "The email could not be sent. Try again.")
                 , log Interop.Error ("Magic link failed at its email: " ++ Brevo.errorToString problem)
                 ]
-            )
 
         SessionFound resolver (Just account) ->
-            ( model, respond resolver (json 200 (Api.encodeResponse Api.session account)) )
+            respond resolver (json 200 (Api.encodeResponse Api.session account))
 
         SessionFound resolver Nothing ->
-            ( model, respond resolver notSignedIn )
+            respond resolver notSignedIn
 
         SessionEnded resolver ->
-            ( model, respond resolver (signedOut model) )
+            respond resolver (signedOut server)
 
         VerificationFound resolver (Just found) ->
-            ( model, respond resolver (json 200 (Api.encodeResponse Api.verification found)) )
+            respond resolver (json 200 (Api.encodeResponse Api.verification found))
 
         VerificationFound resolver Nothing ->
-            ( model, respond resolver invalidLink )
+            respond resolver invalidLink
 
         VerificationConsumed resolver (Db.Verified { sessionToken, account }) ->
             let
                 response =
                     json 200 (Api.encodeResponse Api.verify account)
             in
-            ( model
-            , respond resolver
-                { response | headers = ( "set-cookie", sessionCookie model sessionToken ) :: response.headers }
-            )
+            respond resolver
+                { response | headers = ( "set-cookie", sessionCookie server sessionToken ) :: response.headers }
 
         VerificationConsumed resolver Db.InvalidLink ->
-            ( model, respond resolver invalidLink )
+            respond resolver invalidLink
 
         VerificationConsumed resolver Db.UsernameTakenMeanwhile ->
-            ( model, respond resolver (error 409 "That username was taken in the meantime. Sign up again with another.") )
+            respond resolver (error 409 "That username was taken in the meantime. Sign up again with another.")
 
         PasskeysFound resolver (Just found) ->
-            ( model, respond resolver (json 200 (Api.encodeResponse Api.passkeys found)) )
+            respond resolver (json 200 (Api.encodeResponse Api.passkeys found))
 
         PasskeysFound resolver Nothing ->
-            ( model, respond resolver notSignedIn )
+            respond resolver notSignedIn
 
         PasskeyStarted resolver (Just ceremony) ->
-            ( model
-            , respond resolver
+            respond resolver
                 (json 200
                     (Api.encodeResponse Api.passkeyOptions
                         { challenge = ceremony.challenge
-                        , rp = { id = Origin.rpId model.origin, name = "pixo" }
+                        , rp = { id = Origin.rpId server.origin, name = "pixo" }
                         , user =
                             { id = UserId.toString ceremony.userId
                             , name = Email.toString ceremony.account.email
@@ -352,81 +396,71 @@ update msg model =
                         }
                     )
                 )
-            )
 
         PasskeyStarted resolver Nothing ->
-            ( model, respond resolver notSignedIn )
+            respond resolver notSignedIn
 
         PasskeyAdded resolver (Just (Db.Added passkey account)) ->
-            ( model
-            , notify model
+            notify server
                 resolver
                 (json 201 (Api.encodeResponse Api.addPasskey passkey))
                 { to = account.email, tag = "passkey-added" }
                 (Services.Mailer.PasskeyAdded.email
-                    { url = dashboardUrl model
+                    { url = dashboardUrl server
                     , username = account.username
                     , passkey = passkey.name
                     }
                 )
-            )
 
         PasskeyAdded resolver (Just Db.NotAdded) ->
-            ( model, respond resolver (error 409 "This passkey request expired or was used already. Try again.") )
+            respond resolver (error 409 "This passkey request expired or was used already. Try again.")
 
         PasskeyAdded resolver Nothing ->
-            ( model, respond resolver notSignedIn )
+            respond resolver notSignedIn
 
         PasskeyRemoved resolver id (Just (Db.Removed { name, account })) ->
-            ( model
-            , notify model
+            notify server
                 resolver
                 (json 200 (Api.encodeResponse (Api.deletePasskey id) ()))
                 { to = account.email, tag = "passkey-removed" }
                 (Services.Mailer.PasskeyRemoved.email
-                    { url = dashboardUrl model
+                    { url = dashboardUrl server
                     , username = account.username
                     , passkey = name
                     }
                 )
-            )
 
         PasskeyRemoved resolver _ (Just Db.NotRemoved) ->
-            ( model, respond resolver (error 404 "This account has no such passkey.") )
+            respond resolver (error 404 "This account has no such passkey.")
 
         PasskeyRemoved resolver _ Nothing ->
-            ( model, respond resolver notSignedIn )
+            respond resolver notSignedIn
 
         Notified resolver response (Ok _) ->
-            ( model, respond resolver response )
+            respond resolver response
 
         Notified resolver response (Err problem) ->
-            ( model
-            , Batch
+            Batch
                 [ respond resolver response
                 , log Interop.Error ("Passkey notice failed at its email: " ++ Brevo.errorToString problem)
                 ]
-            )
 
         SignInStarted resolver (Db.SignInChallenge challenge) ->
-            ( model
-            , respond resolver
-                (json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId model.origin }))
-            )
+            respond resolver
+                (json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId server.origin }))
 
         SignInStarted resolver (Db.TooManyChallenges limited) ->
-            ( model, respond resolver (tooManyRequests limited.retryAfter) )
+            respond resolver (tooManyRequests limited.retryAfter)
 
         KeyFound resolver assertion (Just publicKey) ->
-            ( model
-            , case
+            case
                 WebAuthn.key publicKey
                     |> Result.andThen
                         (\key ->
                             WebAuthn.signature key assertion.signature
                                 |> Result.map (Tuple.pair key)
                         )
-              of
+            of
                 Ok ( key, signature ) ->
                     SendToJs
                         (Interop.VerifySignature resolver
@@ -439,69 +473,55 @@ update msg model =
 
                 Err problem ->
                     refuse resolver problem
-            )
 
         KeyFound resolver _ Nothing ->
-            ( model, refuse resolver "No passkey has this credential id." )
+            refuse resolver "No passkey has this credential id."
 
         GotInterop (Ok (Interop.SignatureChecked resolver signIn valid)) ->
-            ( model
-            , case ( valid, model.db ) of
-                ( True, Ok db ) ->
-                    query db
-                        resolver
-                        "Passkey sign-in failed at its session"
-                        (Db.signInWithPasskey
-                            { challenge = signIn.challenge
-                            , credentialId = signIn.credentialId
-                            , signCount = signIn.signCount
-                            , backedUp = signIn.backedUp
-                            , sessionSeconds = sessionSeconds
-                            }
-                        )
-                        (PasskeySignedIn resolver)
+            if valid then
+                query server.db
+                    resolver
+                    "Passkey sign-in failed at its session"
+                    (Db.signInWithPasskey
+                        { challenge = signIn.challenge
+                        , credentialId = signIn.credentialId
+                        , signCount = signIn.signCount
+                        , backedUp = signIn.backedUp
+                        , sessionSeconds = sessionSeconds
+                        }
+                    )
+                    (PasskeySignedIn resolver)
 
-                ( True, Err _ ) ->
-                    respond resolver unavailable
-
-                ( False, _ ) ->
-                    refuse resolver "The signature does not match the passkey."
-            )
+            else
+                refuse resolver "The signature does not match the passkey."
 
         PasskeySignedIn resolver (Db.PasskeySignedIn { sessionToken, account }) ->
             let
                 response =
                     json 200 (Api.encodeResponse Api.passkeySignIn account)
             in
-            ( model
-            , respond resolver
-                { response | headers = ( "set-cookie", sessionCookie model sessionToken ) :: response.headers }
-            )
+            respond resolver
+                { response | headers = ( "set-cookie", sessionCookie server sessionToken ) :: response.headers }
 
         PasskeySignedIn resolver Db.ChallengeSpent ->
-            ( model, refuse resolver "The challenge is expired, used or unknown." )
+            refuse resolver "The challenge is expired, used or unknown."
 
         PasskeySignedIn resolver Db.PasskeyStale ->
-            ( model, refuse resolver "The passkey is gone, or its counter did not move forward." )
+            refuse resolver "The passkey is gone, or its counter did not move forward."
 
         GotInterop (Err _) ->
-            ( model, NoEffect )
+            NoEffect
 
 
-sendLink : Model -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect
-sendLink model resolver envelope email =
-    case model.email of
-        Ok mailer ->
-            Mail (Mailer.send mailer envelope email (LinkSent resolver))
-
-        Err _ ->
-            respond resolver unavailable
+sendLink : Mailer.Mailer -> Interop.Resolver -> { to : Email, tag : String } -> Layout.Message -> Effect
+sendLink mailer resolver envelope message =
+    Mail (Mailer.send mailer envelope message (LinkSent resolver))
 
 
-signInEmail : Model -> LinkToken -> Layout.Message
-signInEmail model token =
+signInEmail : Server -> LinkToken -> Layout.Message
+signInEmail server token =
     Services.Mailer.SignIn.email
-        { url = verifyUrl model token
+        { url = verifyUrl server token
         , expiresInMinutes = linkMinutes
         }
 
@@ -526,9 +546,9 @@ answered resolver step toMsg result =
             DatabaseFailed resolver step problem
 
 
-notify : Model -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect
-notify model resolver response envelope email =
-    case model.email of
+notify : Server -> Interop.Resolver -> Response -> { to : Email, tag : String } -> Layout.Message -> Effect
+notify server resolver response envelope email =
+    case server.mailer of
         Ok mailer ->
             Mail (Mailer.send mailer envelope email (Notified resolver response))
 
@@ -590,57 +610,58 @@ perform effect =
 -- ROUTES
 
 
-route : Model -> Request -> Reply
-route model request =
+route : Server -> Request -> Reply
+route server request =
     case Api.parse request.method request.path of
-        Ok r ->
-            handle model request r
+        Ok found ->
+            handle server request found
 
-        Err Api.NotFound ->
-            Now (error 404 "Not found.")
+        Err refused ->
+            Now (notRouted refused)
 
-        Err (Api.MethodNotAllowed allowed) ->
+
+notRouted : Api.Problem -> Response
+notRouted refused =
+    case refused of
+        Api.NotFound ->
+            error 404 "Not found."
+
+        Api.MethodNotAllowed allowed ->
             let
                 response =
                     error 405 "Method not allowed."
             in
-            Now
-                { response
-                    | headers =
-                        ( "allow", String.join ", " (List.map Api.methodToString allowed) )
-                            :: response.headers
-                }
+            { response
+                | headers =
+                    ( "allow", String.join ", " (List.map Api.methodToString allowed) )
+                        :: response.headers
+            }
 
 
-handle : Model -> Request -> Api.Route -> Reply
-handle model request r =
+handle : Server -> Request -> Api.Route -> Reply
+handle server request r =
     case r of
         Api.GetHealth ->
-            case model.db of
-                Ok db ->
-                    Later
-                        (\resolver ->
-                            Database
-                                (Neon.commit (Neon.withTimeout healthTimeout db)
-                                    (Neon.transaction always
-                                        |> Neon.with
-                                            (Db.rateLimit
-                                                { key = "health:ip:" ++ clientAddress request
-                                                , limit = 60
-                                                , windowSeconds = 60
-                                                }
-                                            )
-                                        |> Neon.with Db.ping
+            Later
+                (\resolver ->
+                    Database
+                        (Neon.commit (Neon.withTimeout healthTimeout server.db)
+                            (Neon.transaction always
+                                |> Neon.with
+                                    (Db.rateLimit
+                                        { key = "health:ip:" ++ clientAddress request
+                                        , limit = 60
+                                        , windowSeconds = 60
+                                        }
                                     )
-                                    (\result latency -> DatabaseChecked resolver ( latency, result ))
-                                )
+                                |> Neon.with Db.ping
+                            )
+                            (\result latency -> DatabaseChecked resolver ( latency, result ))
                         )
-
-                Err problem ->
-                    Now (health model { status = Api.Fail, latencyMs = Nothing, output = Just ("Not configured: " ++ problem) })
+                )
 
         Api.PostSignUp ->
-            askForLink model
+            askForLink server
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signUp) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email and a username.")
@@ -649,7 +670,7 @@ handle model request r =
                 )
 
         Api.PostSignIn ->
-            askForLink model
+            askForLink server
                 request
                 (Decode.decodeString (Api.bodyDecoder Api.signIn) request.body
                     |> Result.mapError (\_ -> error 400 "Expected a JSON object with an email.")
@@ -658,38 +679,35 @@ handle model request r =
                 )
 
         Api.GetSession ->
-            withSession model
+            withSession
                 request
-                (\db token resolver ->
-                    transact db resolver "Session lookup failed" (Db.account token) (SessionFound resolver)
+                (\token resolver ->
+                    transact server.db resolver "Session lookup failed" (Db.account token) (SessionFound resolver)
                 )
 
         Api.DeleteSession ->
-            case ( model.db, cookieToken request ) of
-                ( Ok db, Just token ) ->
+            case cookieToken request of
+                Just token ->
                     Later
                         (\resolver ->
-                            query db resolver "Sign-out failed" (Db.signOut token) (\() -> SessionEnded resolver)
+                            query server.db resolver "Sign-out failed" (Db.signOut token) (\() -> SessionEnded resolver)
                         )
 
-                ( Ok _, Nothing ) ->
-                    Now (signedOut model)
-
-                ( Err _, _ ) ->
-                    Now unavailable
+                Nothing ->
+                    Now (signedOut server)
 
         Api.GetVerification ->
-            withLink model
+            withLink
                 request
-                (\db token resolver ->
-                    query db resolver "Verification failed at its link" (Db.magicLink token) (VerificationFound resolver)
+                (\token resolver ->
+                    query server.db resolver "Verification failed at its link" (Db.magicLink token) (VerificationFound resolver)
                 )
 
         Api.PostVerification ->
-            withLink model
+            withLink
                 request
-                (\db token resolver ->
-                    query db
+                (\token resolver ->
+                    query server.db
                         resolver
                         "Verification failed at its session"
                         (Db.consumeMagicLink { token = token, sessionSeconds = sessionSeconds })
@@ -697,17 +715,17 @@ handle model request r =
                 )
 
         Api.GetPasskeys ->
-            withSession model
+            withSession
                 request
-                (\db token resolver ->
-                    transact db resolver "Passkey list failed" (Db.passkeys token) (PasskeysFound resolver)
+                (\token resolver ->
+                    transact server.db resolver "Passkey list failed" (Db.passkeys token) (PasskeysFound resolver)
                 )
 
         Api.PostPasskeyOptions ->
-            withSession model
+            withSession
                 request
-                (\db token resolver ->
-                    transact db
+                (\token resolver ->
+                    transact server.db
                         resolver
                         "Passkey failed at its challenge"
                         (Db.startPasskey { token = token, ttlSeconds = challengeSeconds })
@@ -715,19 +733,19 @@ handle model request r =
                 )
 
         Api.PostPasskey ->
-            withSession model
+            withSession
                 request
-                (\db token resolver ->
+                (\token resolver ->
                     case
                         Decode.decodeString (Api.bodyDecoder Api.addPasskey) request.body
                             |> Result.mapError (\_ -> Nothing)
                             |> Result.andThen
-                                (WebAuthn.register model.origin
+                                (WebAuthn.register server.origin
                                     >> Result.mapError Just
                                 )
                     of
                         Ok registration ->
-                            transact db
+                            transact server.db
                                 resolver
                                 "Passkey failed at its credential"
                                 (Db.addPasskey
@@ -750,10 +768,10 @@ handle model request r =
                 )
 
         Api.DeletePasskey id ->
-            withSession model
+            withSession
                 request
-                (\db token resolver ->
-                    transact db
+                (\token resolver ->
+                    transact server.db
                         resolver
                         "Passkey removal failed"
                         (Db.removePasskey { token = token, id = id })
@@ -761,34 +779,29 @@ handle model request r =
                 )
 
         Api.PostPasskeySignInOptions ->
-            case model.db of
-                Ok db ->
-                    Later
-                        (\resolver ->
-                            query db
-                                resolver
-                                "Passkey sign-in failed at its challenge"
-                                (Db.signInChallenge
-                                    { key = "passkey:ip:" ++ clientAddress request
-                                    , limit = 20
-                                    , windowSeconds = 900
-                                    , ttlSeconds = challengeSeconds
-                                    }
-                                )
-                                (SignInStarted resolver)
+            Later
+                (\resolver ->
+                    query server.db
+                        resolver
+                        "Passkey sign-in failed at its challenge"
+                        (Db.signInChallenge
+                            { key = "passkey:ip:" ++ clientAddress request
+                            , limit = 20
+                            , windowSeconds = 900
+                            , ttlSeconds = challengeSeconds
+                            }
                         )
-
-                Err _ ->
-                    Now unavailable
+                        (SignInStarted resolver)
+                )
 
         Api.PostPasskeySignIn ->
-            case ( model.db, Decode.decodeString (Api.bodyDecoder Api.passkeySignIn) request.body ) of
-                ( Ok db, Ok assertion ) ->
+            case Decode.decodeString (Api.bodyDecoder Api.passkeySignIn) request.body of
+                Ok assertion ->
                     Later
                         (\resolver ->
-                            case ( WebAuthn.authenticate model.origin assertion, CredentialId.fromString assertion.id ) of
+                            case ( WebAuthn.authenticate server.origin assertion, CredentialId.fromString assertion.id ) of
                                 ( Ok authentication, Just credentialId ) ->
-                                    query db
+                                    query server.db
                                         resolver
                                         "Passkey sign-in failed at its key"
                                         (Db.passkeyPublicKey credentialId)
@@ -811,20 +824,17 @@ handle model request r =
                                     refuse resolver "The assertion names no credential."
                         )
 
-                ( Ok _, Err _ ) ->
+                Err _ ->
                     Now (error 400 "Expected a JSON object with an id, a clientDataJSON, an authenticatorData and a signature.")
 
-                ( Err _, _ ) ->
-                    Now unavailable
 
-
-askForLink : Model -> Request -> Result Response Ask -> Reply
-askForLink model request parsed =
-    case ( model.db, model.email, parsed ) of
-        ( Ok db, Ok _, Ok ask ) ->
+askForLink : Server -> Request -> Result Response Ask -> Reply
+askForLink server request parsed =
+    case ( server.mailer, parsed ) of
+        ( Ok mailer, Ok ask ) ->
             Later
                 (\resolver ->
-                    transact db
+                    transact server.db
                         resolver
                         "Magic link failed at its rate limits"
                         (Neon.transaction Tuple.pair
@@ -843,27 +853,24 @@ askForLink model request parsed =
                                     }
                                 )
                         )
-                        (LinkLimited resolver ask)
+                        (LinkLimited resolver mailer ask)
                 )
 
-        ( Ok _, Ok _, Err response ) ->
+        ( Ok _, Err response ) ->
             Now response
-
-        _ ->
-            Now unavailable
-
-
-withSession : Model -> Request -> (Neon.Connection -> SessionToken -> Interop.Resolver -> Effect) -> Reply
-withSession model request toEffect =
-    case ( model.db, cookieToken request ) of
-        ( Ok db, Just token ) ->
-            Later (toEffect db token)
-
-        ( Ok _, Nothing ) ->
-            Now notSignedIn
 
         ( Err _, _ ) ->
             Now unavailable
+
+
+withSession : Request -> (SessionToken -> Interop.Resolver -> Effect) -> Reply
+withSession request toEffect =
+    case cookieToken request of
+        Just token ->
+            Later (toEffect token)
+
+        Nothing ->
+            Now notSignedIn
 
 
 cookieToken : Request -> Maybe SessionToken
@@ -878,21 +885,18 @@ cookieToken request =
         |> Maybe.andThen SessionToken.fromString
 
 
-withLink : Model -> Request -> (Neon.Connection -> LinkToken -> Interop.Resolver -> Effect) -> Reply
-withLink model request toEffect =
-    case ( model.db, bearer request ) of
-        ( Ok db, Just token ) ->
-            Later (toEffect db token)
+withLink : Request -> (LinkToken -> Interop.Resolver -> Effect) -> Reply
+withLink request toEffect =
+    case bearer request of
+        Just token ->
+            Later (toEffect token)
 
-        ( Ok _, Nothing ) ->
+        Nothing ->
             let
                 response =
                     error 401 "Send the link's token as a bearer token."
             in
             Now { response | headers = ( "www-authenticate", "Bearer" ) :: response.headers }
-
-        ( Err _, _ ) ->
-            Now unavailable
 
 
 bearer : Request -> Maybe LinkToken
@@ -909,14 +913,14 @@ bearer request =
         |> Maybe.andThen LinkToken.fromString
 
 
-verifyUrl : Model -> LinkToken -> String
-verifyUrl model token =
-    Origin.toString model.origin ++ Path.toString (Path.Verify (Just token))
+verifyUrl : Server -> LinkToken -> String
+verifyUrl server token =
+    Origin.toString server.origin ++ Path.toString (Path.Verify (Just token))
 
 
-dashboardUrl : Model -> String
-dashboardUrl model =
-    Origin.toString model.origin ++ Path.toString Path.Dashboard
+dashboardUrl : Server -> String
+dashboardUrl server =
+    Origin.toString server.origin ++ Path.toString Path.Dashboard
 
 
 sessionSeconds : Int
@@ -924,13 +928,13 @@ sessionSeconds =
     30 * 24 * 60 * 60
 
 
-sessionCookie : Model -> SessionToken -> String
-sessionCookie model token =
-    cookie model (SessionToken.toString token) sessionSeconds
+sessionCookie : Server -> SessionToken -> String
+sessionCookie server token =
+    cookie server (SessionToken.toString token) sessionSeconds
 
 
-cookie : Model -> String -> Int -> String
-cookie model token maxAge =
+cookie : Server -> String -> Int -> String
+cookie server token maxAge =
     String.join "; "
         (List.concat
             [ [ "session=" ++ token
@@ -939,7 +943,7 @@ cookie model token maxAge =
               , "HttpOnly"
               , "SameSite=Lax"
               ]
-            , if Origin.isSecure model.origin then
+            , if Origin.isSecure server.origin then
                 [ "Secure" ]
 
               else
@@ -1030,11 +1034,11 @@ json status value =
     }
 
 
-health : Model -> Api.Check -> Response
-health model check =
+health : Api.Release -> Api.Check -> Response
+health release check =
     let
         report =
-            Api.healthOf model.release check
+            Api.healthOf release check
     in
     { status =
         case report.status of
@@ -1066,13 +1070,13 @@ notSignedIn =
     error 401 "Not signed in."
 
 
-signedOut : Model -> Response
-signedOut model =
+signedOut : Server -> Response
+signedOut server =
     let
         response =
             json 200 (Api.encodeResponse Api.signOut ())
     in
-    { response | headers = ( "set-cookie", cookie model "" 0 ) :: response.headers }
+    { response | headers = ( "set-cookie", cookie server "" 0 ) :: response.headers }
 
 
 invalidLink : Response

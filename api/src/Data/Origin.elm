@@ -1,4 +1,4 @@
-module Data.Origin exposing (Origin, isSecure, local, parse, rpId, toString)
+module Data.Origin exposing (Origin, isSecure, parse, rpId, toString)
 
 import Url exposing (Url)
 
@@ -57,15 +57,6 @@ fromUrl url =
         { url = scheme ++ host ++ suffix
         , rpId = host
         , secure = secure
-        }
-
-
-local : Origin
-local =
-    Origin
-        { url = "http://localhost:5173"
-        , rpId = "localhost"
-        , secure = False
         }
 
 
