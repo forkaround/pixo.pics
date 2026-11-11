@@ -18,8 +18,10 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Path
 import RateLimit
+import Reply exposing (Reply(..), withSession)
 import Request exposing (Request)
 import Response exposing (Response)
+import Server exposing (Server)
 import Services.Brevo as Brevo
 import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
@@ -56,14 +58,6 @@ main =
 type Model
     = Running Server
     | Broken { problem : String, release : Api.Release }
-
-
-type alias Server =
-    { db : Neon.Connection
-    , mailer : Result String Mailer.Mailer
-    , origin : Origin
-    , release : Api.Release
-    }
 
 
 init : Decode.Value -> ( Model, Effect Msg )
@@ -151,11 +145,6 @@ askedBy ask =
             email
 
 
-type Reply
-    = Now Response
-    | Later (Interop.Resolver -> Effect Msg)
-
-
 update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     ( model
@@ -228,7 +217,7 @@ brokenAnswer { problem, release } found =
             Response.unavailable
 
 
-reply : Interop.Resolver -> Reply -> Effect Msg
+reply : Interop.Resolver -> Reply Msg -> Effect Msg
 reply resolver answer =
     case answer of
         Now response ->
@@ -580,7 +569,7 @@ perform effect =
 -- ROUTES
 
 
-route : Server -> Request -> Reply
+route : Server -> Request -> Reply Msg
 route server request =
     case Api.parse request.method request.path of
         Ok found ->
@@ -590,7 +579,7 @@ route server request =
             Now (Response.notRouted refused)
 
 
-handle : Server -> Request -> Api.Route -> Reply
+handle : Server -> Request -> Api.Route -> Reply Msg
 handle server request r =
     case r of
         Api.GetHealth ->
@@ -773,7 +762,7 @@ handle server request r =
                     Now (Response.error 400 "Expected a JSON object with an id, a clientDataJSON, an authenticatorData and a signature.")
 
 
-askForLink : Server -> Request -> Result Response Ask -> Reply
+askForLink : Server -> Request -> Result Response Ask -> Reply Msg
 askForLink server request parsed =
     case ( server.mailer, parsed ) of
         ( Ok mailer, Ok ask ) ->
@@ -798,17 +787,7 @@ askForLink server request parsed =
             Now Response.unavailable
 
 
-withSession : Request -> (SessionToken -> Interop.Resolver -> Effect Msg) -> Reply
-withSession request toEffect =
-    case SessionCookie.read request of
-        Just token ->
-            Later (toEffect token)
-
-        Nothing ->
-            Now Response.notSignedIn
-
-
-withLink : Request -> (LinkToken -> Interop.Resolver -> Effect Msg) -> Reply
+withLink : Request -> (LinkToken -> Interop.Resolver -> Effect Msg) -> Reply Msg
 withLink request toEffect =
     case Request.linkToken request of
         Just token ->
