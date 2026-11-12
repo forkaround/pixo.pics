@@ -7,6 +7,7 @@ export default defineConfig({
   plugins: [css(), elm(), api()],
   // The browser app, which Vercel serves as static files (vercel.json outputDirectory).
   build: { outDir: "dist/client" },
+  worker: { format: "es" },
   environments: {
     ssr: {
       build: {

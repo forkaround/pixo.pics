@@ -16,6 +16,8 @@ import InteropPorts
 import Json.Decode as Decode
 import Path
 import Phosphor exposing (IconWeight(..))
+import Pipeline
+import PipelineView
 import UI.Button as Button
 import UI.Card as Card
 import UI.Field as Field
@@ -53,6 +55,7 @@ type alias Model =
     , health : Health
     , session : Session
     , ceremony : Ceremony
+    , pipeline : Pipeline.Model
     , page : Page
     }
 
@@ -88,6 +91,7 @@ type Page
     | SignIn SignInForm
     | Verify Verification
     | Dashboard DashboardState
+    | Generate
     | NotFound
 
 
@@ -135,9 +139,9 @@ type Health
 init : Decode.Value -> Url -> ( Model, Effect )
 init flags url =
     let
-        { theme, systemDark } =
+        { theme, systemDark, entropy } =
             InteropPorts.decodeFlags flags
-                |> Result.withDefault { theme = Nothing, systemDark = False }
+                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0 }
     in
     open url
         { theme = Maybe.withDefault Interop.System theme
@@ -145,6 +149,7 @@ init flags url =
         , health = Checking Nothing
         , session = Unknown
         , ceremony = Resting Nothing
+        , pipeline = Pipeline.init entropy
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
@@ -186,6 +191,9 @@ open url opened =
         Path.Verify Nothing ->
             ( { model | page = Verify (Refused missingToken) }, NoEffect )
 
+        Path.Generate ->
+            runPipeline { model | page = Generate } (Pipeline.enter model.pipeline)
+
         Path.NotFound ->
             ( { model | page = NotFound }, NoEffect )
 
@@ -193,6 +201,18 @@ open url opened =
 missingToken : String
 missingToken =
     "This link is incomplete. Open the one from your email again."
+
+
+runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect )
+runPipeline model ( pipeline, command ) =
+    ( { model | pipeline = pipeline }
+    , case command of
+        Just run ->
+            SendToJs (Interop.RunPipeline run)
+
+        Nothing ->
+            NoEffect
+    )
 
 
 checkHealth : Effect
@@ -249,6 +269,7 @@ type Msg
     | PasskeySignInRequested
     | GotSignInOptions (Result ApiClient.Error Api.SignInOptions)
     | GotPasskeySignIn (Result ApiClient.Error Api.Account)
+    | GotPipeline Pipeline.Msg
 
 
 update : Msg -> Model -> ( Model, Effect )
@@ -288,8 +309,14 @@ update msg model =
             , NoEffect
             )
 
+        GotInterop (Ok (Interop.PipelineEvent event)) ->
+            runPipeline model (Pipeline.update (Pipeline.Happened event) model.pipeline)
+
         GotInterop (Err _) ->
             ( model, NoEffect )
+
+        GotPipeline pipelineMsg ->
+            runPipeline model (Pipeline.update pipelineMsg model.pipeline)
 
         GotHealth (Ok health) ->
             ( { model | health = Checked health }, NoEffect )
@@ -709,6 +736,9 @@ title page =
         Verify _ ->
             "Verify · pixo"
 
+        Generate ->
+            "Generate · pixo"
+
         NotFound ->
             "Not found · pixo"
 
@@ -731,10 +761,13 @@ viewPage model =
                     SignedOut ->
                         [ link Path.SignUp "Create an account"
                         , link Path.SignIn "Sign in"
+                        , link Path.Generate "Make a picture"
                         ]
 
                     SignedIn _ ->
-                        [ link Path.Dashboard "Dashboard" ]
+                        [ link Path.Dashboard "Dashboard"
+                        , link Path.Generate "Make a picture"
+                        ]
                 )
             ]
 
@@ -754,6 +787,10 @@ viewPage model =
 
         Verify verification ->
             [ viewVerification model.ceremony verification ]
+
+        Generate ->
+            List.map (Html.map GotPipeline) (PipelineView.view model.pipeline)
+                ++ [ link Path.Home "Home" ]
 
         NotFound ->
             [ notice "Not found"
@@ -937,7 +974,7 @@ viewDashboard session =
                     )
                 |> Card.content [ class "text-sm text-muted-foreground" ]
                     [ text "Your dashboard is empty for now." ]
-                |> Card.footer [] [ link Path.Home "Server status" ]
+                |> Card.footer [ class "gap-2" ] [ link Path.Home "Server status", link Path.Generate "Make a picture" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
         Unavailable message ->

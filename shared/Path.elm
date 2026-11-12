@@ -11,6 +11,7 @@ type Path
     | SignIn
     | Verify (Maybe LinkToken)
     | Dashboard
+    | Generate
     | NotFound
 
 
@@ -35,6 +36,9 @@ toString path =
         Dashboard ->
             "/dashboard"
 
+        Generate ->
+            "/generate"
+
         NotFound ->
             "/404"
 
@@ -53,4 +57,5 @@ parser =
         , Parser.map SignIn (Parser.s "auth" </> Parser.s "signin")
         , Parser.map Verify (Parser.s "auth" </> Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))
         , Parser.map Dashboard (Parser.s "dashboard")
+        , Parser.map Generate (Parser.s "generate")
         ]

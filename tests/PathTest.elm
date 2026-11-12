@@ -80,6 +80,9 @@ next path =
             Just Path.Dashboard
 
         Path.Dashboard ->
+            Just Path.Generate
+
+        Path.Generate ->
             Just Path.NotFound
 
         Path.NotFound ->

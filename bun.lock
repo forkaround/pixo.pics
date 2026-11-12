@@ -7,6 +7,7 @@
       "devDependencies": {
         "@tailwindcss/vite": "4.3.3",
         "@types/bun": "^1.4.4",
+        "bonsai-image-pipeline-lib": "github:nishlumi/bonsai-image-pipeline-lib#4afa168e0d81a8d963df46cca4505e9ee98a8a50",
         "elm": "^0.19.3-0",
         "elm-format": "^0.8.8",
         "elm-test": "^0.19.3-0",
@@ -180,6 +181,8 @@
     "balanced-match": ["balanced-match@1.0.2", "", {}, "sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw=="],
 
     "binary-extensions": ["binary-extensions@2.3.0", "", {}, "sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw=="],
+
+    "bonsai-image-pipeline-lib": ["bonsai-image-pipeline-lib@github:nishlumi/bonsai-image-pipeline-lib#4afa168", {}, "nishlumi-bonsai-image-pipeline-lib-4afa168", "sha512-yeKmPZzMxRkFWXeAna5lLBbkGBTTBts5r5GYacvcbIhO3t5hVwSw7ve6FINkxpAU7Ev8QtGM97t3YjUXUFEJyQ=="],
 
     "brace-expansion": ["brace-expansion@1.1.21", "", { "dependencies": { "balanced-match": "^1.0.0", "concat-map": "0.0.1" } }, "sha512-9zeA+KLZNNzglF2TPKRQEDyx6Yby7daAkuy8MiPzpXPsYDWi/DRM8jmwUDxokQjYqBpv5DgPiwD4h4ZZSy1Ujw=="],
 

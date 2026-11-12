@@ -2,7 +2,11 @@ module DataTest exposing (suite)
 
 import Data.Challenge as Challenge
 import Data.CredentialId as CredentialId
+import Data.Dimension as Dimension
 import Data.Email as Email
+import Data.Prompt as Prompt
+import Data.Seed as Seed
+import Data.Steps as Steps
 import Data.Username as Username
 import Expect
 import Json.Decode as Decode
@@ -74,5 +78,51 @@ suite =
                         |> Result.mapError (\_ -> ())
                         |> Result.map Challenge.toString
                         |> Expect.equal (Ok "Y2hhbGxlbmdl")
+            ]
+        , describe "Dimension"
+            [ test "takes what is on its grid, ends included" <|
+                \() ->
+                    List.filterMap Dimension.fromInt [ 256, 576, 1024 ]
+                        |> List.map Dimension.toInt
+                        |> Expect.equal [ 256, 576, 1024 ]
+            , test "refuses what is too small, too large or off its grid" <|
+                \() ->
+                    List.filterMap Dimension.fromInt [ 192, 1088, 500, 272 ]
+                        |> Expect.equal []
+            , test "is always a multiple of 16, which the model needs" <|
+                \() ->
+                    List.range Dimension.smallest Dimension.largest
+                        |> List.filterMap Dimension.fromInt
+                        |> List.filter (\dimension -> modBy 16 (Dimension.toInt dimension) /= 0)
+                        |> Expect.equal []
+            ]
+        , describe "Steps"
+            [ test "takes 1 to 50" <|
+                \() ->
+                    List.filterMap Steps.fromInt [ 0, 1, 4, 50, 51 ]
+                        |> List.map Steps.toInt
+                        |> Expect.equal [ 1, 4, 50 ]
+            ]
+        , describe "Seed"
+            [ test "reads a whole number, trimmed" <|
+                \() ->
+                    Seed.fromString " 1234 "
+                        |> Maybe.map Seed.toString
+                        |> Expect.equal (Just "1234")
+            , test "refuses what the model would wrap around" <|
+                \() ->
+                    List.filterMap Seed.fromString [ "4294967296", "-1", "1e3", "" ]
+                        |> Expect.equal []
+            ]
+        , describe "Prompt"
+            [ test "is trimmed" <|
+                \() ->
+                    Prompt.parse "  a bonsai\n"
+                        |> Maybe.map Prompt.toString
+                        |> Expect.equal (Just "a bonsai")
+            , test "is never blank" <|
+                \() ->
+                    Prompt.parse " \n "
+                        |> Expect.equal Nothing
             ]
         ]

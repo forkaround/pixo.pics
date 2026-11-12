@@ -33,6 +33,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
     "@types/bun": "^1.4.4",
+    "bonsai-image-pipeline-lib": "github:nishlumi/bonsai-image-pipeline-lib#4afa168e0d81a8d963df46cca4505e9ee98a8a50",
     "elm": "^0.19.3-0",
     "elm-format": "^0.8.8",
     "elm-test": "^0.19.3-0",

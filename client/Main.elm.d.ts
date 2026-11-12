@@ -21,11 +21,11 @@ export interface ElmApp {
   };
 }
 
-export type FromElm = { data : { challenge : string; rpId : string }; tag : "GetPasskey" } | { data : { algorithms : number[]; challenge : string; excludeCredentials : string[]; rp : { id : string; name : string }; user : { displayName : string; id : string; name : string } }; tag : "CreatePasskey" } | { data : { key : string; value : string }; tag : "WriteToLocalStorage" };
+export type FromElm = { tag : "ClearModelCache" } | { tag : "ReleaseModel" } | { tag : "CancelPipeline" } | { data : { frameBudget : number; guidanceScale : number; height : number; numInferenceSteps : number; prompt : string; seed : number; width : number }; tag : "GenerateImage" } | { data : { cache : boolean; force : boolean; model : string }; tag : "LoadModel" } | { tag : "CheckWebGpu" } | { data : { challenge : string; rpId : string }; tag : "GetPasskey" } | { data : { algorithms : number[]; challenge : string; excludeCredentials : string[]; rp : { id : string; name : string }; user : { displayName : string; id : string; name : string } }; tag : "CreatePasskey" } | { data : { key : string; value : string }; tag : "WriteToLocalStorage" };
 
-export type ToElm = { dark : boolean; tag : "SystemThemeChanged" } | { attestationObject : string; clientDataJSON : string; tag : "PasskeyCreated"; transports : string[] } | ({ tag : "PasskeyUsed" } & ({ id : string } & { clientDataJSON : string } & { authenticatorData : string } & { signature : string })) | { error : string; tag : "PasskeyFailed" };
+export type ToElm = { dark : boolean; tag : "SystemThemeChanged" } | { attestationObject : string; clientDataJSON : string; tag : "PasskeyCreated"; transports : string[] } | ({ tag : "PasskeyUsed" } & ({ id : string } & { clientDataJSON : string } & { authenticatorData : string } & { signature : string })) | { error : string; tag : "PasskeyFailed" } | { supported : boolean; tag : "WebGpuChecked" } | ({ tag : "ModelProgress" } & ({ component : "text_encoder" | "transformer" | "vae" } & { loaded : number } & { total : number } & { fromCache : boolean })) | { tag : "ModelLoaded" } | { step : number; tag : "GenerationStep" } | { tag : "ImageGenerated"; url : string } | { tag : "ModelReleased" } | { tag : "ModelCacheCleared" } | { message : string; name : string; tag : "PipelineFailed" };
 
-export type Flags = { systemDark : boolean; theme : ("light" | "dark" | "system") | null };
+export type Flags = { entropy : number; systemDark : boolean; theme : ("light" | "dark" | "system") | null };
 
 export namespace Main {
   function init(options: { node?: HTMLElement | null; flags: Flags }): ElmApp;

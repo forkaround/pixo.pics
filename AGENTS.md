@@ -8,6 +8,7 @@ on Postgres (Neon), deployed to Vercel.
 | Path                | What                                                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                                                                     |
+| `client/Data/`      | Browser-only value types: `Dimension`, `Steps`, `Seed`, `Prompt` (see [Image pipeline](#image-pipeline))                                          |
 | `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                                                                 |
 | `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`                                                     |
 | `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                                                                 |
@@ -80,7 +81,8 @@ pull requests and on `main`; it needs no database.
 - **Value types live in `Data`**: one module per type, the type exposed
   without its constructor, made only by that module's `parse`, `fromString`
   or `decoder`. `shared/Data/` for a value that crosses the wire or sits in
-  a `Path`, `api/src/Data/` for one only the server holds. Import as
+  a `Path`, `api/src/Data/` for one only the server holds, `client/Data/` for
+  one only the browser holds. Import as
   `import Data.Email as Email exposing (Email)`. Drivers of outside services
   live in `api/src/Services/`, imported as `import Services.Neon as Neon`.
 - **Every route is handled**: `Api.Route` is matched without a wildcard, so a new route
@@ -376,7 +378,7 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
   `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
-  address: `/`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
+  address: `/`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, `/generate`, and
   `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
   same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
@@ -407,11 +409,87 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   words it. `main.ts` only converts base64url and buffers: the ceremony's options
   (`residentKey: "required"`, `attestation: "none"`) are its only constants.
 - Home: the Server card (one row per `Api.checks`, release and region in the
-  footer) and links to sign up and sign in, or to the dashboard. Every page: a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
+  footer) and links to sign up and sign in, or to the dashboard, and to `/generate`. Every page: a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
   `WriteToLocalStorage` port, read back from the flags).
+- `/generate` makes pictures in the browser and needs no session (see
+  [Image pipeline](#image-pipeline)).
 - No layout shift while loading: rows come from `Api.checkNames` with `UI.Skeleton`s,
   refreshes keep the last report, an empty footer keeps its height. Name checks only in
   `Api.namedChecks`.
+
+### Image pipeline
+
+`/generate` runs [bonsai-image-pipeline-lib](https://github.com/nishlumi/bonsai-image-pipeline-lib)
+(WebGPU, MIT), a dependency pinned to a commit in `package.json`: the model is downloaded
+from Hugging Face into the browser and runs there. The server takes no part.
+
+- `client/Pipeline.elm` decides everything: `Settings` (the `Weights`, whether to keep a
+  copy and whether to download again, the prompt, width, height, steps and seed), the
+  `Engine` (`Unchecked`, `Checking`, `Unsupported`, `Empty`, `Clearing`, `Loading`,
+  `Ready`, `Generating`, `Releasing`) and `update`, which returns the model and a
+  `Maybe Command`. It imports no `Html`: `client/PipelineView.elm` draws it.
+- `Main` keeps it in `model.pipeline`, not in the page, since the model stays in the
+  graphics card's memory across pages: `GotPipeline` wraps its `Msg`, `runPipeline` turns
+  a `Command` into `SendToJs (Interop.RunPipeline command)`, and opening `/generate`
+  calls `Pipeline.enter`, which asks once whether the browser has WebGPU.
+- The library runs in a web worker, `client/pipeline.worker.ts`, so downloading and
+  generating never block the page. Each `Command` is a `FromElm` variant (`CheckWebGpu`,
+  `LoadModel`, `GenerateImage`, `CancelPipeline`, `ReleaseModel`, `ClearModelCache`)
+  whose `data` is the library's own options: `main.ts` posts it to the worker as it is,
+  starting the worker on the first one, and the worker passes the options to the
+  library. What the library reports comes back the same way, as a `Pipeline.Event`
+  (`WebGpuChecked`, `ModelProgress`, `ModelLoaded`, `GenerationStep`, `ImageGenerated`,
+  `ModelReleased`, `ModelCacheCleared`, `PipelineFailed`).
+- The worker holds the pipeline object and one `AbortController`, and decides nothing: a
+  new option or rule goes in `Pipeline.elm`. Its constants are `progressInterval` (the
+  library reports progress some 300 times a second, and the worker sends on one report
+  every 100 ms, and the last of each part) and `largestBatch` (see the next point). Its
+  `switch` ends with the same `never` as the port handlers.
+- A worker frees the page's thread, not the graphics card, which also draws the page.
+  The library submits each pass without waiting for the card, some 350 passes a step, so
+  the browser's own frames queue behind them: measured in a Chromium browser on an Apple GPU,
+  stalls of 1.4 s, several per picture. So `pace` in the worker wraps the library's
+  `runtime.host.submit`, which every pass awaits: after a batch of passes it awaits
+  `onSubmittedWorkDone`, halving the batch when that took longer than `frameBudget` and
+  doubling it (up to `largestBatch`) when it took less than half. At 512 by 512 the
+  worst stall is then 16 ms, for 13% more time.
+- `frameBudget` comes from Elm with each `GenerateImage`, always `Pipeline.frameBudget`,
+  8 ms: there is no way to turn pacing off. The worker takes it out of the options
+  before they reach the library.
+- Pacing can't split one pass: at 1024 by 1024 single passes run up to 1.4 s, and the
+  page still stutters (stalls up to 250 ms), far less than without it. Only the library's
+  shaders could change that. `pace` reaches into the library (`runtime.host`), so check
+  it when the pinned commit moves: `client/bonsai.d.ts` types what it touches.
+- To measure a stall without a visible window, time a 1 by 1 WebGL `readPixels` on the
+  page while the worker generates: idle it takes under 1 ms. `requestAnimationFrame`
+  tells nothing here: it keeps its rhythm while nothing on the page changes.
+- The worker answers `ImageGenerated` with the PNG as a `Blob`, and `main.ts` makes the
+  object URL: one made in the worker would not outlive it. A worker that fails to start
+  comes back as `PipelineFailed`.
+- WebGPU is asked for inside the worker, so a browser that has it only on the page gets
+  the "can't make pictures" card.
+- An event is applied only in the state that waits for it, so one that arrives late
+  (after a cancel, or for work never started) changes nothing. A cancel waits for the
+  library to stop (`PipelineFailed` with the name `AbortError`, which shows no message):
+  the library runs one job at a time.
+- The values the library takes have types in `client/Data/`: a `Dimension` is 256 to 1024
+  in steps of 64 (the model needs multiples of 16), `Steps` 1 to 50, a `Seed` 0 to
+  4294967295 (the library reads it as 32 bits), a `Prompt` trimmed and never blank.
+  `guidanceScale` is always `Pipeline.guidance`, 1: the library takes nothing else.
+- `Weights` lists the models the browser can run, the `-mlx-` ones: `-gemlite-` ones are
+  for PyTorch and answer 404. `Pipeline.weightsSize` is what `Loading` adds up to, read
+  from a real download: change it with the list.
+- A random seed is drawn in Elm, from `model.random`, a `Random.Seed` started from the
+  `entropy` flag (`crypto.getRandomValues` in `main.ts`) and stepped on each picture: no
+  `Effect` for it, and a test fixes it through the flags.
+- "Download again" (`force`) turns itself off once a model has loaded. "Remove downloaded
+  models" (`clearCache`) is offered only with no model in memory, as the library needs.
+- A picture is that object URL, kept in `model.pipeline.pictures` with
+  the `Job` that made it, until the page is closed. Nothing is uploaded.
+- `client/bonsai.d.ts` types the library, which ships none: keep it to what the worker
+  calls. Vite builds the worker, library included, as its own file (`worker.format` is
+  `es` in `vite.config.ts`), fetched on the first `CheckWebGpu`. The worker imports
+  `Main.elm` for its types only: Elm never runs there.
 
 ### elmcn components
 
@@ -675,6 +753,10 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   `advanceTime` moves the clock that `Database` measures latency with.
 - A passing check of outgoing port values clears them: look at logs and responses in one
   `expectSent`, not one after the other.
+- `tests/PipelineTest.elm` runs `Pipeline.update` with no program, for the rules a user
+  can't reach from the page (an event out of turn, a slider off its grid);
+  `tests/MainTest.elm` covers the page, sending the library's events in through
+  `interopToElm`. No test runs the library or the worker: they need WebGPU and the model.
 - `api/tests/NeonTest.elm` needs no program: a `Neon.Request` is a record, so `.body` is
   what would be sent and `.onResponse` decodes an `Http.Response`.
 - `api/tests/BrevoMailerTest.elm` works the same way, on the `Http` effect the mailer's

@@ -1,4 +1,5 @@
 import { Elm, type Flags, type FromElm, type ToElm } from "./Main.elm";
+import type { Command, Reply } from "./pipeline.worker";
 
 type PasskeyOptions = Extract<FromElm, { tag: "CreatePasskey" }>["data"];
 type SignInOptions = Extract<FromElm, { tag: "GetPasskey" }>["data"];
@@ -95,10 +96,36 @@ const app = Elm.Main.init({
   flags: {
     theme: getStoredTheme(),
     systemDark: media.matches,
+    entropy: crypto.getRandomValues(new Uint32Array(1))[0] ?? 0,
   },
 });
 
-//-- PORTS:SEND
+const send = (msg: ToElm) => app.ports.interopToElm.send(msg);
+
+//-- IMAGE PIPELINE PORTS
+
+const worker = new Worker(new URL("./pipeline.worker.ts", import.meta.url), { type: "module" });
+const pipeline = (cmd: Command) => worker.postMessage(cmd);
+
+worker.addEventListener("error", (e) =>
+  send({
+    tag: "PipelineFailed",
+    name: "Error",
+    message: e.message || "Worker unable to start",
+  }),
+);
+
+worker.addEventListener("message", ({ data: msg }: MessageEvent<Reply>) => {
+  switch (msg.tag) {
+    case "ImageGenerated":
+      return send({ tag: "ImageGenerated", url: URL.createObjectURL(msg.picture) });
+
+    default:
+      return send(msg);
+  }
+});
+
+//-- THEME PORTS
 
 media.addEventListener("change", (event) =>
   app.ports.interopToElm.send({
@@ -107,7 +134,7 @@ media.addEventListener("change", (event) =>
   }),
 );
 
-//-- PORTS:SUBSCRIBE
+//-- SUBSCRIBE
 
 app.ports.interopFromElm.subscribe((msg) => {
   switch (msg.tag) {
@@ -123,6 +150,14 @@ app.ports.interopFromElm.subscribe((msg) => {
 
     case "GetPasskey":
       return void getPasskey(msg.data).then((result) => app.ports.interopToElm.send(result));
+
+    case "CheckWebGpu":
+    case "LoadModel":
+    case "GenerateImage":
+    case "CancelPipeline":
+    case "ReleaseModel":
+    case "ClearModelCache":
+      return void pipeline(msg);
 
     default:
       return msg satisfies never;

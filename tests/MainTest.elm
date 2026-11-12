@@ -13,7 +13,7 @@ import SimulatedEffect.Http
 import SimulatedEffect.Navigation
 import SimulatedEffect.Ports
 import Test exposing (Test, describe, test)
-import Test.Html.Selector exposing (attribute, class, text)
+import Test.Html.Selector exposing (attribute, class, tag, text)
 import Test.Http
 import TsJson.Decode as TsDecode
 import TsJson.Encode as TsEncode
@@ -493,11 +493,11 @@ suite =
         , describe "Theme"
             [ test "follows the system when none is stored" <|
                 \() ->
-                    start { defaultFlags | systemDark = True }
+                    start { defaultFlags | systemDark = True, entropy = 42 }
                         |> ProgramTest.expectViewHas [ class "dark" ]
             , test "prefers the stored theme to the system's" <|
                 \() ->
-                    start { theme = Just "light", systemDark = True }
+                    start { theme = Just "light", systemDark = True, entropy = 42 }
                         |> ProgramTest.expectViewHasNot [ class "dark" ]
             , test "follows the system when it changes" <|
                 \() ->
@@ -519,18 +519,194 @@ suite =
                             localStorageWrite
                             (Expect.equal [ { tag = "WriteToLocalStorage", key = "theme", value = "dark" } ])
             ]
+        , describe "Generate"
+            [ test "asks the browser whether it can run the model" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu" ])
+            , test "says so when the browser has no WebGPU" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
+                        |> ProgramTest.expectViewHas [ text "This browser can't make pictures" ]
+            , test "loads the chosen weights with the cache options" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.selectOption "weights" "Weights" "prism-ml/bonsai-image-binary-4B-mlx-1bit" "Bonsai binary, 1-bit"
+                        |> ProgramTest.check "keep" "Keep a copy in this browser" False
+                        |> ProgramTest.check "fresh" "Download again" True
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            modelLoad
+                            (Expect.equal
+                                [ Nothing
+                                , Just
+                                    { model = "prism-ml/bonsai-image-binary-4B-mlx-1bit"
+                                    , cache = False
+                                    , force = True
+                                    }
+                                ]
+                            )
+            , test "shows how far each part of the model is" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "transformer" 712635736 1425271472 False)
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "vae" 168120878 168120878 True)
+                        |> ProgramTest.ensureViewHas [ text "713 of 1425 MB" ]
+                        |> ProgramTest.ensureViewHas [ text "168 of 168 MB, from this browser" ]
+                        |> ProgramTest.expectViewHas [ text "Waiting" ]
+            , test "says why the model did not load" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "HTTP 404 for model_index.json")
+                        |> ProgramTest.ensureViewHas [ text "HTTP 404 for model_index.json" ]
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.expectViewHasNot [ text "HTTP 404 for model_index.json" ]
+            , test "stops loading when asked, without a complaint" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.clickButton "Cancel"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "LoadModel", "CancelPipeline" ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "AbortError" "The operation was aborted.")
+                        |> ProgramTest.expectViewHasNot [ text "The operation was aborted." ]
+            , test "makes a picture from the prompt, the size, the steps and the seed" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.ensureViewHas [ text "Bonsai ternary, 2-bit is in memory." ]
+                        |> ProgramTest.fillIn "prompt" "Prompt" "  a bonsai on a mountain "
+                        |> ProgramTest.check "random-seed" "Random seed" False
+                        |> ProgramTest.fillIn "seed" "Seed" "7"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            generation
+                            (Expect.equal
+                                [ Nothing
+                                , Nothing
+                                , Just
+                                    { prompt = "a bonsai on a mountain"
+                                    , width = 512
+                                    , height = 512
+                                    , numInferenceSteps = 4
+                                    , seed = 7
+                                    , guidanceScale = 1
+                                    , frameBudget = 8
+                                    }
+                                ]
+                            )
+                        |> ProgramTest.ensureViewHas [ text "Step 1 of 4" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 0)
+                        |> ProgramTest.ensureViewHas [ text "Step 2 of 4" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 3)
+                        |> ProgramTest.ensureViewHas [ text "Finishing the picture…" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.ensureViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
+                        |> ProgramTest.expectViewHas [ text "512 × 512 · 4 steps · seed 7" ]
+            , test "draws a new seed for each picture when the seed is random" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap (Maybe.map .seed)
+                                >> (\seeds ->
+                                        case seeds of
+                                            [ first, second ] ->
+                                                Expect.notEqual first second
+
+                                            _ ->
+                                                Expect.fail "Expected two pictures."
+                                   )
+                            )
+            , test "asks for a prompt before it starts" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureViewHas [ text "Describe the picture first." ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "LoadModel" ])
+            , test "stops a picture when asked, and is ready for the next" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.clickButton "Cancel"
+                        |> ProgramTest.ensureViewHas [ text "Stopping…" ]
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "LoadModel", "GenerateImage", "CancelPipeline" ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "AbortError" "The operation was aborted.")
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "GenerateImage" ])
+            , test "keeps the model in memory across pages, and checks the browser only once" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.clickLink "Home" "/"
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.clickLink "Make a picture" "/generate"
+                        |> ProgramTest.ensureViewHas [ text "Bonsai ternary, 2-bit is in memory." ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "LoadModel" ])
+            , test "releases the model, then removes the downloaded copies" <|
+                \() ->
+                    startAt "/generate" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Load model"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.clickButton "Release from memory"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelReleased")
+                        |> ProgramTest.clickButton "Remove downloaded models"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "LoadModel", "ReleaseModel", "ClearModelCache" ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelCacheCleared")
+                        |> ProgramTest.expectViewHas [ text "The downloaded models are gone from this browser." ]
+            ]
         ]
 
 
 type alias Flags =
     { theme : Maybe String
     , systemDark : Bool
+    , entropy : Int
     }
 
 
 defaultFlags : Flags
 defaultFlags =
-    { theme = Nothing, systemDark = False }
+    { theme = Nothing, systemDark = False, entropy = 42 }
 
 
 start : Flags -> ProgramTest Main.Model Main.Msg Main.Effect
@@ -554,6 +730,7 @@ startAt path flags =
             (Encode.object
                 [ ( "theme", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.theme) )
                 , ( "systemDark", Encode.bool flags.systemDark )
+                , ( "entropy", Encode.int flags.entropy )
                 ]
             )
 
@@ -650,6 +827,117 @@ passkeyRequest =
         )
         (Decode.at [ "data", "algorithms" ] (Decode.list Decode.int))
         (Decode.at [ "data", "excludeCredentials" ] (Decode.list Decode.string))
+
+
+type alias ModelLoad =
+    { model : String
+    , cache : Bool
+    , force : Bool
+    }
+
+
+modelLoad : Decode.Decoder (Maybe ModelLoad)
+modelLoad =
+    Decode.field "tag" Decode.string
+        |> Decode.andThen
+            (\name ->
+                if name == "LoadModel" then
+                    Decode.map Just
+                        (Decode.field "data"
+                            (Decode.map3 ModelLoad
+                                (Decode.field "model" Decode.string)
+                                (Decode.field "cache" Decode.bool)
+                                (Decode.field "force" Decode.bool)
+                            )
+                        )
+
+                else
+                    Decode.succeed Nothing
+            )
+
+
+type alias Generation =
+    { prompt : String
+    , width : Int
+    , height : Int
+    , numInferenceSteps : Int
+    , seed : Int
+    , guidanceScale : Float
+    , frameBudget : Int
+    }
+
+
+generation : Decode.Decoder (Maybe Generation)
+generation =
+    Decode.field "tag" Decode.string
+        |> Decode.andThen
+            (\name ->
+                if name == "GenerateImage" then
+                    Decode.map Just
+                        (Decode.field "data"
+                            (Decode.map7 Generation
+                                (Decode.field "prompt" Decode.string)
+                                (Decode.field "width" Decode.int)
+                                (Decode.field "height" Decode.int)
+                                (Decode.field "numInferenceSteps" Decode.int)
+                                (Decode.field "seed" Decode.int)
+                                (Decode.field "guidanceScale" Decode.float)
+                                (Decode.field "frameBudget" Decode.int)
+                            )
+                        )
+
+                else
+                    Decode.succeed Nothing
+            )
+
+
+tagged : String -> Encode.Value
+tagged name =
+    Encode.object [ ( "tag", Encode.string name ) ]
+
+
+webGpuChecked : Bool -> Encode.Value
+webGpuChecked supported =
+    Encode.object
+        [ ( "tag", Encode.string "WebGpuChecked" )
+        , ( "supported", Encode.bool supported )
+        ]
+
+
+modelProgress : String -> Int -> Int -> Bool -> Encode.Value
+modelProgress component loaded total fromCache =
+    Encode.object
+        [ ( "tag", Encode.string "ModelProgress" )
+        , ( "component", Encode.string component )
+        , ( "loaded", Encode.int loaded )
+        , ( "total", Encode.int total )
+        , ( "fromCache", Encode.bool fromCache )
+        ]
+
+
+generationStep : Int -> Encode.Value
+generationStep step =
+    Encode.object
+        [ ( "tag", Encode.string "GenerationStep" )
+        , ( "step", Encode.int step )
+        ]
+
+
+imageGenerated : String -> Encode.Value
+imageGenerated url =
+    Encode.object
+        [ ( "tag", Encode.string "ImageGenerated" )
+        , ( "url", Encode.string url )
+        ]
+
+
+pipelineFailed : String -> String -> Encode.Value
+pipelineFailed name message =
+    Encode.object
+        [ ( "tag", Encode.string "PipelineFailed" )
+        , ( "name", Encode.string name )
+        , ( "message", Encode.string message )
+        ]
 
 
 passkeyCreated : Encode.Value
