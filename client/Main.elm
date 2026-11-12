@@ -941,9 +941,10 @@ viewShell model page =
                 [ href (Path.toString Path.Explore)
                 , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
                 ]
-                [ span [ class "flex h-4 shrink-0 overflow-hidden md:group-data-[collapsible=icon]:w-4" ]
+                [ Html.node "pixo-logo"
+                    [ class "flex h-4 w-[calc(1rem*150/42.5)] shrink-0 transition-[width] duration-200 ease-linear motion-reduce:transition-none md:group-data-[collapsible=icon]:w-4" ]
                     [ Logo.wordmark
-                        [ Svg.Attributes.class "h-4 w-auto max-w-none shrink-0 transition-[translate] duration-200 ease-linear md:group-data-[collapsible=icon]:-translate-x-[1.612rem]" ]
+                        [ Svg.Attributes.class "h-4 w-auto max-w-none shrink-0" ]
                     ]
                 , span [ class "sr-only" ] [ text "pixo" ]
                 ]
