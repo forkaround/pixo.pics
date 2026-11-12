@@ -58,6 +58,7 @@ import Html.Attributes exposing (attribute, class, property, tabindex, type_)
 import Html.Events
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
+import Phosphor exposing (IconWeight(..))
 import UI.Button as Button
 import UI.Skeleton as Skeleton
 
@@ -240,7 +241,7 @@ toHtml attrs (Sidebar config) =
                 ++ Maybe.withDefault "16rem" config.width
                 ++ "; --sidebar-width-mobile: "
                 ++ Maybe.withDefault "18rem" config.mobileWidth
-                ++ "; --sidebar-width-icon: 3rem"
+                ++ "; --sidebar-width-icon: 3.5rem"
             )
          , class "group/sidebar-wrapper flex min-h-svh w-full overflow-x-clip"
          , class
@@ -327,7 +328,7 @@ viewSidebar config =
                     Nothing
 
                   else
-                    Just (Html.div [ attribute "data-slot" "sidebar-header", attribute "data-sidebar" "header", class "flex flex-col gap-2 p-2" ] config.header)
+                    Just (Html.div [ attribute "data-slot" "sidebar-header", attribute "data-sidebar" "header", class "flex flex-col gap-2 px-3 py-2" ] config.header)
                 , Just
                     (Html.div
                         [ attribute "data-slot" "sidebar-content"
@@ -340,7 +341,7 @@ viewSidebar config =
                     Nothing
 
                   else
-                    Just (Html.div [ attribute "data-slot" "sidebar-footer", attribute "data-sidebar" "footer", class "flex flex-col gap-2 p-2" ] config.footer)
+                    Just (Html.div [ attribute "data-slot" "sidebar-footer", attribute "data-sidebar" "footer", class "flex flex-col gap-2 p-3" ] config.footer)
                 ]
     in
     case config.collapsible of
@@ -653,13 +654,7 @@ collapsibleName collapsible_ =
 trigger : List (Attribute msg) -> State -> (State -> msg) -> Html msg
 trigger attrs current onChange =
     Button.new
-        |> Button.icon
-            (Html.span
-                [ attribute "aria-hidden" "true"
-                , class "relative flex size-4 shrink-0 rounded-[3px] border-[1.33px] border-current"
-                ]
-                [ Html.span [ class "absolute inset-y-0 start-[3.33px] w-[1.33px] bg-current" ] [] ]
-            )
+        |> Button.icon (Phosphor.sidebarSimple Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
         |> Button.label "Toggle Sidebar"
         |> Button.ghost
         |> Button.small
@@ -681,7 +676,7 @@ group attrs children =
     Html.div
         ([ attribute "data-slot" "sidebar-group"
          , attribute "data-sidebar" "group"
-         , class "relative flex w-full min-w-0 flex-col p-2"
+         , class "relative flex w-full min-w-0 flex-col px-3 py-2"
          ]
             ++ attrs
         )
@@ -788,7 +783,7 @@ menuButtonAttributes =
     , attribute "data-sidebar" "menu-button"
     , attribute "data-size" "default"
     , attribute "data-variant" "default"
-    , class "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-start text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&:has(+:popover-open)]:bg-sidebar-accent [&:has(+:popover-open)]:text-sidebar-accent-foreground group-has-data-[sidebar=menu-action]/menu-item:pe-8 md:group-data-[collapsible=icon]:size-8! md:group-data-[collapsible=icon]:p-2! [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate"
+    , class "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-lg p-2 text-start text-sm font-medium text-muted-foreground ring-sidebar-ring outline-hidden transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&:has(+:popover-open)]:bg-sidebar-accent [&:has(+:popover-open)]:text-sidebar-accent-foreground group-has-data-[sidebar=menu-action]/menu-item:pe-8 md:group-data-[collapsible=icon]:size-8! md:group-data-[collapsible=icon]:p-2! [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate"
     , class "data-[size=default]:h-8 data-[size=default]:text-sm data-[size=sm]:h-7 data-[size=sm]:text-xs data-[size=lg]:h-12 data-[size=lg]:text-sm md:group-data-[collapsible=icon]:data-[size=lg]:p-0!"
     , class "data-[variant=outline]:bg-background data-[variant=outline]:shadow-[0_0_0_1px_var(--sidebar-border)] data-[variant=outline]:hover:shadow-[0_0_0_1px_var(--sidebar-accent)]"
     , class tooltipClass

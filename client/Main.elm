@@ -16,11 +16,13 @@ import InteropPorts
 import Json.Decode as Decode
 import Library
 import LibraryView
+import Logo
 import ModelsView
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
 import StudioView
+import Svg.Attributes
 import UI.Button as Button
 import UI.Card as Card
 import UI.Field as Field
@@ -849,24 +851,25 @@ viewShell model page =
     Sidebar.new
         |> Sidebar.state model.sidebar SidebarChanged
         |> Sidebar.collapsesToIcons
-        |> Sidebar.width "13rem"
+        |> Sidebar.width "15rem"
         |> Sidebar.header
-            [ Sidebar.menu []
-                [ Sidebar.menuItem []
-                    [ Sidebar.menuLink [ href (Path.toString Path.Studio), Sidebar.large ]
-                        [ span [ class "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground" ]
-                            [ Phosphor.sparkle Fill |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
-                        , span [ class "text-base font-semibold" ] [ text "pixo" ]
-                        ]
+            [ a
+                [ href (Path.toString Path.Studio)
+                , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
+                ]
+                [ span [ class "flex h-4 shrink-0 overflow-hidden md:group-data-[collapsible=icon]:w-4" ]
+                    [ Logo.wordmark
+                        [ Svg.Attributes.class "h-4 w-auto max-w-none shrink-0 transition-[translate] duration-200 ease-linear md:group-data-[collapsible=icon]:-translate-x-[1.612rem]" ]
                     ]
+                , span [ class "sr-only" ] [ text "pixo" ]
                 ]
             ]
         |> Sidebar.content
             [ Sidebar.group []
                 [ Sidebar.menu []
-                    [ viewDestination (model.page == Studio) Path.Studio Phosphor.paintBrush "Studio"
-                    , viewDestination (model.page == Library) Path.Library Phosphor.images "Library"
-                    , viewDestination (isSettings model.page) Path.Models Phosphor.gear "Settings"
+                    [ viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
+                    , viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
+                    , viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings"
                     ]
                 ]
             ]
@@ -902,7 +905,7 @@ viewDestination current path icon label =
                         []
                    )
             )
-            [ icon Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            [ icon Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
             , span [] [ text label ]
             ]
         ]
@@ -943,8 +946,8 @@ viewAside wide model heading children =
 
 viewBar : List (Html.Attribute Msg) -> Model -> String -> List (Html Msg) -> Html Msg
 viewBar attrs model heading children =
-    Html.header (class "flex h-12 shrink-0 items-center gap-2 border-b px-3" :: attrs)
-        (Sidebar.trigger [ class "-ms-1" ] model.sidebar SidebarChanged
+    Html.header (class "flex h-12 shrink-0 items-center gap-3 border-b px-4" :: attrs)
+        (Sidebar.trigger [ class "-ms-1 text-muted-foreground" ] model.sidebar SidebarChanged
             :: Html.h1 [ class "text-sm font-medium" ] [ text heading ]
             :: children
         )

@@ -95,7 +95,8 @@ pull requests and on `main`; it needs no database.
   object, not a union, and TypeScript narrows only `msg.tag`. Switch forms when the count
   crosses one.
 - **UI**: use the elmcn registry component instead of writing one; Phosphor
-  (`phosphor-icons/phosphor-elm`, `Regular`) instead of hand-written SVG; `sr-only` text
+  (`phosphor-icons/phosphor-elm`, `Regular`, and `Bold` in the sidebars' menus and
+  their trigger, where a 1 px line looks thin beside medium text) instead of hand-written SVG; `sr-only` text
   on icon-only controls.
 - **Elm steps in `build` run one at a time**: keep `build` as
   `bun run --sequential types:* check build:*`, never `types` (which runs both
@@ -366,7 +367,9 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
 ## Browser app
 
 - `client/Main.elm`, started by `client/main.ts`. `client/main.css` is the only
-  stylesheet, linked from `index.html`: don't import CSS from TypeScript.
+  stylesheet, linked from `index.html`: don't import CSS from TypeScript. The font is
+  Inter, served with the app: `main.css` imports `@fontsource-variable/inter` and names
+  it in `--font-sans`, so no page asks another site for it.
 - `init` and `update` return a `Main.Effect`, never a `Cmd`: `perform` turns it into one
   in `main`, and the tests simulate it (see [Tests](#tests)).
 - Calls the server only through `ApiClient.request` with an `Api.Endpoint`, wrapped in the
@@ -413,7 +416,24 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   that collapses to its icons (a sheet below `md`, closed by `open` once a page is
   picked; its `State` is `model.sidebar`) with Studio, Library and Settings, and in its
   footer what fits the session (sign-in and sign-up, the dashboard, or "Try again") and
-  the theme toggle. The page beside it is an optional second sidebar (`viewAside`: the
+  the theme toggle. Its header is the logo, `Logo.wordmark` (`client/Logo.elm`), the one
+  SVG drawn by hand, stroked in `currentColor` so it takes the text's color. Its paths
+  run along the middle of a 5-unit stroke and the view box leaves room for it: change
+  the stroke and both change. A class goes on it with `Svg.Attributes.class`. It is as
+  tall as a menu icon, in a row as tall as a menu item, so the menu under it stays put
+  when the sidebar opens or closes. A sidebar down to its icons shows only its X: the
+  wrapper clips to one icon's width (`w-4`) and the wordmark slides left by 1.612rem,
+  which puts the X in the middle of it. That is the X's middle in the view box, 89.75
+  of 150 units from the left, at 1rem for 42.5 units, less half an icon: a new height
+  or a new glyph means a new number. `public/favicon.svg` is the same X, white on a
+  dark tile so it shows on a light tab and on a dark one: its path is copied from
+  `Logo.elm`, so a change to the X goes in both.
+- The sidebars' look is in `UI.Sidebar` itself, changed from the registry's: menu items
+  are medium and muted until hovered or current, with `rounded-lg` pills; the header,
+  groups and footer keep 12 px from the edges; and a sidebar down to its icons is
+  3.5rem wide, so that padding holds and an icon stays where it was. The trigger is
+  Phosphor's `sidebarSimple`, `Bold` like the menus' icons. Adding the component again
+  from the registry would undo this: merge by hand. The page beside it is an optional second sidebar (`viewAside`: the
   studio's controls, the settings' sections) and the content. The other pages stay a
   centred column of cards, with the theme toggle under them.
 - The theme toggle is `UI.Tabs` without panels, saved to `localStorage` via the
