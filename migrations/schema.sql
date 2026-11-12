@@ -225,6 +225,30 @@ $$;
 
 
 --
+-- Name: delete_account(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.delete_account(p_token text) RETURNS boolean
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH deleted AS (
+    DELETE FROM users
+    WHERE id = (
+      SELECT user_id FROM sessions
+      WHERE token_hash = sha256(convert_to(p_token, 'UTF8'))
+        AND expires_at > now()
+    )
+    RETURNING email
+  ), links AS (
+    DELETE FROM magic_links
+    WHERE email IN (SELECT email FROM deleted)
+  )
+  SELECT EXISTS (SELECT 1 FROM deleted);
+$$;
+
+
+--
 -- Name: delete_expired(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -816,6 +840,14 @@ GRANT ALL ON FUNCTION public.create_sign_in_link(p_email text, p_ttl_seconds int
 
 REVOKE ALL ON FUNCTION public.create_sign_up_link(p_email text, p_username text, p_ttl_seconds integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.create_sign_up_link(p_email text, p_username text, p_ttl_seconds integer) TO api;
+
+
+--
+-- Name: FUNCTION delete_account(p_token text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.delete_account(p_token text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.delete_account(p_token text) TO api;
 
 
 --
