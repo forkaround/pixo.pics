@@ -320,13 +320,13 @@ happened event model =
             )
 
         Copied ->
-            ( { model | notice = Just (Info "The picture is copied. Paste it into your post.") }, [] )
+            ( { model | notice = Just (Info "Picture copied.") }, [] )
 
         ShareFailed "AbortError" ->
             ( model, [] )
 
         ShareFailed _ ->
-            ( { model | notice = Just (Problem "This browser couldn't hand the picture over. Download it instead.") }, [] )
+            ( { model | notice = Just (Problem "Couldn't share the picture. Download it instead.") }, [] )
 
 
 shelve : List Picture -> Model -> Model

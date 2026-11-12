@@ -1,4 +1,4 @@
-module StudioView exposing (canvas, controls, downloads, message)
+module StudioView exposing (canvas, controls, loading, message)
 
 import Data.Dimension as Dimension exposing (Dimension)
 import Data.Prompt as Prompt
@@ -94,31 +94,15 @@ controls model =
 
 viewWeights : Model -> Html Msg
 viewWeights model =
-    let
-        chosen =
-            model.settings.weights
-    in
     Field.view []
         [ Field.label [ for "weights" ] [ text "Model" ]
         , Select.new
             |> Select.id "weights"
             |> Select.onSelect WeightsChosen
-            |> Select.value (Just chosen)
+            |> Select.value (Just model.settings.weights)
             |> Select.items (List.map (\known -> Select.item known [ text (Pipeline.weightsName known) ]) Pipeline.weights)
             |> Select.toHtml [ class "w-full" ]
-        , Field.description []
-            [ text
-                (if Pipeline.inMemory model.engine == Just chosen then
-                    "In memory, ready to make pictures. "
-
-                 else if Pipeline.isDownloaded chosen model then
-                    "Downloaded: it loads from this browser. "
-
-                 else
-                    "A download of about " ++ Pipeline.weightsSize chosen ++ ", from Hugging Face, the first time. "
-                )
-            , Html.a [ href (Path.toString Path.Models) ] [ text "Manage models" ]
-            ]
+        , Field.description [] [ Html.a [ href (Path.toString Path.Models) ] [ text "Manage models" ] ]
         ]
 
 
@@ -126,8 +110,14 @@ viewPresets : Pipeline.Settings -> Html Msg
 viewPresets settings =
     Field.view []
         [ Field.title [] [ text "Size" ]
-        , div [ class "grid grid-cols-2 gap-2", attribute "role" "group", attribute "aria-label" "Size" ]
-            (List.map (viewPreset settings) Pipeline.presets)
+        , div []
+            [ div
+                [ class "-mx-4 flex snap-x scroll-px-4 gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                , attribute "role" "group"
+                , attribute "aria-label" "Size"
+                ]
+                (List.map (viewPreset settings) Pipeline.presets)
+            ]
         ]
 
 
@@ -154,7 +144,7 @@ viewPreset settings preset =
              else
                 "false"
             )
-        , class "flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5 text-start text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-pressed:border-primary aria-pressed:bg-accent aria-pressed:text-accent-foreground dark:bg-input/30"
+        , class "flex shrink-0 snap-start items-center gap-2 rounded-md border border-border bg-muted px-2 py-1.5 text-start text-xs whitespace-nowrap outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset aria-pressed:border-ring aria-pressed:bg-background aria-pressed:hover:bg-background dark:bg-input/30 dark:hover:bg-input/50 dark:aria-pressed:bg-input dark:aria-pressed:hover:bg-input"
         ]
         [ span [ class "flex size-5 shrink-0 items-center justify-center", attribute "aria-hidden" "true" ]
             [ span
@@ -164,9 +154,9 @@ viewPreset settings preset =
                 ]
                 []
             ]
-        , span [ class "flex min-w-0 flex-col leading-tight" ]
-            [ span [ class "truncate font-medium" ] [ text preset.name ]
-            , span [ class "text-xs text-muted-foreground tabular-nums" ] [ text preset.ratio ]
+        , span [ class "flex flex-col leading-tight" ]
+            [ span [ class "font-medium" ] [ text preset.name ]
+            , span [ class "text-[0.6875rem] text-muted-foreground tabular-nums" ] [ text preset.ratio ]
             ]
         ]
 
@@ -211,7 +201,7 @@ viewSeed seeding =
                     , value seed
                     , onInput SeedChanged
                     ]
-                , Field.description [] [ text "The same seed and prompt make the same picture." ]
+                , Field.description [] [ text "Same seed, same picture." ]
                 ]
             ]
 
@@ -226,24 +216,8 @@ viewGenerate model =
             viewStart model
 
         Loading chosen parts _ ->
-            let
-                loading =
-                    Pipeline.current parts
-            in
             div [ class "flex flex-col gap-4" ]
-                [ Progress.new (Maybe.withDefault 0 (Maybe.map percentage loading))
-                    |> Progress.label
-                        [ text
-                            (case loading of
-                                Just part ->
-                                    "Loading the " ++ String.toLower (componentName part.component)
-
-                                Nothing ->
-                                    "Loading " ++ Pipeline.weightsName chosen ++ "…"
-                            )
-                        ]
-                    |> Progress.formatValue (\part -> String.fromInt (floor part) ++ "%")
-                    |> Progress.toHtml []
+                [ loading chosen parts
                 , Button.new
                     |> Button.text "Cancel"
                     |> Button.outline
@@ -275,13 +249,13 @@ viewGenerate model =
             viewWaiting "This browser can't make pictures."
 
         Releasing (Just _) ->
-            viewWaiting "Making room for the model…"
+            viewWaiting "Switching models…"
 
         Releasing Nothing ->
-            viewWaiting "Releasing the model…"
+            viewWaiting "Releasing…"
 
         Clearing ->
-            viewWaiting "Removing the downloaded models…"
+            viewWaiting "Removing…"
 
         Unchecked ->
             viewWaiting ""
@@ -320,7 +294,7 @@ stepLabel done steps =
         "Step " ++ String.fromInt (done + 1) ++ " of " ++ String.fromInt steps
 
     else
-        "Finishing the picture…"
+        "Finishing…"
 
 
 message : Maybe Message -> Html msg
@@ -336,20 +310,25 @@ message shown =
             text ""
 
 
-downloads : List Pipeline.Download -> List (Html msg)
-downloads parts =
-    List.map
-        (\component ->
-            let
-                found =
-                    Pipeline.download component parts
-            in
-            Progress.new (Maybe.withDefault 0 (Maybe.map percentage found))
-                |> Progress.label [ text (componentName component) ]
-                |> Progress.formatValue (\_ -> Maybe.withDefault "Waiting" (Maybe.map amount found))
-                |> Progress.toHtml []
-        )
-        Pipeline.components
+loading : Pipeline.Weights -> List Pipeline.Download -> Html msg
+loading chosen parts =
+    let
+        part =
+            Pipeline.current parts
+    in
+    Progress.new (Maybe.withDefault 0 (Maybe.map percentage part))
+        |> Progress.label
+            [ text
+                (case part of
+                    Just found ->
+                        "Loading the " ++ String.toLower (componentName found.component)
+
+                    Nothing ->
+                        "Loading " ++ Pipeline.weightsName chosen ++ "…"
+                )
+            ]
+        |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
+        |> Progress.toHtml []
 
 
 percentage : Pipeline.Download -> Float
@@ -359,25 +338,6 @@ percentage { loaded, total } =
 
     else
         0
-
-
-amount : Pipeline.Download -> String
-amount { loaded, total, cached } =
-    megabytes loaded
-        ++ " of "
-        ++ megabytes total
-        ++ " MB"
-        ++ (if cached then
-                ", from this browser"
-
-            else
-                ""
-           )
-
-
-megabytes : Int -> String
-megabytes bytes =
-    String.fromInt (round (toFloat bytes / 1000000))
 
 
 componentName : Component -> String
@@ -410,7 +370,7 @@ canvas toMsg library model =
                     |> Empty.icon (Phosphor.warning Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Empty.title [ text "This browser can't make pictures" ]
                     |> Empty.description
-                        [ text "The model runs on your own graphics card, through WebGPU. Try a recent Chrome, Edge or Safari." ]
+                        [ text "It needs WebGPU. Try a recent Chrome, Edge or Safari." ]
                     |> Empty.toHtml []
                 ]
 
@@ -422,7 +382,7 @@ canvas toMsg library model =
                     |> Empty.icon (Phosphor.paintBrush Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Empty.title [ text "Nothing here yet" ]
                     |> Empty.description
-                        [ text "Describe a picture, pick its size and press Generate. It is made in this browser, and stays here until you save it to the library." ]
+                        [ text "Describe a picture and press Generate. Save the ones you want to keep." ]
                     |> Empty.toHtml []
                 ]
 
@@ -540,7 +500,7 @@ viewSave onSave save =
     case save of
         Library.Unsaved ->
             Button.new
-                |> Button.text "Save to library"
+                |> Button.text "Save"
                 |> Button.small
                 |> Button.startIcon (Phosphor.bookmarkSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                 |> Button.toHtml [ onClick onSave, solid ]
@@ -553,7 +513,7 @@ viewSave onSave save =
 
         Library.Saved ->
             Button.new
-                |> Button.text "In the library"
+                |> Button.text "Saved"
                 |> Button.small
                 |> Button.startIcon (Phosphor.check Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                 |> Button.toAnchor [ href (Path.toString Path.Library), glass ]

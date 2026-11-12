@@ -81,7 +81,7 @@ suite =
                             (.body >> Expect.equal """{"email":"ada@example.com","username":"ada"}""")
                         |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signup" (response 202 "{}")
                         |> ProgramTest.ensureViewHas [ text "Check your inbox" ]
-                        |> ProgramTest.expectViewHas [ text "We sent a link to ada@example.com. It works once and expires in 15 minutes." ]
+                        |> ProgramTest.expectViewHas [ text "We sent a link to ada@example.com. It expires in 15 minutes." ]
             , test "shows why the server refused, and keeps what was typed" <|
                 \() ->
                     startAt "/auth/signup" defaultFlags
@@ -109,7 +109,7 @@ suite =
                             (.body >> Expect.equal """{"email":"ada@example.com"}""")
                         |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin" (response 202 "{}")
                         |> ProgramTest.expectViewHas
-                            [ text "If ada@example.com has an account, we sent it a link. It works once and expires in 15 minutes." ]
+                            [ text "If ada@example.com has an account, we sent it a link. It expires in 15 minutes." ]
             , test "shows why the server refused" <|
                 \() ->
                     startAt "/auth/signin" defaultFlags
@@ -152,7 +152,7 @@ suite =
                             "/api/auth/signin/passkey/options"
                             """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
                         |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
-                        |> ProgramTest.ensureViewHas [ text "No passkey was used. Try again when you're ready." ]
+                        |> ProgramTest.ensureViewHas [ text "No passkey was used." ]
                         |> ProgramTest.expectViewHas [ text "Sign in with a passkey" ]
             , test "shows why the server refused the passkey" <|
                 \() ->
@@ -341,7 +341,7 @@ suite =
                         |> ProgramTest.clickButton "Add a passkey"
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
                         |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
-                        |> ProgramTest.ensureViewHas [ text "The passkey was not created. Try again when you're ready." ]
+                        |> ProgramTest.ensureViewHas [ text "The passkey was not created." ]
                         |> ProgramTest.expectHttpRequests "POST" "/api/auth/passkeys" (List.length >> Expect.equal 0)
             , test "says so when the device already has one" <|
                 \() ->
@@ -427,7 +427,7 @@ suite =
                         |> ProgramTest.clickButton "Create a passkey"
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
                         |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
-                        |> ProgramTest.ensureViewHas [ text "The passkey was not created. Try again when you're ready." ]
+                        |> ProgramTest.ensureViewHas [ text "The passkey was not created." ]
                         |> ProgramTest.clickButton "Create a passkey"
                         |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/passkeys/options"
             , test "signs in to an account the email has, straight to the dashboard" <|
@@ -611,11 +611,10 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 0)
                         |> ProgramTest.ensureViewHas [ text "Step 2 of 4" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 3)
-                        |> ProgramTest.ensureViewHas [ text "Finishing the picture…" ]
+                        |> ProgramTest.ensureViewHas [ text "Finishing…" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
                         |> ProgramTest.ensureViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
-                        |> ProgramTest.ensureViewHas [ text "512 × 512 · 4 steps · seed 7" ]
-                        |> ProgramTest.expectViewHas [ text "In memory, ready to make pictures." ]
+                        |> ProgramTest.expectViewHas [ text "512 × 512 · 4 steps · seed 7" ]
             , test "remembers the model it downloaded" <|
                 \() ->
                     start defaultFlags
@@ -640,7 +639,7 @@ suite =
                 \() ->
                     start { defaultFlags | models = Just """["prism-ml/bonsai-image-binary-4B-mlx-1bit"]""" }
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-                        |> ProgramTest.ensureViewHas [ text "Downloaded: it loads from this browser." ]
+                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
@@ -741,7 +740,7 @@ suite =
                         |> ProgramTest.clickLink "Settings" "/settings/models"
                         |> ProgramTest.ensureViewHas [ text "In memory" ]
                         |> ProgramTest.clickLink "Studio" "/"
-                        |> ProgramTest.ensureViewHas [ text "In memory, ready to make pictures." ]
+                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [])
@@ -753,7 +752,7 @@ suite =
                         |> ProgramTest.fillIn "seed" "Seed" "7"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
-                        |> ProgramTest.clickButton "Save to library"
+                        |> ProgramTest.clickButton "Save"
                         |> ProgramTest.ensureViewHas [ text "Saving…" ]
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.maybe pictureSave)
@@ -771,7 +770,7 @@ suite =
                             )
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (pictureSaved "blob:https://pixo.pics/1" (stored 1 "blob:https://pixo.pics/2" "a bonsai" 512 512))
-                        |> ProgramTest.clickLink "In the library" "/library"
+                        |> ProgramTest.clickLink "Saved" "/library"
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "LoadLibrary" ])
@@ -797,17 +796,19 @@ suite =
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
-                        |> ProgramTest.clickButton "Save to library"
+                        |> ProgramTest.clickButton "Save"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryFailed "The quota has been exceeded.")
-                        |> ProgramTest.expectViewHas [ text "Save to library" ]
+                        |> ProgramTest.ensureViewHasNot [ text "Saving…" ]
+                        |> ProgramTest.clickButton "Save"
+                        |> ProgramTest.expectViewHas [ text "Saving…" ]
             ]
         , describe "Models"
             [ test "lists every model with what a download takes" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-                        |> ProgramTest.ensureViewHas [ text "A download of about 3.4 GB, from Hugging Face." ]
-                        |> ProgramTest.expectViewHas [ text "A download of about 2.9 GB, from Hugging Face." ]
+                        |> ProgramTest.ensureViewHas [ text "3.4 GB download" ]
+                        |> ProgramTest.expectViewHas [ text "2.9 GB download" ]
             , test "downloads the one that is asked for, and keeps a copy" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
@@ -824,16 +825,17 @@ suite =
                                     }
                                 ]
                             )
-            , test "shows how far each part of the model is" <|
+            , test "shows how far the part being loaded is" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "transformer" 712635736 1425271472 False)
+                        |> ProgramTest.ensureViewHas [ text "Loading the transformer" ]
+                        |> ProgramTest.ensureViewHas [ text "50%" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "vae" 168120878 168120878 True)
-                        |> ProgramTest.ensureViewHas [ text "713 of 1425 MB" ]
-                        |> ProgramTest.ensureViewHas [ text "168 of 168 MB, from this browser" ]
-                        |> ProgramTest.expectViewHas [ text "Waiting" ]
+                        |> ProgramTest.ensureViewHas [ text "Loading the decoder" ]
+                        |> ProgramTest.expectViewHas [ text "100%" ]
             , test "offers no download to a model that has one" <|
                 \() ->
                     startAt "/settings/models" { defaultFlags | models = Just """["prism-ml/bonsai-image-ternary-4B-mlx-2bit"]""" }
@@ -896,15 +898,15 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
-                        |> ProgramTest.ensureViewHas [ text "Release the model from memory first." ]
-                        |> ProgramTest.clickButton "Release from memory"
+                        |> ProgramTest.ensureViewHas [ text "Release the model first." ]
+                        |> ProgramTest.clickButton "Release"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelReleased")
                         |> ProgramTest.clickButton "Remove downloaded models"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu", "LoadModel", "WriteToLocalStorage", "ReleaseModel", "ClearModelCache" ])
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelCacheCleared")
-                        |> ProgramTest.ensureViewHas [ text "The downloaded models are gone from this browser." ]
+                        |> ProgramTest.ensureViewHas [ text "Downloaded models removed." ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             localStorageWrite
                             (Expect.equal [ { tag = "WriteToLocalStorage", key = "models", value = "[]" } ])
@@ -912,7 +914,7 @@ suite =
                 \() ->
                     startAt "/settings/models" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
-                        |> ProgramTest.expectViewHas [ text "This browser can't run them: they need WebGPU. Try a recent Chrome, Edge or Safari." ]
+                        |> ProgramTest.expectViewHas [ text "They need WebGPU. Try a recent Chrome, Edge or Safari." ]
             ]
         , describe "Library"
             [ test "asks the browser for the saved pictures" <|
@@ -963,7 +965,7 @@ suite =
                 \() ->
                     library
                         |> ProgramTest.fillIn "search" "Search prompts" "submarine"
-                        |> ProgramTest.expectViewHas [ text "No prompt matches “submarine”." ]
+                        |> ProgramTest.expectViewHas [ text "Nothing matches “submarine”" ]
             , test "opens a picture with everything that made it" <|
                 \() ->
                     library
@@ -1052,9 +1054,9 @@ suite =
                                 ]
                             )
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "PictureCopied")
-                        |> ProgramTest.ensureViewHas [ text "The picture is copied. Paste it into your post." ]
+                        |> ProgramTest.ensureViewHas [ text "Picture copied." ]
                         |> ProgramTest.clickButton "Dismiss"
-                        |> ProgramTest.expectViewHasNot [ text "The picture is copied. Paste it into your post." ]
+                        |> ProgramTest.expectViewHasNot [ text "Picture copied." ]
             , test "says so when the browser won't hand the picture over" <|
                 \() ->
                     startAt "/library" defaultFlags
@@ -1063,7 +1065,7 @@ suite =
                         |> ProgramTest.clickButton "Copy picture"
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (Encode.object [ ( "tag", Encode.string "ShareFailed" ), ( "name", Encode.string "NotAllowedError" ) ])
-                        |> ProgramTest.expectViewHas [ text "This browser couldn't hand the picture over. Download it instead." ]
+                        |> ProgramTest.expectViewHas [ text "Couldn't share the picture. Download it instead." ]
             , test "offers the device's share sheet where there is one" <|
                 \() ->
                     startAt "/library" { defaultFlags | canShare = True }

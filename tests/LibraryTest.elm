@@ -150,7 +150,7 @@ suite =
                 \() ->
                     run [ Happened Copied ] loaded
                         |> .notice
-                        |> Expect.equal (Just (Info "The picture is copied. Paste it into your post."))
+                        |> Expect.equal (Just (Info "Picture copied."))
             , test "says nothing when the share sheet is closed" <|
                 \() ->
                     run [ Happened (ShareFailed "AbortError") ] loaded
@@ -160,7 +160,7 @@ suite =
                 \() ->
                     run [ Happened (ShareFailed "NotAllowedError") ] loaded
                         |> .notice
-                        |> Expect.equal (Just (Problem "This browser couldn't hand the picture over. Download it instead."))
+                        |> Expect.equal (Just (Problem "Couldn't share the picture. Download it instead."))
             ]
         ]
 

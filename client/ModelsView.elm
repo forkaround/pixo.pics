@@ -26,10 +26,10 @@ view model =
             , p [ class "text-sm text-muted-foreground" ]
                 [ text
                     (if model.engine == Unsupported then
-                        "This browser can't run them: they need WebGPU. Try a recent Chrome, Edge or Safari."
+                        "They need WebGPU. Try a recent Chrome, Edge or Safari."
 
                      else
-                        "They run in this browser, on your graphics card: your prompts stay here. Downloading one also loads it into memory, ready for the studio."
+                        "They run in this browser: your prompts stay here."
                     )
                 ]
             ]
@@ -54,7 +54,7 @@ view model =
                         ""
 
                      else
-                        "Release the model from memory first."
+                        "Release the model first."
                     )
                 ]
             ]
@@ -127,14 +127,14 @@ viewWeights model weights =
         |> Item.description
             [ text
                 (case state of
-                    Downloading _ ->
-                        "Downloading from Hugging Face…"
+                    InMemory ->
+                        Pipeline.weightsSize weights
 
-                    NotDownloaded ->
-                        "A download of about " ++ Pipeline.weightsSize weights ++ ", from Hugging Face."
+                    Downloaded ->
+                        Pipeline.weightsSize weights
 
                     _ ->
-                        "About " ++ Pipeline.weightsSize weights ++ ", kept in this browser."
+                        Pipeline.weightsSize weights ++ " download"
                 )
             ]
         |> Item.actions
@@ -149,7 +149,7 @@ viewWeights model weights =
 
                 InMemory ->
                     [ Button.new
-                        |> Button.text "Release from memory"
+                        |> Button.text "Release"
                         |> Button.outline
                         |> Button.small
                         |> Button.toHtml [ onClick ReleaseClicked, disabled (not idle) ]
@@ -174,7 +174,7 @@ viewWeights model weights =
         |> Item.footer
             (case state of
                 Downloading parts ->
-                    [ div [ class "flex w-full flex-col gap-4 pt-2" ] (StudioView.downloads parts) ]
+                    [ div [ class "w-full pt-2" ] [ StudioView.loading weights parts ] ]
 
                 _ ->
                     []

@@ -16,9 +16,7 @@ module Pipeline exposing
     , Settings
     , Stage(..)
     , Weights(..)
-    , components
     , current
-    , download
     , enter
     , frameBudget
     , guidance
@@ -212,17 +210,6 @@ weightsSize chosen =
 
         Binary ->
             "2.9 GB"
-
-
-components : List Component
-components =
-    [ TextEncoder, Transformer, Vae ]
-
-
-download : Component -> List Download -> Maybe Download
-download component downloads =
-    List.filter (\known -> known.component == component) downloads
-        |> List.head
 
 
 presets : List Preset
@@ -522,7 +509,7 @@ happened event model =
             ( { model
                 | engine = Empty
                 , downloaded = []
-                , message = Just (Info "The downloaded models are gone from this browser.")
+                , message = Just (Info "Downloaded models removed.")
               }
             , Nothing
             )

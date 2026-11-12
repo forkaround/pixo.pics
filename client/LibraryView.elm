@@ -58,7 +58,7 @@ view model =
                 Empty.new
                     |> Empty.icon (icon Phosphor.images)
                     |> Empty.title [ text "No pictures yet" ]
-                    |> Empty.description [ text "Save a picture from the studio and it is kept here, in this browser, with everything that made it." ]
+                    |> Empty.description [ text "Pictures you save in the studio are kept in this browser." ]
                     |> Empty.content
                         [ Button.new
                             |> Button.text "Open the studio"
@@ -73,8 +73,7 @@ view model =
                     [] ->
                         Empty.new
                             |> Empty.icon (icon Phosphor.magnifyingGlass)
-                            |> Empty.title [ text "Nothing matches" ]
-                            |> Empty.description [ text ("No prompt matches “" ++ String.trim model.query ++ "”.") ]
+                            |> Empty.title [ text ("Nothing matches “" ++ String.trim model.query ++ "”") ]
                             |> Empty.toHtml []
 
                     found ->
@@ -219,7 +218,7 @@ viewShare prefix model picture attrs children =
              )
                 ++ [ DropdownMenu.item [ onClick (CopyClicked picture.id) ] [ icon Phosphor.copy, text "Copy picture" ]
                    , DropdownMenu.separator
-                   , DropdownMenu.label [ text "Copy it, then post on" ]
+                   , DropdownMenu.label [ text "Copy and post on" ]
                    ]
                 ++ List.map
                     (\network ->

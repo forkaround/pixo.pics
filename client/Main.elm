@@ -655,7 +655,7 @@ passkeyProblem : String -> String
 passkeyProblem name =
     case name of
         "NotAllowedError" ->
-            "The passkey was not created. Try again when you're ready."
+            "The passkey was not created."
 
         "InvalidStateError" ->
             "This device already has a passkey for this account."
@@ -671,7 +671,7 @@ signInProblem : String -> String
 signInProblem name =
     case name of
         "NotAllowedError" ->
-            "No passkey was used. Try again when you're ready."
+            "No passkey was used."
 
         "NotSupportedError" ->
             "This browser can't use passkeys."
@@ -1039,7 +1039,7 @@ viewSignUp signUp =
     case signUp.state of
         Sent ->
             notice "Check your inbox"
-                ("We sent a link to " ++ String.trim signUp.email ++ ". It works once and expires in 15 minutes.")
+                ("We sent a link to " ++ String.trim signUp.email ++ ". It expires in 15 minutes.")
                 []
 
         Open attempt ->
@@ -1050,7 +1050,7 @@ viewSignUpForm : SignUpForm -> Attempt -> Html Msg
 viewSignUpForm signUp attempt =
     Card.new
         |> Card.title [ text "Create your account" ]
-        |> Card.description [ text "We'll email you a link to confirm it's you. No password needed." ]
+        |> Card.description [ text "We'll email you a link. No password needed." ]
         |> Card.content []
             [ form [ onSubmit SignUpSubmitted ]
                 [ Field.group []
@@ -1094,7 +1094,7 @@ viewSignIn ceremony signIn =
     case signIn.state of
         Sent ->
             notice "Check your inbox"
-                ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It works once and expires in 15 minutes.")
+                ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
                 []
 
         Open attempt ->
@@ -1158,8 +1158,6 @@ viewDashboard session =
                         |> Button.small
                         |> Button.toHtml [ onClick SignOutClicked ]
                     )
-                |> Card.content [ class "text-sm text-muted-foreground" ]
-                    [ text "Your dashboard is empty for now." ]
                 |> Card.footer [ class "gap-2" ] [ link Path.Studio "Studio", link Path.Library "Library" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
@@ -1182,7 +1180,7 @@ viewPasskeys : Ceremony -> DashboardState -> Html Msg
 viewPasskeys ceremony { passkeys, confirming, removalProblem } =
     Card.new
         |> Card.title [ text "Passkeys" ]
-        |> Card.description [ text "Your fingerprint, face or screen lock, instead of an emailed link." ]
+        |> Card.description [ text "Sign in with your fingerprint, face or screen lock." ]
         |> Card.action
             (Button.new
                 |> Button.text "Add a passkey"
@@ -1310,7 +1308,7 @@ viewVerification ceremony verification =
             Card.new
                 |> Card.title [ text "Your account is ready" ]
                 |> Card.description
-                    [ text "Add a passkey to use your fingerprint, face or screen lock instead of an emailed link." ]
+                    [ text "Add a passkey to sign in with your fingerprint, face or screen lock." ]
                 |> Card.content []
                     [ div [ class "flex flex-col gap-5" ]
                         [ viewProblem ceremony
@@ -1344,7 +1342,6 @@ viewFound found acceptance =
                     "Sign in to this account?"
                 )
             ]
-        |> Card.description [ text "This link was requested for:" ]
         |> Card.content []
             [ div [ class "flex flex-col gap-5" ]
                 [ dl [ class "grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm" ]
@@ -1363,7 +1360,7 @@ viewFound found acceptance =
                         )
                     |> Button.toHtml [ onClick VerificationAccepted, disabled (acceptance == Accepting) ]
                 , p [ class "text-sm text-muted-foreground" ]
-                    [ text "Not you? Close this page: nothing happens until you accept." ]
+                    [ text "Not you? Close this page." ]
                 ]
             ]
         |> Card.toHtml [ class "w-full max-w-sm" ]

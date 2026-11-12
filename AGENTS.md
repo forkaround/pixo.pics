@@ -470,9 +470,9 @@ from Hugging Face into the browser and runs there. The server takes no part.
   `/settings/models` is the same path without a job, so a download ends with the model in
   memory; "Download again" is `fresh`, the library's `force`. `cache` is always true.
 - The library loads a model one part after the other (`Component`: the text encoder, the
-  transformer, the decoder). The studio shows one bar, like the one for the steps: the
-  part last heard of (`Pipeline.current`) and how far it is, so the bar starts over for
-  each part. `/settings/models` shows all three, with their megabytes.
+  transformer, the decoder). The studio and `/settings/models` show the same single bar
+  (`StudioView.loading`), like the one for the steps: the part last heard of
+  (`Pipeline.current`) and how far it is, so the bar starts over for each part.
 - `model.pipeline.downloaded` lists the weights that finished loading, newest first:
   the library can't tell whether its cache holds a whole model. `runPipeline` writes it
   to `localStorage` (`models`, a JSON list of ids, `Pipeline.remember`) whenever it
@@ -482,7 +482,9 @@ from Hugging Face into the browser and runs there. The server takes no part.
 - `Pipeline.presets` are the sizes for social networks (`Square` 1:1, `Portrait` 4:5,
   `Story` 9:16, `Widescreen` 16:9, `Pin` 2:3, `Link card` 2:1, `Banner` 3:1), each the
   largest of its shape on the `Dimension` grid: a new one must be on it, or `preset`
-  leaves it out. One is pressed when the width and height are its own.
+  leaves it out. One is pressed when the width and height are its own. The studio
+  draws them as one row that scrolls sideways and runs to the panel's edges (`-mx-4`
+  against the panel's `p-4`), so a cut-off preset shows there are more.
 - The library runs in a web worker, `client/pipeline.worker.ts`, so downloading and
   generating never block the page. Each `Command` is a `FromElm` variant (`CheckWebGpu`,
   `LoadModel`, `GenerateImage`, `CancelPipeline`, `ReleaseModel`, `ClearModelCache`)
@@ -542,7 +544,7 @@ from Hugging Face into the browser and runs there. The server takes no part.
   `Weights` that made it, until the page is closed or it is saved (see
   [Library](#library)). Nothing is uploaded.
 - The studio shows a picture as the picture and nothing else, like the library's dialog:
-  hover or keyboard focus lays the prompt, the settings, "Save to library", download and
+  hover or keyboard focus lays the prompt, the settings, "Save", download and
   "Use this seed" over it, and since a touch screen has no hover the picture is a button
   that pins them (`model.pipeline.detailed`, one picture at a time). The buttons over a
   picture share their looks in `client/Overlay.elm` (`glass`, `solid`, `red`).
