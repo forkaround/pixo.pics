@@ -203,7 +203,7 @@ toHtml attrs (Card config) =
               else
                 Nothing
             , Maybe.map (part "card-content" "px-(--card-spacing)") config.content
-            , Maybe.map (part "card-footer" "flex items-center rounded-b-xl border-t bg-muted/50 p-(--card-spacing)") config.footer
+            , Maybe.map (part "card-footer" "flex items-center rounded-b-xl border-t bg-muted/50 px-(--card-spacing) py-3") config.footer
             ]
         )
 

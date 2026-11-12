@@ -20,6 +20,7 @@ module Api exposing
     , bodyDecoder
     , checkNames
     , checks
+    , deleteAccount
     , deletePasskey
     , encodeBody
     , encodeError
@@ -65,6 +66,7 @@ type Route
     | PostSignIn
     | GetSession
     | DeleteSession
+    | DeleteAccount
     | GetVerification
     | PostVerification
     | GetPasskeys
@@ -102,6 +104,9 @@ method r =
             Get
 
         DeleteSession ->
+            Delete
+
+        DeleteAccount ->
             Delete
 
         GetVerification ->
@@ -151,6 +156,9 @@ segments r =
 
         DeleteSession ->
             [ "auth", "session" ]
+
+        DeleteAccount ->
+            [ "auth", "account" ]
 
         GetVerification ->
             [ "auth", "verify" ]
@@ -233,6 +241,9 @@ routesAt rest =
         [ "auth", "session" ] ->
             [ GetSession, DeleteSession ]
 
+        [ "auth", "account" ] ->
+            [ DeleteAccount ]
+
         [ "auth", "verify" ] ->
             [ GetVerification, PostVerification ]
 
@@ -308,6 +319,11 @@ session =
 signOut : Endpoint () ()
 signOut =
     Endpoint { route = DeleteSession, body = NoBody (), response = emptyCodec }
+
+
+deleteAccount : Endpoint () ()
+deleteAccount =
+    Endpoint { route = DeleteAccount, body = NoBody (), response = emptyCodec }
 
 
 verification : Endpoint () Verification

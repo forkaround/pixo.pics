@@ -207,6 +207,9 @@ next route =
             Just Api.DeleteSession
 
         Api.DeleteSession ->
+            Just Api.DeleteAccount
+
+        Api.DeleteAccount ->
             Just Api.GetPasskeys
 
         Api.GetPasskeys ->

@@ -45,6 +45,11 @@ suite =
                             Url.fromString "https://pixo.pics/nowhere/at/all"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just Path.NotFound)
+                   , test "no longer has a server settings page" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/settings/server"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.NotFound)
                    ]
             )
         ]
@@ -78,9 +83,6 @@ next path =
             Just Path.Models
 
         Path.Models ->
-            Just Path.Server
-
-        Path.Server ->
             Just Path.Account
 
         Path.Account ->

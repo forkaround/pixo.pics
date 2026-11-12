@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
+module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), Removed(..), SignInChallenge(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, magicLink, passkeyPublicKey, passkeys, ping, rateLimit, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -435,3 +435,10 @@ signOut : SessionToken -> Neon.Query ()
 signOut token =
     Neon.execute "SELECT sign_out($1)" [ Neon.text (SessionToken.toString token) ]
         |> Neon.map (\_ -> ())
+
+
+deleteAccount : SessionToken -> Neon.Query Bool
+deleteAccount token =
+    Neon.one "SELECT delete_account($1) AS deleted"
+        [ Neon.text (SessionToken.toString token) ]
+        (Decode.field "deleted" Decode.bool)

@@ -10,7 +10,6 @@ type Path
     | Studio
     | Library
     | Models
-    | Server
     | Account
     | SignUp
     | SignIn
@@ -33,9 +32,6 @@ toString path =
 
         Models ->
             "/settings/models"
-
-        Server ->
-            "/settings/server"
 
         Account ->
             "/settings/account"
@@ -73,7 +69,6 @@ parser =
         , Parser.map Library (Parser.s "library")
         , Parser.map Models (Parser.s "settings")
         , Parser.map Models (Parser.s "settings" </> Parser.s "models")
-        , Parser.map Server (Parser.s "settings" </> Parser.s "server")
         , Parser.map Account (Parser.s "settings" </> Parser.s "account")
         , Parser.map SignUp (Parser.s "signup")
         , Parser.map SignIn (Parser.s "login")

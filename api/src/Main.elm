@@ -161,6 +161,9 @@ brokenAnswer { problem, release } found =
         Api.GetSession ->
             Response.unavailable
 
+        Api.DeleteAccount ->
+            Response.unavailable
+
         Api.DeleteSession ->
             Response.unavailable
 
@@ -301,6 +304,9 @@ handle server request r =
 
         Api.GetSession ->
             Reply.map Session (Flow.Session.current server request)
+
+        Api.DeleteAccount ->
+            Reply.map Session (Flow.Session.deleteAccount server request)
 
         Api.DeleteSession ->
             Reply.map Session (Flow.Session.end server request)

@@ -94,11 +94,16 @@ pull requests and on `main`; it needs no database.
   `return msg.tag satisfies never;` when it has one: elm-ts-interop then emits a plain
   object, not a union, and TypeScript narrows only `msg.tag`. Switch forms when the count
   crosses one.
+- **All application logic belongs in Elm**, including date parsing, formatting and
+  presentation decisions. TypeScript is limited to interop with browser and platform APIs.
 - **UI**: use the elmcn registry component instead of writing one; Phosphor
   (`phosphor-icons/phosphor-elm`, `Regular`, and `Bold` in the sidebars' menus, their
   trigger, the user menu, the theme toggle and the login and sign-up forms, where a 1 px line looks
   thin beside medium text) instead of hand-written SVG; `sr-only` text on icon-only
   controls.
+- **Skeletons faithfully represent the final element**: match its structure, dimensions,
+  spacing and alignment, so replacing the skeleton with loaded content causes no layout
+  shift. Update the skeleton whenever the final element changes.
 - **Elm steps in `build` run one at a time**: keep `build` as
   `bun run --sequential types:* check build:*`, never `types` (which runs both
   generators in parallel). On an empty `~/.elm`, as on every fresh Vercel machine, two
@@ -383,7 +388,7 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
   `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
   address: `/` (Explore), `/studio`, `/library`, `/settings/models` (also `/settings`),
-  `/settings/server`, `/settings/account`, `/signup`, `/login`, `/verify`, `/passkey`,
+  `/settings/account`, `/signup`, `/login`, `/verify`, `/passkey`,
   and `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
   same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
@@ -395,11 +400,14 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   (only on a 401), `SignedIn account`, or `Unavailable reason` when the check failed some
   other way: the page then says so and offers "Try again" (`SessionRetried`), and sends
   nobody to `/login`. `/settings/account`, a section of the settings listed only to a
-  signed-in visitor, shows the account, a sign-out button and the Passkeys card
+  signed-in visitor, shows "Signed in as <username> (<email>)" with a "Sign out" link
+  in its subtitle, followed by the Passkeys card
   (`Api.passkeys`, "Add a passkey", and a bin on each row that asks "Remove ...?"
   before `Api.deletePasskey`: the `Account` section holds the list, the id being
   confirmed and why a removal failed, and a removal never touches `model.ceremony`),
-  and sends a signed-out visitor to `/login`. There is no dashboard: a sign-in leads
+  and sends a signed-out visitor to `/login`. The Delete account card opens a
+  `UI.AlertDialog` for confirmation; deletion errors stay in the dialog and its
+  buttons are disabled while the request is pending. There is no dashboard: a sign-in leads
   home, or to `/passkey` when it was by link and the account has no passkey.
 - `/signup`, `/login`, `/verify`, `/passkey` and the not-found page fill the window,
   outside the shell, in one frame, `viewPlain`: the logo, which leads home, over a narrow column in the middle
@@ -475,7 +483,7 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   the library's search, and `viewEntry`), sticky, and under it an optional second
   sidebar (`viewAside`: the studio's controls, the settings' sections, sticky below
   the bar, as tall as what is left of the window and on the page's own background,
-  with a line between it and the content) beside the content. `viewEntry` is
+  with a divider only in the studio) beside the content. `viewEntry` is
   "Log in" (left out below `sm`, where the guest's menu has it) and "Sign up" for a
   signed-out visitor, on every page of the shell: two ghost buttons that look like
   the sidebar's links, muted until hovered, neither one stressed. They are
@@ -526,12 +534,10 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   no gradient text, no list of ticks, nothing that moves. Its second button says
   "Sign up", as the top bar's does: at `/` a test can't `clickLink "Sign up"`,
   which fails on two matches.
-- `/settings/models` lists the models (see [Image pipeline](#image-pipeline));
-  `/settings/server` has the Server card (one row per `Api.checks`, release and region in
-  the footer), which asks `Api.health` when it opens.
-- No layout shift while loading: rows come from `Api.checkNames` with `UI.Skeleton`s,
-  refreshes keep the last report, an empty footer keeps its height. Name checks only in
-  `Api.namedChecks`.
+- `/settings/models` lists the models (see [Image pipeline](#image-pipeline)). Settings
+  sections share a heading, description and content width, with borderless navigation
+  that runs horizontally below `md`. `/settings/server` is not a page; `/api/health`
+  remains available for monitoring.
 
 ### Image pipeline
 
@@ -965,7 +971,7 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   and the sidebar both have the button, as "Try again" and "Sign out" at
   `/settings/account`, click inside one: `ProgramTest.within (Query.find [ tag "section" ])`.
 - `/studio` sends `CheckWebGpu` and `/library` sends `LoadLibrary` as they open: a test
-  that reads every port value starts at `/settings/server`, which sends none.
+  that reads every port value starts at `/`, which sends none.
 - Server: `request "first" "GET" [ "api", "health" ]` sends a request in through the port.
   Its first argument stands for the Promise's `resolve` and comes back in the response.
   Neon and Brevo are the only HTTP calls: answer Neon with

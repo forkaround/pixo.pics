@@ -11,7 +11,7 @@ import Data.LinkToken exposing (LinkToken)
 import Data.Username as Username
 import ExploreView
 import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
-import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, href, id, name, rel, required, target, type_, value)
+import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, href, id, name, required, type_, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
@@ -23,14 +23,19 @@ import ModelsView
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
+import RelativeTime
 import StudioView
 import Svg.Attributes
+import Task
+import Time
+import UI.AlertDialog as AlertDialog
 import UI.Avatar as Avatar
 import UI.Button as Button
 import UI.Card as Card
 import UI.DropdownMenu as DropdownMenu
 import UI.Field as Field
 import UI.InputGroup as InputGroup
+import UI.Item as Item
 import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 import UI.Tabs as Tabs
@@ -62,7 +67,6 @@ main =
 type alias Model =
     { theme : Theme
     , systemDark : Bool
-    , health : Health
     , session : Session
     , ceremony : Ceremony
     , pipeline : Pipeline.Model
@@ -83,7 +87,15 @@ type alias AccountState =
     { passkeys : Passkeys
     , confirming : Maybe CredentialId
     , removalProblem : Maybe String
+    , deletion : AccountDeletion
+    , now : Maybe Time.Posix
     }
+
+
+type AccountDeletion
+    = KeepAccount
+    | ConfirmDeletion (Maybe String)
+    | DeletingAccount
 
 
 type Ceremony
@@ -112,7 +124,6 @@ type Page
 
 type Section
     = Models
-    | Server
     | Account AccountState
 
 
@@ -150,12 +161,6 @@ type Acceptance
     | Accepting
 
 
-type Health
-    = Checking (Maybe Api.Health)
-    | Checked Api.Health
-    | Unreachable String
-
-
 init : Decode.Value -> Url -> ( Model, Effect )
 init flags url =
     let
@@ -166,7 +171,6 @@ init flags url =
     open url
         { theme = Maybe.withDefault Interop.System theme
         , systemDark = systemDark
-        , health = Checking Nothing
         , session = Unknown
         , ceremony = Resting Nothing
         , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
@@ -197,9 +201,6 @@ open url opened =
         Path.Models ->
             runPipeline { model | page = Settings Models } (Pipeline.enter model.pipeline)
 
-        Path.Server ->
-            ( { model | page = Settings Server, health = Checking (lastReport model.health) }, checkHealth )
-
         Path.SignUp ->
             ( { model | page = SignUp { email = "", username = "", state = Open (Editing Nothing) } }, NoEffect )
 
@@ -207,7 +208,7 @@ open url opened =
             ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
 
         Path.Account ->
-            ( { model | page = Settings (Account { passkeys = Loading, confirming = Nothing, removalProblem = Nothing }) }
+            ( { model | page = Settings (Account { passkeys = Loading, confirming = Nothing, removalProblem = Nothing, deletion = KeepAccount, now = Nothing }) }
             , if model.session == SignedOut then
                 PushUrl (Path.toString Path.SignIn)
 
@@ -274,11 +275,6 @@ runLibrary model ( library, commands ) =
     )
 
 
-checkHealth : Effect
-checkHealth =
-    Request (ApiClient.request Api.health () GotHealth)
-
-
 isDark : Model -> Bool
 isDark model =
     case model.theme of
@@ -298,8 +294,6 @@ isDark model =
 
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
-    | GotHealth (Result ApiClient.Error Api.Health)
-    | CheckHealth
     | ThemeSelected Theme
     | UrlRequested Browser.UrlRequest
     | UrlChanged Url
@@ -316,8 +310,13 @@ type Msg
     | SignInEmailChanged String
     | SignInSubmitted
     | GotSignIn (Result ApiClient.Error ())
+    | AccountDeleteRequested
+    | AccountDeleteCancelled
+    | AccountDeleteConfirmed
+    | GotAccountDeleted (Result ApiClient.Error ())
     | SignOutClicked
     | GotSignOut (Result ApiClient.Error ())
+    | GotTime Time.Posix
     | GotPasskeys (Result ApiClient.Error (List Api.Passkey))
     | PasskeyRequested
     | GotPasskeyOptions (Result ApiClient.Error Api.PasskeyOptions)
@@ -426,15 +425,6 @@ update msg model =
 
         PathSelected path ->
             ( model, PushUrl (Path.toString path) )
-
-        GotHealth (Ok health) ->
-            ( { model | health = Checked health }, NoEffect )
-
-        GotHealth (Err error) ->
-            ( { model | health = Unreachable (ApiClient.errorToString error) }, NoEffect )
-
-        CheckHealth ->
-            ( { model | health = Checking (lastReport model.health) }, checkHealth )
 
         UrlRequested (Browser.Internal url) ->
             ( model, PushUrl (Url.toString url) )
@@ -614,6 +604,46 @@ update msg model =
             , NoEffect
             )
 
+        AccountDeleteRequested ->
+            ( editAccount (\account -> { account | deletion = ConfirmDeletion Nothing }) model, NoEffect )
+
+        AccountDeleteCancelled ->
+            ( editAccount
+                (\account ->
+                    if account.deletion == DeletingAccount then
+                        account
+
+                    else
+                        { account | deletion = KeepAccount }
+                )
+                model
+            , NoEffect
+            )
+
+        AccountDeleteConfirmed ->
+            case ( model.session, model.page ) of
+                ( SignedIn _, Settings (Account ({ deletion } as account)) ) ->
+                    case deletion of
+                        ConfirmDeletion _ ->
+                            ( { model | page = Settings (Account { account | deletion = DeletingAccount }) }
+                            , Request (ApiClient.request Api.deleteAccount () GotAccountDeleted)
+                            )
+
+                        _ ->
+                            ( model, NoEffect )
+
+                _ ->
+                    ( model, NoEffect )
+
+        GotAccountDeleted (Ok ()) ->
+            ( { model | session = SignedOut, ceremony = Resting Nothing }, PushUrl (Path.toString Path.Explore) )
+
+        GotAccountDeleted (Err (ApiClient.Unauthorized _)) ->
+            ( { model | session = SignedOut, ceremony = Resting Nothing }, PushUrl (Path.toString Path.SignIn) )
+
+        GotAccountDeleted (Err error) ->
+            ( editAccount (\account -> { account | deletion = ConfirmDeletion (Just (ApiClient.errorToString error)) }) model, NoEffect )
+
         SignOutClicked ->
             ( model, Request (ApiClient.request Api.signOut () GotSignOut) )
 
@@ -623,8 +653,11 @@ update msg model =
         GotSignOut (Err _) ->
             ( model, NoEffect )
 
+        GotTime now ->
+            ( editAccount (\account -> { account | now = Just now }) model, NoEffect )
+
         GotPasskeys (Ok found) ->
-            ( editAccount (\account -> { account | passkeys = Loaded found }) model, NoEffect )
+            ( editAccount (\account -> { account | passkeys = Loaded found }) model, ReadTime )
 
         GotPasskeys (Err error) ->
             ( editAccount (\account -> { account | passkeys = NotLoaded (ApiClient.errorToString error) }) model
@@ -661,7 +694,7 @@ update msg model =
                 PushUrl (Path.toString Path.Explore)
 
               else
-                NoEffect
+                ReadTime
             )
 
         GotPasskey (Err error) ->
@@ -799,6 +832,7 @@ type Effect
     | SendToJs Interop.FromElm
     | PushUrl String
     | Load String
+    | ReadTime
 
 
 perform : Navigation.Key -> Effect -> Cmd Msg
@@ -821,6 +855,9 @@ perform key effect =
 
         Load url ->
             Navigation.load url
+
+        ReadTime ->
+            Task.perform GotTime Time.now
 
 
 
@@ -861,9 +898,6 @@ title page =
         Settings Models ->
             "Models · pixo"
 
-        Settings Server ->
-            "Server · pixo"
-
         Settings (Account _) ->
             "Account · pixo"
 
@@ -890,7 +924,7 @@ viewBody model =
             viewFrame model
                 "Studio"
                 []
-                [ viewAside "md:w-80" [ Html.map GotPipeline (StudioView.controls model.pipeline) ]
+                [ viewAside "border-b md:w-80 md:border-e md:border-b-0" [ Html.map GotPipeline (StudioView.controls model.pipeline) ]
                 , viewContent
                     [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline ]
                 ]
@@ -908,11 +942,10 @@ viewBody model =
             viewFrame model
                 "Settings"
                 []
-                [ viewAside "md:w-56"
+                [ viewAside "md:w-56 md:pt-6"
                     [ Sidebar.group []
-                        [ Sidebar.menu []
+                        [ Sidebar.menu [ class "max-md:flex-row max-md:flex-wrap" ]
                             (viewDestination (section == Models) Path.Models Phosphor.cube "Models"
-                                :: viewDestination (section == Server) Path.Server Phosphor.hardDrives "Server"
                                 :: (if isAccount model.page || isSignedIn model.session then
                                         [ viewDestination (isAccount model.page) Path.Account Phosphor.userCircle "Account" ]
 
@@ -925,13 +958,37 @@ viewBody model =
                 , viewContent
                     [ case section of
                         Models ->
-                            Html.map GotPipeline (ModelsView.view model.pipeline)
+                            viewSettingsPage "Models"
+                                (text
+                                    (if model.pipeline.engine == Pipeline.Unsupported then
+                                        "They need WebGPU. Try a recent Chrome, Edge or Safari."
 
-                        Server ->
-                            div [ class "flex flex-1 flex-col items-center p-4 md:p-8" ] [ viewHealth model.health ]
+                                     else
+                                        "Manage the models that run in your browser. Your prompts stay on this device."
+                                    )
+                                )
+                                [ Html.map GotPipeline (ModelsView.view model.pipeline) ]
 
                         Account account ->
-                            div [ class "flex flex-1 flex-col items-center gap-4 p-4 md:p-8" ]
+                            viewSettingsPage "Account"
+                                (case model.session of
+                                    SignedIn identity ->
+                                        div [ class "flex flex-wrap items-center gap-x-2" ]
+                                            [ span [] [ text ("Signed in as " ++ Username.toString identity.username ++ " (" ++ Email.toString identity.email ++ ")") ]
+                                            , Button.new
+                                                |> Button.text "Sign out"
+                                                |> Button.link
+                                                |> Button.small
+                                                |> Button.toHtml [ onClick SignOutClicked, class "px-0!" ]
+                                            ]
+
+                                    Unknown ->
+                                        div [ class "flex h-7 items-center", attribute "aria-hidden" "true" ]
+                                            [ Skeleton.view [ class "h-3.5 w-80 max-w-full" ] ]
+
+                                    _ ->
+                                        text "Manage your account and how you sign in."
+                                )
                                 (viewAccount model.session model.ceremony account)
                     ]
                 ]
@@ -958,6 +1015,17 @@ viewBody model =
                     , div [ class "flex min-h-10 gap-4" ] (notFoundOptions model.session)
                     ]
                 ]
+
+
+viewSettingsPage : String -> Html Msg -> List (Html Msg) -> Html Msg
+viewSettingsPage heading description children =
+    div [ class "mx-auto flex w-full max-w-3xl flex-col gap-8 p-4 md:p-8" ]
+        [ Html.header [ class "flex flex-col gap-2" ]
+            [ Html.h2 [ class "text-2xl font-semibold tracking-tight" ] [ text heading ]
+            , div [ class "text-sm leading-relaxed wrap-anywhere text-muted-foreground" ] [ description ]
+            ]
+        , div [ class "flex flex-col gap-6" ] children
+        ]
 
 
 viewFrame : Model -> String -> List (Html Msg) -> List (Html Msg) -> Html Msg
@@ -1185,7 +1253,7 @@ viewUserMenu theme user =
 viewAside : String -> List (Html Msg) -> Html Msg
 viewAside wide children =
     Html.aside
-        [ class "flex w-full shrink-0 flex-col border-b bg-background md:sticky md:top-12 md:h-[calc(100svh-3rem)] md:overflow-y-auto md:border-e md:border-b-0"
+        [ class "flex w-full shrink-0 flex-col bg-background md:sticky md:top-12 md:h-[calc(100svh-3rem)] md:overflow-y-auto"
         , class wide
         ]
         children
@@ -1436,69 +1504,122 @@ viewAccount : Session -> Ceremony -> AccountState -> List (Html Msg)
 viewAccount session ceremony account =
     case session of
         SignedIn _ ->
-            [ viewProfile session, viewPasskeys ceremony account ]
+            [ viewPasskeys session ceremony account, viewDeleteAccount (Just account.deletion) ]
 
-        _ ->
-            [ viewProfile session ]
-
-
-viewProfile : Session -> Html Msg
-viewProfile session =
-    case session of
-        SignedIn account ->
-            Card.new
-                |> Card.title [ text ("Welcome, " ++ Username.toString account.username) ]
-                |> Card.description [ text ("Signed in as " ++ Email.toString account.email) ]
-                |> Card.action
-                    (Button.new
-                        |> Button.text "Sign out"
-                        |> Button.outline
-                        |> Button.small
-                        |> Button.toHtml [ onClick SignOutClicked ]
-                    )
-                |> Card.toHtml [ class "w-full max-w-sm" ]
+        Unknown ->
+            [ viewPasskeys session (Resting Nothing) { account | passkeys = Loading, removalProblem = Nothing }
+            , viewDeleteAccount Nothing
+            ]
 
         Unavailable message ->
-            notice "Can't check who is signed in" message [ retry ]
+            [ notice "Can't check who is signed in" message [ retry ] ]
 
-        _ ->
-            Card.new
-                |> Card.title [ text "Account" ]
-                |> Card.content [ attribute "aria-hidden" "true" ]
-                    [ div [ class "flex flex-col gap-3" ]
-                        [ Skeleton.view [ class "h-4 w-40" ]
-                        , Skeleton.view [ class "h-4 w-56" ]
-                        ]
-                    ]
-                |> Card.toHtml [ class "w-full max-w-sm" ]
+        SignedOut ->
+            []
 
 
-viewPasskeys : Ceremony -> AccountState -> Html Msg
-viewPasskeys ceremony { passkeys, confirming, removalProblem } =
-    Card.new
-        |> Card.title [ text "Passkeys" ]
-        |> Card.description [ text "Sign in with your fingerprint, face or screen lock." ]
-        |> Card.action
+viewDeleteAccount : Maybe AccountDeletion -> Html Msg
+viewDeleteAccount deletion =
+    div []
+        [ Card.new
+            |> Card.title [ Html.h3 [ class "text-destructive" ] [ text "Delete account" ] ]
+            |> Card.description [ text "Permanently delete your account, passkeys and sessions. This cannot be undone." ]
+            |> Card.content []
+                [ p [ class "text-sm text-muted-foreground" ] [ text "Images saved in this browser will remain." ] ]
+            |> Card.footer [ class "justify-end" ]
+                [ Button.new
+                    |> Button.text "Delete account"
+                    |> Button.destructive
+                    |> Button.small
+                    |> (if deletion == Nothing then
+                            viewButtonSkeleton []
+
+                        else
+                            Button.toHtml [ onClick AccountDeleteRequested, disabled (deletion == Just DeletingAccount) ]
+                       )
+                ]
+            |> Card.toHtml [ class "w-full ring-destructive/40! [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
+        , viewDeleteAccountDialog deletion
+        ]
+
+
+viewDeleteAccountDialog : Maybe AccountDeletion -> Html Msg
+viewDeleteAccountDialog deletion =
+    AlertDialog.new
+        |> AlertDialog.id "delete-account"
+        |> AlertDialog.open (deletion /= Nothing && deletion /= Just KeepAccount) AccountDeleteCancelled
+        |> AlertDialog.busy (deletion == Just DeletingAccount)
+        |> AlertDialog.small
+        |> AlertDialog.media [ class "bg-destructive/10 text-destructive dark:bg-destructive/20" ]
+            [ Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
+        |> AlertDialog.title [ text "Are you sure?" ]
+        |> AlertDialog.description
+            [ text "This will permanently delete your account and cannot be undone."
+            , case deletion of
+                Just (ConfirmDeletion (Just reason)) ->
+                    span [ class "mt-3 block text-destructive", attribute "role" "alert" ] [ text reason ]
+
+                _ ->
+                    text ""
+            ]
+        |> AlertDialog.cancel
             (Button.new
-                |> Button.text "Add a passkey"
+                |> Button.text "Cancel"
                 |> Button.outline
                 |> Button.small
-                |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting) ]
             )
+        |> AlertDialog.action AccountDeleteConfirmed
+            (Button.new
+                |> Button.text
+                    (if deletion == Just DeletingAccount then
+                        "Deleting…"
+
+                     else
+                        "Delete"
+                    )
+                |> Button.destructive
+                |> Button.small
+            )
+        |> AlertDialog.toHtml []
+
+
+viewPasskeys : Session -> Ceremony -> AccountState -> Html Msg
+viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
+    Card.new
+        |> Card.title [ Html.h3 [] [ text "Passkeys" ] ]
+        |> Card.description [ text "Sign in with your fingerprint, face or screen lock." ]
         |> Card.content []
             [ div [ class "flex flex-col gap-3" ]
-                [ case passkeys of
-                    Loading ->
-                        Skeleton.view [ class "h-5 w-48", attribute "aria-hidden" "true" ]
+                [ div [ class "max-h-48 overflow-y-auto" ]
+                    [ case passkeys of
+                        Loading ->
+                            ul [ class "flex flex-col gap-2", attribute "aria-hidden" "true" ]
+                                [ li []
+                                    [ Item.new
+                                        |> Item.muted
+                                        |> Item.icon (Skeleton.view [ class "size-4" ])
+                                        |> Item.title [ Skeleton.view [ class "h-[1.375em] w-28 max-w-full" ] ]
+                                        |> Item.actions
+                                            [ Skeleton.view [ class "h-4 w-16" ]
+                                            , Skeleton.view [ class "size-7" ]
+                                            ]
+                                        |> Item.toHtml [ class "flex-nowrap! [&_[data-slot=item-content]]:min-w-0 [&_[data-slot=item-title]]:w-full" ]
+                                    ]
+                                ]
 
-                    Loaded [] ->
-                        p [ class "text-sm text-muted-foreground" ] [ text "No passkeys yet." ]
+                        Loaded [] ->
+                            Item.new
+                                |> Item.outline
+                                |> Item.icon (Phosphor.fingerprint Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                                |> Item.title [ span [ class "flex h-7 items-center" ] [ text "No passkeys yet." ] ]
+                                |> Item.toHtml [ class "border-dashed" ]
 
-                    Loaded found ->
-                        ul [ class "flex flex-col gap-3" ] (List.map (viewPasskey confirming) found)
+                        Loaded found ->
+                            ul [ class "flex flex-col gap-2" ] (List.map (viewPasskey now confirming) found)
 
-                    NotLoaded message ->
-                        p [ class "text-sm text-muted-foreground" ] [ text message ]
+                        NotLoaded message ->
+                            p [ class "text-sm text-muted-foreground" ] [ text message ]
+                    ]
                 , viewProblem ceremony
                 , case removalProblem of
                     Just reason ->
@@ -1508,45 +1629,96 @@ viewPasskeys ceremony { passkeys, confirming, removalProblem } =
                         text ""
                 ]
             ]
-        |> Card.toHtml [ class "w-full max-w-sm" ]
+        |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
+            [ p [ class "text-xs text-muted-foreground" ] [ text "You can still log in with an email link." ]
+            , if session == Unknown then
+                Button.new
+                    |> Button.text "Add a passkey"
+                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.small
+                    |> viewButtonSkeleton [ class "max-sm:w-full" ]
+
+              else
+                Button.new
+                    |> Button.text
+                        (if ceremony == Waiting then
+                            "Waiting for your device…"
+
+                         else
+                            "Add a passkey"
+                        )
+                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.small
+                    |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting), class "max-sm:w-full" ]
+            ]
+        |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
 
 
-viewPasskey : Maybe CredentialId -> Api.Passkey -> Html Msg
-viewPasskey confirming passkey =
+viewButtonSkeleton : List (Html.Attribute msg) -> Button.Button shape Button.Ready msg -> Html msg
+viewButtonSkeleton attrs button =
+    div (class "relative inline-flex" :: attribute "aria-hidden" "true" :: attrs)
+        [ Button.toHtml [ class "invisible w-full", disabled True ] button
+        , Skeleton.view [ class "absolute inset-0 rounded-lg!" ]
+        ]
+
+
+viewPasskey : Maybe Time.Posix -> Maybe CredentialId -> Api.Passkey -> Html Msg
+viewPasskey now confirming passkey =
     let
         name =
             Maybe.withDefault "Passkey" passkey.name
     in
-    li [ class "flex min-h-8 items-center gap-3" ]
-        (if confirming == Just passkey.id then
-            [ span [ class "text-sm font-medium" ] [ text ("Remove " ++ name ++ "?") ]
-            , div [ class "ml-auto flex gap-2" ]
-                [ Button.new
-                    |> Button.text "Cancel"
-                    |> Button.ghost
-                    |> Button.small
-                    |> Button.toHtml [ onClick PasskeyRemoveCancelled ]
-                , Button.new
-                    |> Button.text "Remove"
-                    |> Button.destructive
-                    |> Button.small
-                    |> Button.toHtml [ onClick (PasskeyRemoveConfirmed passkey.id) ]
-                ]
-            ]
+    li []
+        [ Item.new
+            |> Item.muted
+            |> Item.icon (Phosphor.fingerprint Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+            |> Item.title
+                [ span [ class "truncate", Html.Attributes.title name ]
+                    [ text
+                        (if confirming == Just passkey.id then
+                            "Remove " ++ name ++ "?"
 
-         else
-            [ Phosphor.key Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
-            , span [ class "font-medium" ] [ text name ]
-            , span [ class "ml-auto text-sm text-muted-foreground tabular-nums" ]
-                [ text ("Added " ++ String.left 10 passkey.createdAt) ]
-            , Button.new
-                |> Button.icon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                |> Button.label ("Remove " ++ name)
-                |> Button.ghost
-                |> Button.small
-                |> Button.toHtml [ onClick (PasskeyRemoveRequested passkey.id) ]
-            ]
-        )
+                         else
+                            name
+                        )
+                    ]
+                ]
+            |> Item.actions
+                (if confirming == Just passkey.id then
+                    [ Button.new
+                        |> Button.text "Cancel"
+                        |> Button.ghost
+                        |> Button.small
+                        |> Button.toHtml [ onClick PasskeyRemoveCancelled ]
+                    , Button.new
+                        |> Button.text "Remove"
+                        |> Button.destructive
+                        |> Button.small
+                        |> Button.toHtml [ onClick (PasskeyRemoveConfirmed passkey.id) ]
+                    ]
+
+                 else
+                    [ case now of
+                        Just current ->
+                            Html.time
+                                [ attribute "datetime" passkey.createdAt
+                                , Html.Attributes.title ("Added " ++ passkey.createdAt)
+                                , class "whitespace-nowrap text-xs text-muted-foreground"
+                                ]
+                                [ text (RelativeTime.toString current passkey.createdAt) ]
+
+                        Nothing ->
+                            Skeleton.view [ class "h-4 w-16", attribute "aria-hidden" "true" ]
+                    , Button.new
+                        |> Button.icon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                        |> Button.label ("Remove " ++ name)
+                        |> Button.ghost
+                        |> Button.small
+                        |> Button.toHtml [ onClick (PasskeyRemoveRequested passkey.id) ]
+                    ]
+                )
+            |> Item.toHtml [ class "flex-nowrap! [&_[data-slot=item-content]]:min-w-0 [&_[data-slot=item-title]]:w-full" ]
+        ]
 
 
 viewProblem : Ceremony -> Html Msg
@@ -1698,161 +1870,6 @@ viewIdentity avatar details =
     div [ class "flex items-center gap-3 rounded-xl border p-3" ]
         [ avatar
         , div [ class "min-w-0 flex-1" ] details
-        ]
-
-
-viewHealth : Health -> Html Msg
-viewHealth health =
-    Card.new
-        |> Card.title [ text "Server" ]
-        |> Card.description [ text "GET /api/health" ]
-        |> Card.action
-            (Button.new
-                |> Button.text "Refresh"
-                |> Button.outline
-                |> Button.small
-                |> Button.toHtml [ onClick CheckHealth ]
-            )
-        |> Card.content []
-            [ case health of
-                Checking Nothing ->
-                    viewRows (List.map (\name -> row pendingDot name latencySkeleton Nothing) Api.checkNames)
-
-                Checking (Just report) ->
-                    viewRows (List.map (viewCheck (always pendingDot)) (Api.checks report))
-
-                Checked report ->
-                    viewRows (List.map (viewCheck statusDot) (Api.checks report))
-
-                Unreachable message ->
-                    viewRows [ row "bg-red-500" "Server" (text "") (Just message) ]
-            ]
-        |> Card.footer [ class "text-xs text-muted-foreground" ] (viewRelease health)
-        |> Card.toHtml [ class "w-full max-w-sm" ]
-
-
-pendingDot : String
-pendingDot =
-    "animate-pulse bg-muted-foreground"
-
-
-lastReport : Health -> Maybe Api.Health
-lastReport health =
-    case health of
-        Checking report ->
-            report
-
-        Checked report ->
-            Just report
-
-        Unreachable _ ->
-            Nothing
-
-
-viewRelease : Health -> List (Html Msg)
-viewRelease health =
-    case ( health, Maybe.map .release (lastReport health) ) of
-        ( Checking Nothing, _ ) ->
-            [ div [ class "flex items-center gap-2", attribute "aria-hidden" "true" ]
-                [ Skeleton.view [ class "h-4 w-24" ]
-                , Skeleton.view [ class "h-4 w-20" ]
-                ]
-            ]
-
-        ( _, Just release ) ->
-            case
-                List.filterMap identity
-                    [ Maybe.map (viewReleaseId release.releaseUrl) release.releaseId
-                    , Maybe.map (\region -> [ text ("Region " ++ region) ]) release.region
-                    ]
-            of
-                [] ->
-                    [ placeholder ]
-
-                parts ->
-                    [ span [] (List.concat (List.intersperse [ text " · " ] parts)) ]
-
-        ( _, Nothing ) ->
-            [ placeholder ]
-
-
-placeholder : Html Msg
-placeholder =
-    span [ class "invisible", attribute "aria-hidden" "true" ] [ text "Release" ]
-
-
-viewReleaseId : Maybe String -> String -> List (Html Msg)
-viewReleaseId url id =
-    case url of
-        Just href_ ->
-            [ text "Release "
-            , a
-                [ href href_
-                , target "_blank"
-                , rel "noopener noreferrer"
-                , class "font-mono underline underline-offset-2 hover:text-foreground"
-                ]
-                [ text (shortRelease id) ]
-            ]
-
-        Nothing ->
-            [ text ("Release " ++ shortRelease id) ]
-
-
-shortRelease : String -> String
-shortRelease id =
-    if String.startsWith "dpl_" id then
-        id
-
-    else
-        String.left 7 id
-
-
-viewRows : List (Html Msg) -> Html Msg
-viewRows rows =
-    ul [ class "flex flex-col gap-3", attribute "role" "status" ] rows
-
-
-viewCheck : (Api.Status -> String) -> ( String, Api.Check ) -> Html Msg
-viewCheck toDot ( name, check ) =
-    row (toDot check.status) name (latency check.latencyMs) check.output
-
-
-latency : Maybe Int -> Html Msg
-latency ms =
-    text (Maybe.withDefault "" (Maybe.map (\n -> String.fromInt n ++ " ms") ms))
-
-
-latencySkeleton : Html Msg
-latencySkeleton =
-    Skeleton.view [ class "h-4 w-12", attribute "aria-hidden" "true" ]
-
-
-statusDot : Api.Status -> String
-statusDot status =
-    case status of
-        Api.Pass ->
-            "bg-green-500"
-
-        Api.Warn ->
-            "bg-yellow-500"
-
-        Api.Fail ->
-            "bg-red-500"
-
-
-row : String -> String -> Html Msg -> Maybe String -> Html Msg
-row dot name measured output =
-    li [ class "flex flex-wrap items-center gap-x-3 gap-y-1" ]
-        [ span [ class ("size-3 shrink-0 rounded-full " ++ dot) ] []
-        , span [ class "font-medium" ] [ text name ]
-        , div [ class "ml-auto text-sm text-muted-foreground tabular-nums" ] [ measured ]
-        , case output of
-            Just message ->
-                p [ class "w-full pl-6 text-sm text-muted-foreground" ] [ text message ]
-
-            Nothing ->
-                text ""
         ]
 
 

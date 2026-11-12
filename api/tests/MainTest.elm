@@ -555,6 +555,47 @@ suite =
                             , [ 503 ]
                             )
             ]
+        , describe "DELETE /api/auth/account"
+            [ test "deletes only the current account and clears the cookie" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            endpoint
+                            (Test.Http.expectJsonBody
+                                (Decode.map2 Tuple.pair
+                                    (Decode.field "query" Decode.string)
+                                    (Decode.field "params" (Decode.list Decode.string))
+                                )
+                                (Expect.equal ( "SELECT delete_account($1) AS deleted", [ "c2Vzc2lvbg" ] ))
+                            )
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"deleted":true}],"rowCount":1}"""
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = ( "set-cookie", "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure" ) :: jsonHeaders
+                              , body = "{}"
+                              }
+                            ]
+            , test "rejects a missing session" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount []
+                        |> expectSent (responses >> List.map .status) [ 401 ]
+            , test "rejects an expired or invalid session" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"deleted":false}],"rowCount":1}"""
+                        |> expectSent (responses >> List.map .status) [ 401 ]
+            , test "reports a database failure without clearing the cookie" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
+                        |> expectResponses
+                            [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Not available right now. Try again later."}""" } ]
+            ]
         , describe "DELETE /api/auth/session"
             [ test "ends the session and clears the cookie" <|
                 \() ->
@@ -1579,3 +1620,8 @@ simulateSubscriptions _ =
     SimulatedEffect.Ports.subscribe "interopToElm"
         Decode.value
         (Decode.decodeValue (TsDecode.decoder Interop.interop.toElm) >> Main.GotInterop)
+
+
+deleteAccount : List ( String, String ) -> App -> App
+deleteAccount headers =
+    requestWith { resolve = "first", method = "DELETE", path = [ "api", "auth", "account" ], headers = headers, body = "" }

@@ -1,4 +1,4 @@
-module Flow.Session exposing (Msg, current, end, update)
+module Flow.Session exposing (Msg, current, deleteAccount, end, update)
 
 import Api
 import Db
@@ -14,6 +14,7 @@ import SessionCookie
 type Msg
     = Found Interop.Resolver (Maybe Api.Account)
     | Ended Interop.Resolver
+    | Deleted Interop.Resolver Bool
 
 
 current : Server -> Request -> Reply Msg
@@ -38,6 +39,14 @@ end server request =
             Now (signedOut server)
 
 
+deleteAccount : Server -> Request -> Reply Msg
+deleteAccount server request =
+    withSession request
+        (\token resolver ->
+            query server.db resolver "Account deletion failed" (Db.deleteAccount token) (Deleted resolver)
+        )
+
+
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
@@ -45,6 +54,15 @@ update server msg =
             respond resolver (Response.json 200 (Api.encodeResponse Api.session account))
 
         Found resolver Nothing ->
+            respond resolver Response.notSignedIn
+
+        Deleted resolver True ->
+            respond resolver
+                (Response.json 200 (Api.encodeResponse Api.deleteAccount ())
+                    |> SessionCookie.clear server.origin
+                )
+
+        Deleted resolver False ->
             respond resolver Response.notSignedIn
 
         Ended resolver ->
