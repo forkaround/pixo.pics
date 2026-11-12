@@ -706,6 +706,33 @@ suite =
                         |> ProgramTest.update (Main.SidebarChanged { open = True, openMobile = True })
                         |> ProgramTest.clickLink "Library" "/library"
                         |> ProgramTest.expectModel (.sidebar >> Expect.equal { open = True, openMobile = False })
+            , test "collapses over 200 ms and stops at the X" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.update (Main.SidebarChanged { open = False, openMobile = False })
+                        |> ProgramTest.update (Main.SidebarAnimated 100)
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "style" "--sidebar-progress: 0.5") ]
+                        |> ProgramTest.update (Main.SidebarAnimated 100)
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "style" "--sidebar-progress: 1") ]
+                        |> ProgramTest.update (Main.SidebarAnimated 1000)
+                        |> ProgramTest.expectModel (.sidebarProgress >> Expect.equal 1)
+            , test "reverses from the current position without restarting the morph" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.update (Main.SidebarChanged { open = False, openMobile = False })
+                        |> ProgramTest.update (Main.SidebarAnimated 80)
+                        |> ProgramTest.update (Main.SidebarChanged { open = True, openMobile = False })
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "style" "--sidebar-progress: 0.4") ]
+                        |> ProgramTest.update (Main.SidebarAnimated 40)
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "style" "--sidebar-progress: 0.2") ]
+                        |> ProgramTest.update (Main.SidebarAnimated 1000)
+                        |> ProgramTest.expectModel (.sidebarProgress >> Expect.equal 0)
+            , test "opening the mobile sheet keeps the wordmark expanded" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.update (Main.SidebarChanged { open = True, openMobile = True })
+                        |> ProgramTest.update (Main.SidebarAnimated 100)
+                        |> ProgramTest.expectModel (.sidebarProgress >> Expect.equal 0)
             ]
         , describe "Explore"
             [ test "opens from the menu and marks it" <|

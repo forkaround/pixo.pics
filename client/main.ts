@@ -1,5 +1,4 @@
 import "./UI/elmcn-dialog";
-import "./logo";
 import { Elm, type Flags, type FromElm, type ToElm } from "./Main.elm";
 import { library } from "./library";
 import type { Command, Reply } from "./pipeline.worker";

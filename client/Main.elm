@@ -3,6 +3,7 @@ module Main exposing (Effect(..), Model, Msg(..), init, main, update, view)
 import Api
 import ApiClient
 import Browser
+import Browser.Events
 import Browser.Navigation as Navigation
 import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
@@ -48,7 +49,7 @@ main =
                 update msg model
                     |> Tuple.mapBoth (Tuple.pair key) (perform key)
         , view = Tuple.second >> view
-        , subscriptions = \_ -> Sub.map GotInterop InteropPorts.toElm
+        , subscriptions = Tuple.second >> subscriptions
         , onUrlRequest = UrlRequested
         , onUrlChange = UrlChanged
         }
@@ -67,6 +68,7 @@ type alias Model =
     , pipeline : Pipeline.Model
     , library : Library.Model
     , sidebar : Sidebar.State
+    , sidebarProgress : Float
     , page : Page
     }
 
@@ -170,6 +172,7 @@ init flags url =
         , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , library = Library.init canShare
         , sidebar = Sidebar.init
+        , sidebarProgress = 0
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
@@ -330,6 +333,28 @@ type Msg
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
     | SidebarChanged Sidebar.State
+    | SidebarAnimated Float
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ Sub.map GotInterop InteropPorts.toElm
+        , if model.sidebarProgress == sidebarTarget model.sidebar then
+            Sub.none
+
+          else
+            Browser.Events.onAnimationFrameDelta SidebarAnimated
+        ]
+
+
+sidebarTarget : Sidebar.State -> Float
+sidebarTarget sidebar =
+    if sidebar.open then
+        0
+
+    else
+        1
 
 
 update : Msg -> Model -> ( Model, Effect )
@@ -386,6 +411,18 @@ update msg model =
 
         SidebarChanged sidebar ->
             ( { model | sidebar = sidebar }, NoEffect )
+
+        SidebarAnimated delta ->
+            ( { model
+                | sidebarProgress =
+                    if model.sidebar.open then
+                        max 0 (model.sidebarProgress - max 0 delta / 200)
+
+                    else
+                        min 1 (model.sidebarProgress + max 0 delta / 200)
+              }
+            , NoEffect
+            )
 
         PathSelected path ->
             ( model, PushUrl (Path.toString path) )
@@ -802,6 +839,7 @@ view model =
                  else
                     ""
                 )
+            , attribute "style" ("--sidebar-progress: " ++ String.fromFloat model.sidebarProgress)
             ]
             [ viewBody model ]
         ]
@@ -941,9 +979,8 @@ viewShell model page =
                 [ href (Path.toString Path.Explore)
                 , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
                 ]
-                [ Html.node "pixo-logo"
-                    [ class "flex h-4 w-[calc(1rem*150/42.5)] shrink-0 transition-[width] duration-200 ease-linear motion-reduce:transition-none md:group-data-[collapsible=icon]:w-4" ]
-                    [ Logo.wordmark
+                [ span [ class "sidebar-logo flex h-4 shrink-0" ]
+                    [ Logo.sidebar model.sidebarProgress
                         [ Svg.Attributes.class "h-4 w-auto max-w-none shrink-0" ]
                     ]
                 , span [ class "sr-only" ] [ text "pixo" ]
@@ -963,7 +1000,7 @@ viewShell model page =
             [ Sidebar.menu [] [ viewSession model ] ]
         |> Sidebar.rail
         |> Sidebar.page [ class "min-w-0" ] page
-        |> Sidebar.toHtml [ class "bg-background text-foreground" ]
+        |> Sidebar.toHtml [ class "sidebar-morph bg-background text-foreground" ]
 
 
 hero : Session -> ExploreView.Hero

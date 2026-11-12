@@ -5,6 +5,35 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.sidebar-logo {
+  width: calc(1rem * 150 / 42.5);
+}
+
+@media (width >= 48rem) {
+  .sidebar-morph [data-slot="sidebar-gap"],
+  .sidebar-morph [data-slot="sidebar-container"] {
+    width: calc(
+      var(--sidebar-width) + (var(--sidebar-width-icon) - var(--sidebar-width)) *
+        var(--sidebar-progress)
+    );
+    transition: none;
+  }
+
+  .sidebar-logo {
+    width: calc(1rem * (150 - 107.5 * var(--sidebar-progress)) / 42.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-morph [data-slot="sidebar"] {
+    --sidebar-progress: 0;
+  }
+
+  .sidebar-morph [data-slot="sidebar"][data-state="collapsed"] {
+    --sidebar-progress: 1;
+  }
+}
+
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);

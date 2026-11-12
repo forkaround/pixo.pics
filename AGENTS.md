@@ -454,10 +454,11 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   run along the middle of a 5-unit stroke and the view box leaves room for it: change
   the stroke and both change. A class goes on it with `Svg.Attributes.class`. It is as
   tall as a menu icon, in a row as tall as a menu item, so the menu under it stays put
-  when the sidebar opens or closes. The `pixo-logo` wrapper transitions from the wordmark's
-  width to one icon's width (`w-4`), with the sidebar's 200 ms linear timing.
-  `client/logo.ts` observes that width and interpolates the SVG path into its
-  `data-collapsed` X: both paths must have the same commands and coordinate count.
+  when the sidebar opens or closes. Elm's `SidebarAnimated` frames advance
+  `model.sidebarProgress` over 200 ms, reversing from its current position when toggled.
+  `Logo.sidebar` interpolates the SVG path; `--sidebar-progress` drives both the sidebar
+  and logo widths from that same value, with no separate CSS transition or TypeScript.
+  The expanded and collapsed paths must have the same commands and coordinate count.
   The collapsed X is centered at 20 SVG units; its shape and stroke stay the same.
   Reduced motion skips the morph, and the mobile sheet keeps the full wordmark.
   `public/favicon.svg` is the same X, white on a
