@@ -95,9 +95,10 @@ pull requests and on `main`; it needs no database.
   object, not a union, and TypeScript narrows only `msg.tag`. Switch forms when the count
   crosses one.
 - **UI**: use the elmcn registry component instead of writing one; Phosphor
-  (`phosphor-icons/phosphor-elm`, `Regular`, and `Bold` in the sidebars' menus and
-  their trigger, where a 1 px line looks thin beside medium text) instead of hand-written SVG; `sr-only` text
-  on icon-only controls.
+  (`phosphor-icons/phosphor-elm`, `Regular`, and `Bold` in the sidebars' menus, their
+  trigger, the user menu, the theme toggle and the login and sign-up forms, where a 1 px line looks
+  thin beside medium text) instead of hand-written SVG; `sr-only` text on icon-only
+  controls.
 - **Elm steps in `build` run one at a time**: keep `build` as
   `bun run --sequential types:* check build:*`, never `types` (which runs both
   generators in parallel). On an empty `~/.elm`, as on every fresh Vercel machine, two
@@ -382,42 +383,64 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
   `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
   address: `/` (Explore), `/studio`, `/library`, `/settings/models` (also `/settings`),
-  `/settings/server`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
+  `/settings/server`, `/settings/account`, `/signup`, `/login`, `/verify`, and
   `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
   same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
   compile until it handles it) and its line in `Path.parse`'s parser. `open` also ends a
   passkey ceremony left unfinished. `NotFound` always links home and adds what fits the
-  session: the dashboard, sign-in and sign-up, or "Try again".
+  session: the account, sign-in and sign-up, or "Try again", in a row
+  that keeps its height while the session is `Unknown`.
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
   (only on a 401), `SignedIn account`, or `Unavailable reason` when the check failed some
   other way: the page then says so and offers "Try again" (`SessionRetried`), and sends
-  nobody to `/auth/signin`. `/dashboard` shows the account, a sign-out button and the
-  Passkeys card (`Api.passkeys`, "Add a passkey", and a bin on each row that asks
-  "Remove ...?" before `Api.deletePasskey`: the `Dashboard` page holds the list, the id
-  being confirmed and why a removal failed, and a removal never touches `model.ceremony`),
-  and sends a signed-out visitor to `/auth/signin`.
-- `/auth/signup` and `/auth/signin` post `Api.signUp` and `Api.signIn`, then say to
-  check the inbox. `/auth/signin` also has "Sign in with a passkey": post
-  `Api.passkeySignInOptions`, the `GetPasskey` port (`navigator.credentials.get`, any
-  passkey the device has for this site), then `PasskeyUsed` goes to `Api.passkeySignIn`
-  and on to `/dashboard`. `/auth/verify#<token>`
-  asks `Api.verification` who the link is for, shows the username and the email, and
+  nobody to `/login`. `/settings/account`, a section of the settings listed only to a
+  signed-in visitor, shows the account, a sign-out button and the Passkeys card
+  (`Api.passkeys`, "Add a passkey", and a bin on each row that asks "Remove ...?"
+  before `Api.deletePasskey`: the `Account` section holds the list, the id being
+  confirmed and why a removal failed, and a removal never touches `model.ceremony`),
+  and sends a signed-out visitor to `/login`. There is no dashboard: a sign-in, by
+  link or by passkey, leads home.
+- `/signup`, `/login`, `/verify` and the not-found page fill the window, outside the
+  shell, in one frame, `viewPlain`: the logo, which leads home, over a narrow column in the middle
+  of what is left, its text aligned left, over the theme toggle; and beside all that,
+  from `lg` up, `ExploreView.mosaic`, Explore's tiles in three columns that fade out
+  towards the bottom (`mask-b-from-55%`): decoration only. The column starts with a
+  heading and one line of text (`viewLead`, the page's `h1`), and its inputs and
+  buttons are `h-10`.
+- On `/signup` and `/login` the column starts with `viewAuthTabs`, `UI.Tabs` without
+  panels, as wide as the column, which reads "Log in" and "Create an account": a
+  click is `PathSelected`, which pushes the other address, so each tab has its own
+  URL and `open` starts its form empty. Under the tabs come the heading and the form. Each input is a `UI.InputGroup` with
+  an icon at its start and a placeholder, its text medium like the menus'; its label is still there, `sr-only`, for
+  screen readers and for `fillIn` in the tests.
+- They post `Api.signUp` and `Api.signIn`, then say to check the inbox. `/login` also
+  has "Use a passkey": post `Api.passkeySignInOptions`, the `GetPasskey` port
+  (`navigator.credentials.get`, any passkey the device has for this site), then
+  `PasskeyUsed` goes to `Api.passkeySignIn` and on to `/`. `/verify#<token>` asks
+  `Api.verification` who the link is for, shows the username and the email
+  (`viewIdentity`: an avatar of two letters beside them, as in the user menu), and
   only on the button's click posts `Api.verify`. Both send the token with
-  `ApiClient.withToken`, as a bearer token. A sign-in then goes to `/dashboard`; a new
-  account is first offered a passkey ("Not now" skips it).
+  `ApiClient.withToken`, as a bearer token. A sign-in then goes to `/`; a new account
+  is first offered a passkey ("Not now" skips it). A link that is refused offers
+  "Sign up again" and "Log in".
+- Showing who the link is for gives nothing away: the token that reads the email and
+  the username could sign in as them. It is there so that someone sent another
+  person's link sees whose account it is before the click. While the link is
+  checked, skeletons of the same sizes stand in, so nothing moves when it is found.
 - A passkey takes three steps, `model.ceremony` being `Waiting` meanwhile: post
   `Api.passkeyOptions`, send them to `main.ts` through the `CreatePasskey` port
   (`navigator.credentials.create`), and post what comes back in `PasskeyCreated` to
   `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`
   words it. `main.ts` only converts base64url and buffers: the ceremony's options
   (`residentKey: "required"`, `attestation: "none"`) are its only constants.
-- The studio, the library, Explore and the settings share a shell, `viewShell`: a
+- Every page but `/signup`, `/login`, `/verify` and the not-found page is in a
+  shell, `viewShell`: a
   `UI.Sidebar` that collapses to its icons (a sheet below `md`, closed by `open` once a
   page is picked; its `State` is `model.sidebar`) with Explore, Studio, Library and
-  Settings, and in its footer what fits the session (sign-in and sign-up, the
-  dashboard, or "Try again") and the theme toggle. Its header is the logo, `Logo.wordmark` (`client/Logo.elm`), the one
-  SVG drawn by hand, stroked in `currentColor` so it takes the text's color. Its paths
+  Settings, and in its footer the user menu, whoever is there. Its header is the logo,
+  `Logo.wordmark` (`client/Logo.elm`),
+  the one SVG drawn by hand, stroked in `currentColor` so it takes the text's color. Its paths
   run along the middle of a 5-unit stroke and the view box leaves room for it: change
   the stroke and both change. A class goes on it with `Svg.Attributes.class`. It is as
   tall as a menu icon, in a row as tall as a menu item, so the menu under it stays put
@@ -433,20 +456,63 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   groups and footer keep 12 px from the edges; and a sidebar down to its icons is
   3.5rem wide, so that padding holds and an icon stays where it was. The trigger is
   Phosphor's `sidebarSimple`, `Bold` like the menus' icons. Adding the component again
-  from the registry would undo this: merge by hand. The page beside it is an optional second sidebar (`viewAside`: the
-  studio's controls, the settings' sections) and the content. The other pages stay a
-  centred column of cards, with the theme toggle under them.
-- The theme toggle is `UI.Tabs` without panels, saved to `localStorage` via the
-  `WriteToLocalStorage` port and read back from the flags.
+  from the registry would undo this: merge by hand.
+- The page beside the sidebar is `viewFrame`: one top bar across it (`viewBar`: the
+  sidebar's trigger, the page's name, then at its right end the page's own tools, as
+  the library's search, and `viewEntry`), sticky, and under it an optional second
+  sidebar (`viewAside`: the studio's controls, the settings' sections, sticky below
+  the bar, as tall as what is left of the window and on the page's own background,
+  with a line between it and the content) beside the content. `viewEntry` is
+  "Log in" (left out below `sm`, where the guest's menu has it) and "Sign up" for a
+  signed-out visitor, on every page of the shell: two ghost buttons that look like
+  the sidebar's links, muted until hovered, neither one stressed. They are
+  drawn `invisible` while the session is `Unknown`, so the tools beside them don't
+  move when they appear.
+- The user menu (`viewUserMenu`) is the registry's sidebar demo's: a `UI.DropdownMenu`
+  whose trigger is a large menu button with a `UI.Avatar`, two lines of text and a
+  caret, so a sidebar down to its icons shows the avatar alone. It opens to the right,
+  without saying again who it is for, with what `viewSession` gives it, the theme as
+  three radio items, which leave the menu open, and for an account "Sign out". Signed
+  in, the trigger shows the username's first two letters (there is no picture), the
+  username and the email, and the menu has "Account
+  settings" (`PathSelected Path.Account`). Signed out it is the same menu for
+  "Guest", "Not signed in", under a person's icon, with "Log in" and "Create an
+  account"; when the session can't be checked it says so and has "Try again". While
+  the session is `Unknown` a skeleton of the same height stands there, so the footer
+  never changes its height.
+- The theme is three radio items in that menu; the pages without a sidebar
+  (`viewPlain`'s) have the toggle, `UI.Tabs` without panels,
+  its icons `Bold` like the menu's. Either
+  saves it to `localStorage` via the `WriteToLocalStorage` port, and the flags read
+  it back.
 - `/studio` makes pictures in the browser and `/library` keeps them there: neither
   needs a session (see [Image pipeline](#image-pipeline) and [Library](#library)).
 - `/`, Explore, is home (the logo, "Go home" and a sign-out lead there) and a
-  placeholder, wired to nothing yet: `client/ExploreView.elm` draws `tiles`, blocks of
-  several shapes and colors, in the library's columns, and holds no state. Above them a signed-out visitor gets a banner that links to `/auth/signup`
-  (`ExploreView.Hero`, which `Main.hero` picks from the session): `Shown` when
-  `SignedOut`, `Reserved` while `Unknown` (drawn `invisible`, so the banner moves
-  nothing when it appears), `Hidden` otherwise. Its button says "Sign up", not the
-  sidebar's "Create an account": a test clicks each by its text.
+  placeholder, wired to nothing yet: `client/ExploreView.elm` draws `tiles`, stock
+  photos of several shapes, in the library's columns, and holds no state. The photos
+  are Unsplash's, asked from its own server (`images.unsplash.com`, cropped by the
+  address to the tile's `width` and `height`): the only thing a page asks another
+  site for. A tile keeps its shape while its photo loads. Over the tiles, for
+  everyone, a heading ("See what people are making") and one line of text.
+- Above the tiles a signed-out visitor gets a first screen: one large photo from
+  edge to edge, as tall as the window under the top bar
+  (`min-h-[calc(100svh-3rem)]`), with a heading, one line of text, "Open the studio"
+  and "Sign up" over its lower left, in white on a dark gradient whatever the theme.
+  From 58% of its height down, the photo and its gradient fade into the page's
+  background (`mask-dissolve`, a utility in `main.css`): its stops follow an
+  S-curve, slow at both ends, since a fade that stops short shows as a line where
+  it ends. The text keeps 29svh under it (`pb-[29svh]`) and ends where the photo
+  is still nearly whole: white text can't sit on a fade that ends white in the
+  light theme.
+  The buttons take `Overlay.solid` and `Overlay.glass`, as every button over a
+  picture does. The photo is `ExploreView.cover`, one of the tiles' in three widths
+  (`srcset`): pick a dark, calm one, since the text sits on it.
+- It is `ExploreView.Hero`, which `Main.hero` picks from the session: `Shown` when
+  `SignedOut`, `Reserved` while `Unknown` (drawn `invisible`, so it moves nothing
+  when it appears), `Hidden` otherwise. Keep it plain: no badge over the heading,
+  no gradient text, no list of ticks, nothing that moves. Its second button says
+  "Sign up", as the top bar's does: at `/` a test can't `clickLink "Sign up"`,
+  which fails on two matches.
 - `/settings/models` lists the models (see [Image pipeline](#image-pipeline));
   `/settings/server` has the Server card (one row per `Api.checks`, release and region in
   the footer), which asks `Api.health` when it opens.
@@ -473,9 +539,10 @@ from Hugging Face into the browser and runs there. The server takes no part.
 - Nobody loads a model by hand. "Generate" plans the `Job`, then `start`s it: with the
   chosen weights in memory it generates; with none, `Loading` holds the job and
   `ModelLoaded` starts it; with other weights in memory, `Releasing` holds a `Pending`
-  (weights, `fresh`, the job) and `ModelReleased` loads it. "Download" at
-  `/settings/models` is the same path without a job, so a download ends with the model in
-  memory; "Download again" is `fresh`, the library's `force`. `cache` is always true.
+  (weights, the job) and `ModelReleased` loads it. "Download" at `/settings/models` is
+  the same path without a job, so a download ends with the model in memory. `cache` is
+  always true and `force` always false: a model is downloaded again only after "Remove
+  downloaded models".
 - The library loads a model one part after the other (`Component`: the text encoder, the
   transformer, the decoder). The studio and `/settings/models` show the same single bar
   (`StudioView.loading`), like the one for the steps: the part last heard of
@@ -634,6 +701,13 @@ mv -n src/UI/* client/UI/ && ls src/UI
   `-- SECTION` headings.
 - A class of ours that must win over a component's own takes Tailwind's `!`
   (`bg-red-600!`): the order of two classes in the attribute decides nothing.
+- `UI.Select` opens on a solid `bg-popover`, not the registry's translucent, blurred
+  one. `UI.DropdownMenu` is frosted, but less than the registry's: `bg-popover/80`
+  over `backdrop-blur-xl`. Its items look like the sidebar's: medium, `rounded-lg`
+  pills as tall as a sidebar item, muted until hovered, focused or checked, in a menu
+  whose corners (0.875rem) are the pill's plus its `p-1.5`. `minHeight` adds up the
+  same sizes (`itemHeight`, `menuPadding`, `separatorHeight`): change them together.
+  Adding either component again would undo this.
 - Builders: `X.new`, content, variants and sizes, `toHtml`; one `|>` per line.
 
   ```elm
@@ -719,7 +793,7 @@ mv -n src/UI/* client/UI/ && ls src/UI
   `Email` and `Username`: `Db` reads them with `Email.decoder` and `Username.decoder`,
   which parse. Request bodies (`Api.SignUp`, `Api.SignIn`, `Api.Assertion`,
   `Api.Attestation`) stay raw strings, so the server can tell a 400 from a 422.
-- Both emails link to `<origin>/auth/verify#<token>`: in the fragment, so the token
+- Both emails link to `<origin>/verify#<token>`: in the fragment, so the token
   reaches no server log. For the same reason the verify routes take it as
   `authorization: Bearer <token>`, and answer 401 without it.
 - The two secrets have their own types: a `SessionToken` comes from the `session` cookie
@@ -801,7 +875,7 @@ mv -n src/UI/* client/UI/ && ls src/UI
   value: never build HTML in a template.
 - Templates: `Services.Mailer.SignIn` and `Services.Mailer.SignUp`, for the two kinds of magic link;
   `Services.Mailer.PasskeyAdded` and `Services.Mailer.PasskeyRemoved`, which tell the account what happened
-  to it and link to `<origin>/dashboard`.
+  to it and link to `<origin>/settings/account`.
 - `Services/Mailer.elm` is the interface for sending email: a `Mailer` is a record
   with one job, `send`, from an `Envelope` (`to`, an `Email`, and `tag`) and a
   template's `Message` to an `Effect` whose message is an `Outcome`. It knows no
@@ -870,11 +944,13 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   `Request`, `Database`, `Http` and `SendToJs`. Add an `Effect` variant only for a new kind of command.
 - Write response bodies and port values as the JSON on the wire, not with the `Api` or
   `Interop` encoders: the test then pins the format the other side relies on.
-- Browser: act as a user does. `startAt "/auth/signup"` opens a page; `fillIn` a field by
+- Browser: act as a user does. `startAt "/signup"` opens a page; `fillIn` a field by
   its id and label, `clickButton` by its text (the `sr-only` label on an icon-only
   control), `clickLink`, then look for text in the view. `clickButton` takes any button
   that contains the text, and fails when two do: a button repeated per row gets an
-  `aria-label` that names its row ("Download Bonsai binary, 1-bit").
+  `aria-label` that names its row ("Download Bonsai binary, 1-bit"). Where a page
+  and the sidebar both have the button, as "Try again" and "Sign out" at
+  `/settings/account`, click inside one: `ProgramTest.within (Query.find [ tag "section" ])`.
 - `/studio` sends `CheckWebGpu` and `/library` sends `LoadLibrary` as they open: a test
   that reads every port value starts at `/settings/server`, which sends none.
 - Server: `request "first" "GET" [ "api", "health" ]` sends a request in through the port.

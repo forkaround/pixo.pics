@@ -52,6 +52,6 @@ suite =
         , test "writes a path after the origin" <|
             \() ->
                 Origin.parse "https://pixo.pics"
-                    |> Result.map (\origin -> Origin.href origin Path.Dashboard)
-                    |> Expect.equal (Ok "https://pixo.pics/dashboard")
+                    |> Result.map (\origin -> Origin.href origin Path.Account)
+                    |> Expect.equal (Ok "https://pixo.pics/settings/account")
         ]

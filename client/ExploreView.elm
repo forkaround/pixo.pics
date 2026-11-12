@@ -1,8 +1,8 @@
-module ExploreView exposing (Hero(..), view)
+module ExploreView exposing (Hero(..), mosaic, view)
 
-import Html exposing (Html, div, h2, p, text)
-import Html.Attributes exposing (attribute, class, href, style)
-import Overlay exposing (solid)
+import Html exposing (Html, div, h2, img, p, span, text)
+import Html.Attributes exposing (alt, attribute, class, height, href, src, style, width)
+import Overlay exposing (glass, solid)
 import Path
 import UI.Button as Button
 
@@ -15,11 +15,22 @@ type Hero
 
 view : Hero -> Html msg
 view hero =
-    div [ class "flex flex-1 flex-col gap-4 p-4" ]
+    div [ class "flex flex-1 flex-col" ]
         [ viewHero hero
-        , div [ class "columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5", attribute "aria-hidden" "true" ]
-            (List.map viewTile tiles)
+        , div [ class "flex flex-col gap-6 p-4 pt-8" ]
+            [ div [ class "flex flex-col gap-1" ]
+                [ h2 [ class "text-2xl font-semibold tracking-tight" ] [ text "See what people are making" ]
+                , p [ class "text-sm text-pretty text-muted-foreground" ] [ text "Every picture here was made in a browser." ]
+                ]
+            , div [ class "columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5", attribute "aria-hidden" "true" ]
+                mosaic
+            ]
         ]
+
+
+mosaic : List (Html msg)
+mosaic =
+    List.map viewTile tiles
 
 
 viewHero : Hero -> Html msg
@@ -38,57 +49,102 @@ viewHero hero =
 banner : List (Html.Attribute msg) -> Html msg
 banner attrs =
     Html.section
-        (class "flex flex-col items-start gap-4 rounded-xl bg-linear-to-br from-violet-600 via-fuchsia-600 to-orange-500 p-6 text-white shadow-sm md:flex-row md:items-center md:justify-between md:p-8"
+        (class "relative flex min-h-[calc(100svh-3rem)] flex-col justify-end text-white"
             :: attrs
         )
-        [ div [ class "flex flex-col gap-1" ]
-            [ h2 [ class "text-xl font-semibold tracking-tight text-balance md:text-2xl" ]
-                [ text "See what people are making" ]
-            , p [ class "text-sm text-white/85 text-pretty" ]
-                [ text "Every picture here was made in a browser. Sign up to share yours." ]
+        [ div [ class "absolute inset-0 bg-neutral-900 mask-dissolve" ]
+            [ img
+                [ src (cover 1600)
+                , attribute "srcset" (String.join ", " (List.map (\wide -> cover wide ++ " " ++ String.fromInt wide ++ "w") [ 800, 1600, 2400 ]))
+                , attribute "sizes" "(orientation: portrait) 150vh, 100vw"
+                , attribute "fetchpriority" "high"
+                , alt ""
+                , class "absolute inset-0 size-full object-cover"
+                ]
+                []
+            , div [ class "absolute inset-0 bg-linear-to-t from-black/30 via-black/45 to-transparent" ] []
             ]
-        , Button.new
-            |> Button.text "Sign up"
-            |> Button.toAnchor [ href (Path.toString Path.SignUp), solid, class "shrink-0" ]
+        , div [ class "relative flex flex-col gap-6 p-6 pb-[29svh] md:p-10 md:pb-[29svh] lg:p-14 lg:pb-[29svh]" ]
+            [ div [ class "flex flex-col gap-4" ]
+                [ h2 [ class "max-w-3xl text-4xl leading-none font-semibold tracking-tight text-balance sm:text-5xl lg:text-7xl" ]
+                    [ span [ class "block" ] [ text "Make pictures." ]
+                    , span [ class "block" ] [ text "Ask no one." ]
+                    ]
+                , p [ class "max-w-xl text-pretty text-white/80 md:text-lg" ]
+                    [ text "No cloud, no credits, no account. The model runs on your own graphics card." ]
+                ]
+            , div [ class "flex flex-wrap items-center gap-2" ]
+                [ Button.new
+                    |> Button.text "Open the studio"
+                    |> Button.toAnchor [ href (Path.toString Path.Studio), solid, class "h-11! px-5! text-base!" ]
+                , Button.new
+                    |> Button.text "Sign up"
+                    |> Button.toAnchor [ href (Path.toString Path.SignUp), glass, class "h-11! px-5! text-base!" ]
+                ]
+            ]
         ]
 
 
+cover : Int -> String
+cover wide =
+    "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&q=70&w=" ++ String.fromInt wide
+
+
 type alias Tile =
-    { shape : String
-    , colors : String
+    { width : Int
+    , height : Int
+    , photo : String
     }
 
 
 viewTile : Tile -> Html msg
 viewTile tile =
     div
-        [ class "mb-4 break-inside-avoid rounded-xl bg-linear-to-br shadow-sm ring-1 ring-foreground/10"
-        , class tile.colors
-        , style "aspect-ratio" tile.shape
+        [ class "mb-4 break-inside-avoid overflow-hidden rounded-xl bg-muted shadow-sm ring-1 ring-foreground/10"
+        , style "aspect-ratio" (String.fromInt tile.width ++ " / " ++ String.fromInt tile.height)
         ]
-        []
+        [ img
+            [ src (source tile)
+            , alt ""
+            , width tile.width
+            , height tile.height
+            , attribute "loading" "lazy"
+            , class "size-full object-cover"
+            ]
+            []
+        ]
+
+
+source : Tile -> String
+source tile =
+    "https://images.unsplash.com/photo-"
+        ++ tile.photo
+        ++ "?auto=format&fit=crop&q=60&w="
+        ++ String.fromInt tile.width
+        ++ "&h="
+        ++ String.fromInt tile.height
 
 
 tiles : List Tile
 tiles =
-    [ Tile "4 / 5" "from-rose-300 to-orange-400"
-    , Tile "1 / 1" "from-sky-300 to-indigo-500"
-    , Tile "16 / 9" "from-emerald-300 to-teal-600"
-    , Tile "9 / 16" "from-amber-200 to-rose-500"
-    , Tile "2 / 3" "from-violet-300 to-fuchsia-600"
-    , Tile "1 / 1" "from-lime-200 to-emerald-500"
-    , Tile "2 / 1" "from-cyan-200 to-blue-600"
-    , Tile "4 / 5" "from-fuchsia-300 to-purple-700"
-    , Tile "16 / 9" "from-orange-200 to-red-500"
-    , Tile "2 / 3" "from-teal-200 to-cyan-600"
-    , Tile "1 / 1" "from-pink-300 to-rose-600"
-    , Tile "9 / 16" "from-indigo-300 to-violet-700"
-    , Tile "3 / 1" "from-yellow-200 to-amber-500"
-    , Tile "4 / 5" "from-blue-300 to-sky-600"
-    , Tile "1 / 1" "from-stone-300 to-stone-500"
-    , Tile "16 / 9" "from-purple-300 to-pink-500"
-    , Tile "2 / 3" "from-green-300 to-lime-600"
-    , Tile "1 / 1" "from-red-300 to-orange-600"
-    , Tile "4 / 5" "from-slate-300 to-slate-600"
-    , Tile "2 / 1" "from-rose-200 to-fuchsia-500"
+    [ Tile 480 600 "1474511320723-9a56873867b5"
+    , Tile 480 480 "1541701494587-cb58502866ab"
+    , Tile 640 360 "1501785888041-af3ef285b470"
+    , Tile 450 800 "1433086966358-54859d0ed716"
+    , Tile 480 720 "1533738363-b7f9aef128ce"
+    , Tile 480 480 "1437622368342-7a3d73a34c8f"
+    , Tile 640 320 "1493246507139-91e8fad9978e"
+    , Tile 480 600 "1444703686981-a3abbc4d4fe3"
+    , Tile 640 360 "1500530855697-b586d89ba3ee"
+    , Tile 480 720 "1447752875215-b2761acb3c5d"
+    , Tile 480 480 "1517849845537-4d257902454a"
+    , Tile 450 800 "1513836279014-a89f7a76ae86"
+    , Tile 720 240 "1475924156734-496f6cac6ec1"
+    , Tile 480 600 "1550684848-fac1c5b4e853"
+    , Tile 480 480 "1567620905732-2d1ec7ab7445"
+    , Tile 640 360 "1519681393784-d120267933ba"
+    , Tile 480 720 "1500462918059-b1a0cb512f1d"
+    , Tile 480 480 "1490750967868-88aa4486c946"
+    , Tile 480 600 "1505142468610-359e7d316be0"
+    , Tile 640 320 "1472214103451-9374bd1c798e"
     ]

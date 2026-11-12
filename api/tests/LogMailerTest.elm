@@ -20,7 +20,7 @@ suite =
                                 { to = to, tag = "sign-in" }
                                 { subject = "Sign in to pixo"
                                 , html = "<p>Sign in</p>"
-                                , text = "Sign in:\nhttps://pixo.pics/auth/verify#Zm9vYmFy\n"
+                                , text = "Sign in:\nhttps://pixo.pics/verify#Zm9vYmFy\n"
                                 }
                         )
                     |> Expect.equal
@@ -28,7 +28,7 @@ suite =
                             (Effect.Batch
                                 [ Effect.SendToJs
                                     (Interop.Log Interop.Info
-                                        "Email not sent, printed instead (sign-in)\nTo: ada@example.com\nSubject: Sign in to pixo\n\nSign in:\nhttps://pixo.pics/auth/verify#Zm9vYmFy\n"
+                                        "Email not sent, printed instead (sign-in)\nTo: ada@example.com\nSubject: Sign in to pixo\n\nSign in:\nhttps://pixo.pics/verify#Zm9vYmFy\n"
                                     )
                                 , Effect.Succeed (Ok ())
                                 ]

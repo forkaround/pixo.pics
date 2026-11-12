@@ -138,7 +138,7 @@ update server msg =
                 (Response.json 201 (Api.encodeResponse Api.addPasskey passkey))
                 { to = account.email, tag = "passkey-added" }
                 (Services.Mailer.PasskeyAdded.email
-                    { url = Origin.href server.origin Path.Dashboard
+                    { url = Origin.href server.origin Path.Account
                     , username = account.username
                     , passkey = passkey.name
                     }
@@ -156,7 +156,7 @@ update server msg =
                 (Response.json 200 (Api.encodeResponse (Api.deletePasskey id) ()))
                 { to = account.email, tag = "passkey-removed" }
                 (Services.Mailer.PasskeyRemoved.email
-                    { url = Origin.href server.origin Path.Dashboard
+                    { url = Origin.href server.origin Path.Account
                     , username = account.username
                     , passkey = name
                     }

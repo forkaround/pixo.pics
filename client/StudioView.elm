@@ -85,7 +85,7 @@ controls model =
              ]
                 ++ viewSeed settings.seeding
             )
-        , div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-sidebar p-4" ]
+        , div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background p-4" ]
             [ message model.message
             , viewGenerate model
             ]

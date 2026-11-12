@@ -72,7 +72,6 @@ type Engine
 
 type alias Pending =
     { weights : Weights
-    , fresh : Bool
     , job : Maybe Job
     }
 
@@ -282,7 +281,6 @@ frameBudget =
 type Msg
     = WeightsChosen Weights
     | DownloadClicked Weights
-    | DownloadAgainClicked Weights
     | CancelClicked
     | ReleaseClicked
     | ClearClicked
@@ -312,7 +310,7 @@ type Event
 
 type Command
     = Check
-    | Load { weights : Weights, fresh : Bool }
+    | Load Weights
     | Generate Job
     | Cancel
     | Release
@@ -375,10 +373,7 @@ update msg model =
             ( edit (\settings -> { settings | seeding = FixedSeed (Seed.toString seed) }) model, Nothing )
 
         DownloadClicked chosen ->
-            start { weights = chosen, fresh = False, job = Nothing } model
-
-        DownloadAgainClicked chosen ->
-            start { weights = chosen, fresh = True, job = Nothing } model
+            start { weights = chosen, job = Nothing } model
 
         CancelClicked ->
             case model.engine of
@@ -414,7 +409,7 @@ update msg model =
             else
                 case plan model of
                     Ok ( job, random ) ->
-                        start { weights = model.settings.weights, fresh = False, job = Just job } { model | random = random }
+                        start { weights = model.settings.weights, job = Just job } { model | random = random }
 
                     Err problem ->
                         ( { model | message = Just (Problem problem) }, Nothing )
@@ -430,7 +425,7 @@ start pending model =
             load pending model
 
         Ready loaded ->
-            if loaded /= pending.weights || pending.fresh then
+            if loaded /= pending.weights then
                 ( { model | engine = Releasing (Just pending), message = Nothing }, Just Release )
 
             else
@@ -448,7 +443,7 @@ start pending model =
 load : Pending -> Model -> ( Model, Maybe Command )
 load pending model =
     ( { model | engine = Loading pending.weights [] pending.job, message = Nothing }
-    , Just (Load { weights = pending.weights, fresh = pending.fresh })
+    , Just (Load pending.weights)
     )
 
 

@@ -118,6 +118,23 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+@utility mask-dissolve {
+  mask-image: linear-gradient(
+    to bottom,
+    black 58%,
+    rgb(0 0 0 / 0.972) 62.2%,
+    rgb(0 0 0 / 0.896) 66.4%,
+    rgb(0 0 0 / 0.784) 70.6%,
+    rgb(0 0 0 / 0.648) 74.8%,
+    rgb(0 0 0 / 0.5) 79%,
+    rgb(0 0 0 / 0.352) 83.2%,
+    rgb(0 0 0 / 0.216) 87.4%,
+    rgb(0 0 0 / 0.104) 91.6%,
+    rgb(0 0 0 / 0.028) 95.8%,
+    transparent
+  );
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

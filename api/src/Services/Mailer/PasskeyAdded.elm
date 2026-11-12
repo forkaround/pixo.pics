@@ -28,6 +28,6 @@ email { url, username, passkey } =
                     ++ ". It can now sign in without an emailed link."
                 )
             , Layout.Button { label = "Review your passkeys", url = url }
-            , Layout.Footnote "If this wasn't you, remove the passkey from your dashboard: whoever added it can sign in to your account."
+            , Layout.Footnote "If this wasn't you, remove the passkey in your account settings: whoever added it can sign in to your account."
             ]
         }

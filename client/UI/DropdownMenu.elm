@@ -325,11 +325,11 @@ toHtml attrs (DropdownMenu config) =
 menuClass : Side -> String
 menuClass s =
     String.join " "
-        [ "group/menu fixed isolate z-50 m-0 inset-auto max-h-[calc(100%-0.5rem)] overflow-x-hidden overflow-y-auto rounded-lg border-0 p-1 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden"
+        [ "group/menu fixed isolate z-50 m-0 inset-auto max-h-[calc(100%-0.5rem)] overflow-x-hidden overflow-y-auto rounded-[0.875rem] border-0 p-1.5 text-sm text-popover-foreground shadow-lg ring-1 ring-foreground/10 outline-hidden"
         , "scale-95 opacity-0 ease-out open:scale-100 open:translate-0 open:opacity-100 starting:open:scale-95 starting:open:opacity-0"
         , slideClass s
         , "[transition:opacity_100ms,scale_100ms,translate_100ms,display_100ms_allow-discrete,overlay_100ms_allow-discrete]"
-        , "bg-popover/70 backdrop-blur-2xl backdrop-saturate-150"
+        , "bg-popover/80 backdrop-blur-xl backdrop-saturate-150"
         , "backdrop:hidden"
         ]
 
@@ -391,10 +391,10 @@ viewItem rootId prefix first index entry =
         insetClass isInset =
             class
                 (if isInset then
-                    "ps-7"
+                    "ps-8"
 
                  else
-                    "ps-1.5"
+                    "ps-2"
                 )
     in
     case entry of
@@ -412,7 +412,7 @@ viewItem rootId prefix first index entry =
                             Action ->
                                 [ attribute "popovertarget" rootId
                                 , attribute "popovertargetaction" "hide"
-                                , class "pe-1.5"
+                                , class "pe-2"
                                 ]
 
                             Checkbox checked ->
@@ -466,7 +466,7 @@ viewItem rootId prefix first index entry =
                     , Html.Attributes.disabled config.disabled
                     , autofocus isFirst
                     , class itemClass
-                    , class "pe-1.5 has-[+:popover-open]:bg-foreground/10"
+                    , class "pe-2 has-[+:popover-open]:bg-foreground/10"
                     , insetClass config.inset
                     ]
                     (config.children
@@ -496,7 +496,7 @@ viewItem rootId prefix first index entry =
         Label isInset children ->
             ( Html.div
                 [ attribute "data-slot" "dropdown-menu-label"
-                , class "py-1 pe-1.5 text-xs font-medium text-muted-foreground"
+                , class "py-1 pe-2 text-xs font-medium text-muted-foreground"
                 , insetClass isInset
                 ]
                 children
@@ -507,7 +507,7 @@ viewItem rootId prefix first index entry =
             ( Html.div
                 [ attribute "data-slot" "dropdown-menu-separator"
                 , attribute "role" "separator"
-                , class "pointer-events-none -mx-1 my-1 h-px bg-border"
+                , class "pointer-events-none -mx-1.5 my-1.5 h-px bg-border"
                 ]
                 []
             , index
@@ -529,7 +529,7 @@ viewItem rootId prefix first index entry =
 
 itemClass : String
 itemClass =
-    "relative flex w-full cursor-default items-center gap-1.5 rounded-md py-1 text-start text-sm outline-hidden select-none hover:bg-foreground/10 focus:bg-foreground/10 group-hover/menu:not-hover:focus:bg-transparent disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+    "relative flex w-full cursor-default items-center gap-2 rounded-lg py-2 text-start text-sm font-medium text-muted-foreground outline-hidden select-none hover:bg-foreground/10 hover:text-foreground focus:bg-foreground/10 focus:text-foreground aria-checked:text-foreground group-hover/menu:not-hover:focus:bg-transparent group-hover/menu:not-hover:focus:not-aria-checked:text-muted-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
 
 
 indicator : String -> Bool -> Html msg
@@ -604,7 +604,7 @@ css l =
 
 menuPadding : Length
 menuPadding =
-    { rem = 0.5, px = 0 }
+    { rem = 0.75, px = 0 }
 
 
 labelHeight : Length
@@ -614,12 +614,12 @@ labelHeight =
 
 itemHeight : Length
 itemHeight =
-    { rem = 1.75, px = 0 }
+    { rem = 2.25, px = 0 }
 
 
 separatorHeight : Length
 separatorHeight =
-    { rem = 0.5, px = 1 }
+    { rem = 0.75, px = 1 }
 
 
 minHeight : List (Item msg) -> String
@@ -710,7 +710,7 @@ placement s a =
 
 submenuPlacement : String
 submenuPlacement =
-    "position-try-fallbacks: flip-inline, flip-block, flip-inline flip-block; margin: -3px 0 0 0"
+    "position-try-fallbacks: flip-inline, flip-block, flip-inline flip-block; margin: -5px 0 0 0"
 
 
 slideClass : Side -> String

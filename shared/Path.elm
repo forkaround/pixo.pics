@@ -11,10 +11,10 @@ type Path
     | Library
     | Models
     | Server
+    | Account
     | SignUp
     | SignIn
     | Verify (Maybe LinkToken)
-    | Dashboard
     | NotFound
 
 
@@ -36,20 +36,20 @@ toString path =
         Server ->
             "/settings/server"
 
+        Account ->
+            "/settings/account"
+
         SignUp ->
-            "/auth/signup"
+            "/signup"
 
         SignIn ->
-            "/auth/signin"
+            "/login"
 
         Verify Nothing ->
-            "/auth/verify"
+            "/verify"
 
         Verify (Just token) ->
-            "/auth/verify#" ++ LinkToken.toString token
-
-        Dashboard ->
-            "/dashboard"
+            "/verify#" ++ LinkToken.toString token
 
         NotFound ->
             "/404"
@@ -70,8 +70,8 @@ parser =
         , Parser.map Models (Parser.s "settings")
         , Parser.map Models (Parser.s "settings" </> Parser.s "models")
         , Parser.map Server (Parser.s "settings" </> Parser.s "server")
-        , Parser.map SignUp (Parser.s "auth" </> Parser.s "signup")
-        , Parser.map SignIn (Parser.s "auth" </> Parser.s "signin")
-        , Parser.map Verify (Parser.s "auth" </> Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))
-        , Parser.map Dashboard (Parser.s "dashboard")
+        , Parser.map Account (Parser.s "settings" </> Parser.s "account")
+        , Parser.map SignUp (Parser.s "signup")
+        , Parser.map SignIn (Parser.s "login")
+        , Parser.map Verify (Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))
         ]

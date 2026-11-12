@@ -94,41 +94,41 @@ suite =
                             ]
             ]
         , describe "PasskeyAdded"
-            [ test "names the passkey and the account, and links to the dashboard" <|
+            [ test "names the passkey and the account, and links to the account" <|
                 \() ->
                     withUsername "ada"
                         (\username ->
                             Services.Mailer.PasskeyAdded.email
-                                { url = "https://pixo.pics/dashboard", username = username, passkey = Just "Apple Passwords" }
+                                { url = "https://pixo.pics/settings/account", username = username, passkey = Just "Apple Passwords" }
                                 |> Expect.all
                                     [ .html >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
                                     , .text >> String.contains "A passkey from Apple Passwords was added to the account ada." >> Expect.equal True
-                                    , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
-                                    , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                                    , .html >> String.contains "https://pixo.pics/settings/account" >> Expect.equal True
+                                    , .text >> String.contains "https://pixo.pics/settings/account" >> Expect.equal True
                                     ]
                         )
             , test "says just a passkey when nothing names it" <|
                 \() ->
                     withUsername "ada"
                         (\username ->
-                            Services.Mailer.PasskeyAdded.email { url = "https://pixo.pics/dashboard", username = username, passkey = Nothing }
+                            Services.Mailer.PasskeyAdded.email { url = "https://pixo.pics/settings/account", username = username, passkey = Nothing }
                                 |> .text
                                 |> String.contains "A passkey was added to the account ada."
                                 |> Expect.equal True
                         )
             ]
         , describe "PasskeyRemoved"
-            [ test "names the passkey and the account, and links to the dashboard" <|
+            [ test "names the passkey and the account, and links to the account" <|
                 \() ->
                     withUsername "ada"
                         (\username ->
                             Services.Mailer.PasskeyRemoved.email
-                                { url = "https://pixo.pics/dashboard", username = username, passkey = Just "Apple Passwords" }
+                                { url = "https://pixo.pics/settings/account", username = username, passkey = Just "Apple Passwords" }
                                 |> Expect.all
                                     [ .html >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
                                     , .text >> String.contains "A passkey from Apple Passwords was removed from the account ada." >> Expect.equal True
-                                    , .html >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
-                                    , .text >> String.contains "https://pixo.pics/dashboard" >> Expect.equal True
+                                    , .html >> String.contains "https://pixo.pics/settings/account" >> Expect.equal True
+                                    , .text >> String.contains "https://pixo.pics/settings/account" >> Expect.equal True
                                     ]
                         )
             ]

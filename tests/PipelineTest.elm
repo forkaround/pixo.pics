@@ -130,11 +130,6 @@ suite =
                 \() ->
                     Pipeline.remembered "nonsense"
                         |> Expect.equal []
-            , test "download again with the copy in memory released first" <|
-                \() ->
-                    Pipeline.update (DownloadAgainClicked Ternary) ready
-                        |> Tuple.mapFirst (Pipeline.update (Happened ModelReleased) >> Tuple.second)
-                        |> Expect.equal ( Just (Load { weights = Ternary, fresh = True }), Just Release )
             ]
         , describe "update"
             [ test "checks the browser on the first visit only" <|
@@ -152,13 +147,13 @@ suite =
                 \() ->
                     Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", SeedChanged "7" ] supported)
                         |> Tuple.mapFirst (Pipeline.update (Happened ModelLoaded) >> Tuple.second >> Maybe.andThen seedOf)
-                        |> Expect.equal ( Just 7, Just (Load { weights = Ternary, fresh = False }) )
+                        |> Expect.equal ( Just 7, Just (Load Ternary) )
             , test "makes room for another model before it loads it" <|
                 \() ->
                     Pipeline.update GenerateClicked
                         (run [ PromptChanged "a bonsai", WeightsChosen Binary ] ready)
                         |> Tuple.mapFirst (Pipeline.update (Happened ModelReleased) >> Tuple.second)
-                        |> Expect.equal ( Just (Load { weights = Binary, fresh = False }), Just Release )
+                        |> Expect.equal ( Just (Load Binary), Just Release )
             , test "asks for a prompt before it loads anything" <|
                 \() ->
                     Pipeline.update GenerateClicked supported

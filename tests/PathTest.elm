@@ -22,14 +22,14 @@ suite =
                 paths
                 ++ [ test "takes an empty fragment for no token" <|
                         \() ->
-                            Url.fromString "https://pixo.pics/auth/verify#"
+                            Url.fromString "https://pixo.pics/verify#"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just (Path.Verify Nothing))
                    , test "takes a trailing slash for the same page" <|
                         \() ->
-                            Url.fromString "https://pixo.pics/dashboard/"
+                            Url.fromString "https://pixo.pics/library/"
                                 |> Maybe.map Path.parse
-                                |> Expect.equal (Just Path.Dashboard)
+                                |> Expect.equal (Just Path.Library)
                    , test "opens the models at the settings" <|
                         \() ->
                             Url.fromString "https://pixo.pics/settings"
@@ -37,7 +37,7 @@ suite =
                                 |> Expect.equal (Just Path.Models)
                    , test "leaves a query string out of it" <|
                         \() ->
-                            Url.fromString "https://pixo.pics/auth/signin?from=email"
+                            Url.fromString "https://pixo.pics/login?from=email"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just Path.SignIn)
                    , test "takes an unknown address for not found" <|
@@ -81,6 +81,9 @@ next path =
             Just Path.Server
 
         Path.Server ->
+            Just Path.Account
+
+        Path.Account ->
             Just Path.SignUp
 
         Path.SignUp ->
@@ -94,9 +97,6 @@ next path =
                 |> Maybe.map (\token -> Path.Verify (Just token))
 
         Path.Verify (Just _) ->
-            Just Path.Dashboard
-
-        Path.Dashboard ->
             Just Path.NotFound
 
         Path.NotFound ->

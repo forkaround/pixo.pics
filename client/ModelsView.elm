@@ -99,14 +99,6 @@ viewWeights model weights =
 
         idle =
             model.engine == Empty || Pipeline.inMemory model.engine /= Nothing && not (isGenerating model.engine)
-
-        again =
-            Button.new
-                |> Button.icon (Phosphor.arrowsClockwise Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                |> Button.label ("Download " ++ name ++ " again")
-                |> Button.ghost
-                |> Button.small
-                |> Button.toHtml [ onClick (DownloadAgainClicked weights), disabled (not idle) ]
     in
     Item.new
         |> Item.outline
@@ -153,11 +145,10 @@ viewWeights model weights =
                         |> Button.outline
                         |> Button.small
                         |> Button.toHtml [ onClick ReleaseClicked, disabled (not idle) ]
-                    , again
                     ]
 
                 Downloaded ->
-                    [ again ]
+                    []
 
                 NotDownloaded ->
                     [ Button.new

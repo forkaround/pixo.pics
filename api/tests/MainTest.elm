@@ -216,7 +216,7 @@ suite =
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectSent
                             (\values ->
-                                ( List.any (Tuple.second >> String.contains "https://pixo.pics/auth/verify#Zm9vYmFy") (logs values)
+                                ( List.any (Tuple.second >> String.contains "https://pixo.pics/verify#Zm9vYmFy") (logs values)
                                 , List.map .status (responses values)
                                 )
                             )
@@ -1131,7 +1131,7 @@ email =
             (\html text ->
                 List.all
                     (\content ->
-                        String.contains "https://pixo.pics/auth/verify#Zm9vYmFy" content
+                        String.contains "https://pixo.pics/verify#Zm9vYmFy" content
                     )
                     [ html, text ]
             )
@@ -1266,7 +1266,7 @@ notice name =
                     (\content ->
                         String.contains name content
                             && String.contains "the account ada" content
-                            && String.contains "https://pixo.pics/dashboard" content
+                            && String.contains "https://pixo.pics/settings/account" content
                     )
                     [ html, text ]
             )

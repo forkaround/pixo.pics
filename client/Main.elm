@@ -24,10 +24,12 @@ import Phosphor exposing (IconWeight(..))
 import Pipeline
 import StudioView
 import Svg.Attributes
+import UI.Avatar as Avatar
 import UI.Button as Button
 import UI.Card as Card
+import UI.DropdownMenu as DropdownMenu
 import UI.Field as Field
-import UI.Input as Input
+import UI.InputGroup as InputGroup
 import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 import UI.Tabs as Tabs
@@ -75,7 +77,7 @@ type Passkeys
     | NotLoaded String
 
 
-type alias DashboardState =
+type alias AccountState =
     { passkeys : Passkeys
     , confirming : Maybe CredentialId
     , removalProblem : Maybe String
@@ -102,13 +104,13 @@ type Page
     | SignUp SignUpForm
     | SignIn SignInForm
     | Verify Verification
-    | Dashboard DashboardState
     | NotFound
 
 
 type Section
     = Models
     | Server
+    | Account AccountState
 
 
 type alias SignUpForm =
@@ -201,8 +203,8 @@ open url opened =
         Path.SignIn ->
             ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
 
-        Path.Dashboard ->
-            ( { model | page = Dashboard { passkeys = Loading, confirming = Nothing, removalProblem = Nothing } }
+        Path.Account ->
+            ( { model | page = Settings (Account { passkeys = Loading, confirming = Nothing, removalProblem = Nothing }) }
             , if model.session == SignedOut then
                 PushUrl (Path.toString Path.SignIn)
 
@@ -314,6 +316,7 @@ type Msg
     | PasskeySignInRequested
     | GotSignInOptions (Result ApiClient.Error Api.SignInOptions)
     | GotPasskeySignIn (Result ApiClient.Error Api.Account)
+    | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
     | SidebarChanged Sidebar.State
@@ -373,6 +376,9 @@ update msg model =
 
         SidebarChanged sidebar ->
             ( { model | sidebar = sidebar }, NoEffect )
+
+        PathSelected path ->
+            ( model, PushUrl (Path.toString path) )
 
         GotHealth (Ok health) ->
             ( { model | health = Checked health }, NoEffect )
@@ -468,7 +474,7 @@ update msg model =
                         ( { model | session = SignedIn account, page = Verify Accepted }, NoEffect )
 
                     else
-                        ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Dashboard) )
+                        ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Explore) )
 
                 ( Verify (Found _ _ Accepting), Err error ) ->
                     ( { model | page = Verify (Refused (ApiClient.errorToString error)) }, NoEffect )
@@ -487,7 +493,7 @@ update msg model =
                 ( _, ApiClient.Unauthorized _ ) ->
                     ( { model | session = SignedOut }
                     , case model.page of
-                        Dashboard _ ->
+                        Settings (Account _) ->
                             PushUrl (Path.toString Path.SignIn)
 
                         _ ->
@@ -499,8 +505,8 @@ update msg model =
 
         SessionRetried ->
             case model.page of
-                Dashboard dashboard ->
-                    ( { model | session = Unknown, page = Dashboard { dashboard | passkeys = Loading } }
+                Settings (Account account) ->
+                    ( { model | session = Unknown, page = Settings (Account { account | passkeys = Loading }) }
                     , Batch
                         [ Request (ApiClient.request Api.session () GotSession)
                         , Request (ApiClient.request Api.passkeys () GotPasskeys)
@@ -551,10 +557,10 @@ update msg model =
             ( model, NoEffect )
 
         GotPasskeys (Ok found) ->
-            ( editDashboard (\dashboard -> { dashboard | passkeys = Loaded found }) model, NoEffect )
+            ( editAccount (\account -> { account | passkeys = Loaded found }) model, NoEffect )
 
         GotPasskeys (Err error) ->
-            ( editDashboard (\dashboard -> { dashboard | passkeys = NotLoaded (ApiClient.errorToString error) }) model
+            ( editAccount (\account -> { account | passkeys = NotLoaded (ApiClient.errorToString error) }) model
             , NoEffect
             )
 
@@ -575,17 +581,17 @@ update msg model =
 
         GotPasskey (Ok passkey) ->
             ( { model | ceremony = Resting Nothing }
-                |> editDashboard
-                    (\dashboard ->
-                        case dashboard.passkeys of
+                |> editAccount
+                    (\account ->
+                        case account.passkeys of
                             Loaded found ->
-                                { dashboard | passkeys = Loaded (found ++ [ passkey ]) }
+                                { account | passkeys = Loaded (found ++ [ passkey ]) }
 
                             _ ->
-                                dashboard
+                                account
                     )
             , if model.page == Verify Accepted then
-                PushUrl (Path.toString Path.Dashboard)
+                PushUrl (Path.toString Path.Explore)
 
               else
                 NoEffect
@@ -595,32 +601,32 @@ update msg model =
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         PasskeyRemoveRequested id ->
-            ( editDashboard (\dashboard -> { dashboard | confirming = Just id }) model, NoEffect )
+            ( editAccount (\account -> { account | confirming = Just id }) model, NoEffect )
 
         PasskeyRemoveCancelled ->
-            ( editDashboard (\dashboard -> { dashboard | confirming = Nothing }) model, NoEffect )
+            ( editAccount (\account -> { account | confirming = Nothing }) model, NoEffect )
 
         PasskeyRemoveConfirmed id ->
-            ( editDashboard (\dashboard -> { dashboard | confirming = Nothing, removalProblem = Nothing }) model
+            ( editAccount (\account -> { account | confirming = Nothing, removalProblem = Nothing }) model
             , Request (ApiClient.request (Api.deletePasskey id) () (GotPasskeyRemoved id))
             )
 
         GotPasskeyRemoved id (Ok ()) ->
-            ( editDashboard
-                (\dashboard ->
-                    case dashboard.passkeys of
+            ( editAccount
+                (\account ->
+                    case account.passkeys of
                         Loaded found ->
-                            { dashboard | passkeys = Loaded (List.filter (\passkey -> passkey.id /= id) found) }
+                            { account | passkeys = Loaded (List.filter (\passkey -> passkey.id /= id) found) }
 
                         _ ->
-                            dashboard
+                            account
                 )
                 model
             , NoEffect
             )
 
         GotPasskeyRemoved _ (Err error) ->
-            ( editDashboard (\dashboard -> { dashboard | removalProblem = Just (ApiClient.errorToString error) }) model
+            ( editAccount (\account -> { account | removalProblem = Just (ApiClient.errorToString error) }) model
             , NoEffect
             )
 
@@ -640,7 +646,7 @@ update msg model =
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
 
         GotPasskeySignIn (Ok account) ->
-            ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Dashboard) )
+            ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Explore) )
 
         GotPasskeySignIn (Err error) ->
             ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
@@ -705,11 +711,11 @@ editSignUp edit model =
             model
 
 
-editDashboard : (DashboardState -> DashboardState) -> Model -> Model
-editDashboard edit model =
+editAccount : (AccountState -> AccountState) -> Model -> Model
+editAccount edit model =
     case model.page of
-        Dashboard dashboard ->
-            { model | page = Dashboard (edit dashboard) }
+        Settings (Account account) ->
+            { model | page = Settings (Account (edit account)) }
 
         _ ->
             model
@@ -790,14 +796,14 @@ title page =
         Settings Server ->
             "Server · pixo"
 
+        Settings (Account _) ->
+            "Account · pixo"
+
         SignUp _ ->
             "Sign up · pixo"
 
         SignIn _ ->
-            "Sign in · pixo"
-
-        Dashboard _ ->
-            "Dashboard · pixo"
+            "Log in · pixo"
 
         Verify _ ->
             "Verify · pixo"
@@ -810,41 +816,39 @@ viewBody : Model -> Html Msg
 viewBody model =
     case model.page of
         Studio ->
-            viewShell model
-                [ viewAside "md:w-80" model "Studio" [ Html.map GotPipeline (StudioView.controls model.pipeline) ]
+            viewFrame model
+                "Studio"
+                []
+                [ viewAside "md:w-80" [ Html.map GotPipeline (StudioView.controls model.pipeline) ]
                 , viewContent
                     [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline ]
                 ]
 
         Library ->
-            viewShell model
-                [ viewContent
-                    [ viewBar [ class "sticky top-0 z-10 bg-background/85 backdrop-blur" ]
-                        model
-                        "Library"
-                        [ Html.map GotLibrary (LibraryView.search model.library) ]
-                    , Html.map GotLibrary (LibraryView.view model.library)
-                    ]
-                ]
+            viewFrame model
+                "Library"
+                [ Html.map GotLibrary (LibraryView.search model.library) ]
+                [ viewContent [ Html.map GotLibrary (LibraryView.view model.library) ] ]
 
         Explore ->
-            viewShell model
-                [ viewContent
-                    [ viewBar [ class "sticky top-0 z-10 bg-background/85 backdrop-blur" ] model "Explore" []
-                    , ExploreView.view (hero model.session)
-                    ]
-                ]
+            viewFrame model "Explore" [] [ viewContent [ ExploreView.view (hero model.session) ] ]
 
         Settings section ->
-            viewShell model
+            viewFrame model
+                "Settings"
+                []
                 [ viewAside "md:w-56"
-                    model
-                    "Settings"
                     [ Sidebar.group []
                         [ Sidebar.menu []
-                            [ viewDestination (section == Models) Path.Models Phosphor.cube "Models"
-                            , viewDestination (section == Server) Path.Server Phosphor.hardDrives "Server"
-                            ]
+                            (viewDestination (section == Models) Path.Models Phosphor.cube "Models"
+                                :: viewDestination (section == Server) Path.Server Phosphor.hardDrives "Server"
+                                :: (if isAccount model.page || isSignedIn model.session then
+                                        [ viewDestination (isAccount model.page) Path.Account Phosphor.userCircle "Account" ]
+
+                                    else
+                                        []
+                                   )
+                            )
                         ]
                     ]
                 , viewContent
@@ -854,12 +858,40 @@ viewBody model =
 
                         Server ->
                             div [ class "flex flex-1 flex-col items-center p-4 md:p-8" ] [ viewHealth model.health ]
+
+                        Account account ->
+                            div [ class "flex flex-1 flex-col items-center gap-4 p-4 md:p-8" ]
+                                (viewAccount model.session model.ceremony account)
                     ]
                 ]
 
-        _ ->
-            div [ class "flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6 text-foreground" ]
-                (viewPage model ++ [ viewThemeTabs model.theme ])
+        SignUp signUp ->
+            viewPlain model.theme (viewAuthTabs Path.SignUp :: viewSignUp signUp)
+
+        SignIn signIn ->
+            viewPlain model.theme (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
+
+        Verify verification ->
+            viewPlain model.theme (viewVerification model.ceremony verification)
+
+        NotFound ->
+            viewPlain model.theme
+                [ viewLead "Not found" "There is nothing at this address."
+                , div [ class "flex flex-col gap-4" ]
+                    [ Button.new
+                        |> Button.text "Go home"
+                        |> Button.toAnchor [ href (Path.toString Path.Explore), class "h-10" ]
+                    , div [ class "flex min-h-10 gap-4" ] (notFoundOptions model.session)
+                    ]
+                ]
+
+
+viewFrame : Model -> String -> List (Html Msg) -> List (Html Msg) -> Html Msg
+viewFrame model heading tools page =
+    viewShell model
+        [ viewBar model heading tools
+        , div [ class "flex min-w-0 flex-1 flex-col md:flex-row" ] page
+        ]
 
 
 viewShell : Model -> List (Html Msg) -> Html Msg
@@ -883,19 +915,17 @@ viewShell model page =
         |> Sidebar.content
             [ Sidebar.group []
                 [ Sidebar.menu []
-                    [ viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
-                    , viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
-                    , viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
-                    , viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings"
-                    ]
+                    (viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
+                        :: viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
+                        :: viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
+                        :: [ viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings" ]
+                    )
                 ]
             ]
         |> Sidebar.footer
-            [ Sidebar.menu [] (viewAccount model.session)
-            , div [ class "flex justify-center md:group-data-[collapsible=icon]:hidden" ] [ viewThemeTabs model.theme ]
-            ]
+            [ Sidebar.menu [] [ viewSession model ] ]
         |> Sidebar.rail
-        |> Sidebar.page [ class "min-w-0 md:flex-row" ] page
+        |> Sidebar.page [ class "min-w-0" ] page
         |> Sidebar.toHtml [ class "bg-background text-foreground" ]
 
 
@@ -913,6 +943,26 @@ hero session =
 
         SignedIn _ ->
             ExploreView.Hidden
+
+
+isAccount : Page -> Bool
+isAccount page =
+    case page of
+        Settings (Account _) ->
+            True
+
+        _ ->
+            False
+
+
+isSignedIn : Session -> Bool
+isSignedIn session =
+    case session of
+        SignedIn _ ->
+            True
+
+        _ ->
+            False
 
 
 isSettings : Page -> Bool
@@ -944,86 +994,168 @@ viewDestination current path icon label =
         ]
 
 
-viewAccount : Session -> List (Html Msg)
-viewAccount session =
-    case session of
+viewSession : Model -> Html Msg
+viewSession model =
+    let
+        icon shape =
+            shape Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+
+        guest detail actions =
+            Sidebar.menuItem []
+                [ viewUserMenu model.theme
+                    { avatar = [ icon Phosphor.user ]
+                    , name = "Guest"
+                    , detail = detail
+                    , actions = actions
+                    , leave = []
+                    }
+                ]
+    in
+    case model.session of
         Unknown ->
-            [ Sidebar.menuItem [ attribute "aria-hidden" "true" ] [ Sidebar.menuSkeleton [ Sidebar.showIcon ] ] ]
+            Sidebar.menuItem [ attribute "aria-hidden" "true" ]
+                [ div [ class "flex h-12 items-center gap-2 p-2 md:group-data-[collapsible=icon]:p-0" ]
+                    [ Skeleton.view [ class "size-8 shrink-0 rounded-full" ]
+                    , div [ class "flex flex-1 flex-col gap-1.5 md:group-data-[collapsible=icon]:hidden" ]
+                        [ Skeleton.view [ class "h-3.5 w-20" ]
+                        , Skeleton.view [ class "h-3 w-32" ]
+                        ]
+                    ]
+                ]
 
         Unavailable _ ->
-            [ li [ class "flex flex-col items-start gap-2 p-2 text-sm text-muted-foreground md:group-data-[collapsible=icon]:hidden" ]
-                [ text "Can't check who is signed in."
-                , retry
-                ]
-            ]
+            guest "Can't check who is signed in"
+                [ DropdownMenu.item [ onClick SessionRetried ] [ icon Phosphor.arrowClockwise, text "Try again" ] ]
 
         SignedOut ->
-            [ viewDestination False Path.SignIn Phosphor.signIn "Sign in"
-            , viewDestination False Path.SignUp Phosphor.userPlus "Create an account"
+            guest "Not signed in"
+                [ DropdownMenu.item [ onClick (PathSelected Path.SignIn) ] [ icon Phosphor.signIn, text "Log in" ]
+                , DropdownMenu.item [ onClick (PathSelected Path.SignUp) ] [ icon Phosphor.userPlus, text "Create an account" ]
+                ]
+
+        SignedIn account ->
+            Sidebar.menuItem []
+                [ viewUserMenu model.theme
+                    { avatar = [ text (String.toUpper (String.left 2 (Username.toString account.username))) ]
+                    , name = Username.toString account.username
+                    , detail = Email.toString account.email
+                    , actions =
+                        [ DropdownMenu.item [ onClick (PathSelected Path.Account) ]
+                            [ icon Phosphor.userCircle, text "Account settings" ]
+                        ]
+                    , leave =
+                        [ DropdownMenu.item [ onClick SignOutClicked ] [ icon Phosphor.signOut, text "Sign out" ] ]
+                    }
+                ]
+
+
+viewUserMenu :
+    Theme
+    ->
+        { avatar : List (Html Msg)
+        , name : String
+        , detail : String
+        , actions : List (DropdownMenu.Item Msg)
+        , leave : List (DropdownMenu.Item Msg)
+        }
+    -> Html Msg
+viewUserMenu theme user =
+    let
+        avatar =
+            Avatar.new
+                |> Avatar.fallback user.avatar
+                |> Avatar.toHtml [ attribute "aria-hidden" "true" ]
+
+        details =
+            div [ class "grid flex-1 text-start text-sm leading-tight" ]
+                [ span [ class "truncate font-medium text-sidebar-foreground" ] [ text user.name ]
+                , span [ class "truncate text-xs" ] [ text user.detail ]
+                ]
+
+        themeItem choice shape label =
+            DropdownMenu.radioItem (theme == choice)
+                [ onClick (ThemeSelected choice) ]
+                [ shape Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ], text label ]
+    in
+    DropdownMenu.new
+        |> DropdownMenu.id "user"
+        |> DropdownMenu.trigger (Sidebar.menuButtonAttributes ++ [ Sidebar.large ])
+            [ avatar
+            , details
+            , Phosphor.caretUpDown Bold
+                |> Phosphor.withClass "ms-auto size-4"
+                |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
             ]
+        |> DropdownMenu.content
+            ([ DropdownMenu.group user.actions
+             , DropdownMenu.separator
+             , DropdownMenu.group
+                [ DropdownMenu.label [ text "Theme" ]
+                , themeItem Interop.Light Phosphor.sun "Light"
+                , themeItem Interop.Dark Phosphor.moon "Dark"
+                , themeItem Interop.System Phosphor.monitor "System"
+                ]
+             ]
+                ++ (if List.isEmpty user.leave then
+                        []
 
-        SignedIn _ ->
-            [ viewDestination False Path.Dashboard Phosphor.userCircle "Dashboard" ]
+                    else
+                        [ DropdownMenu.separator, DropdownMenu.group user.leave ]
+                   )
+            )
+        |> DropdownMenu.right
+        |> DropdownMenu.alignEnd
+        |> DropdownMenu.toHtml [ class "min-w-56" ]
 
 
-viewAside : String -> Model -> String -> List (Html Msg) -> Html Msg
-viewAside wide model heading children =
+viewAside : String -> List (Html Msg) -> Html Msg
+viewAside wide children =
     Html.aside
-        [ class "flex w-full shrink-0 flex-col border-b bg-sidebar text-sidebar-foreground md:sticky md:top-0 md:h-svh md:border-e md:border-b-0"
+        [ class "flex w-full shrink-0 flex-col border-b bg-background md:sticky md:top-12 md:h-[calc(100svh-3rem)] md:overflow-y-auto md:border-e md:border-b-0"
         , class wide
         ]
-        [ viewBar [] model heading []
-        , div [ class "min-h-0 flex-1 md:overflow-y-auto" ] children
+        children
+
+
+viewBar : Model -> String -> List (Html Msg) -> Html Msg
+viewBar model heading tools =
+    Html.header
+        [ class "sticky top-0 z-10 flex h-12 shrink-0 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur" ]
+        [ Sidebar.trigger [ class "-ms-1 text-muted-foreground" ] model.sidebar SidebarChanged
+        , Html.h1 [ class "text-sm font-medium" ] [ text heading ]
+        , div [ class "ms-auto flex min-w-0 flex-1 items-center justify-end gap-3" ] (tools ++ [ viewEntry model ])
         ]
 
 
-viewBar : List (Html.Attribute Msg) -> Model -> String -> List (Html Msg) -> Html Msg
-viewBar attrs model heading children =
-    Html.header (class "flex h-12 shrink-0 items-center gap-3 border-b px-4" :: attrs)
-        (Sidebar.trigger [ class "-ms-1 text-muted-foreground" ] model.sidebar SidebarChanged
-            :: Html.h1 [ class "text-sm font-medium" ] [ text heading ]
-            :: children
-        )
+viewEntry : Model -> Html Msg
+viewEntry model =
+    let
+        entry path label attrs =
+            Button.new
+                |> Button.text label
+                |> Button.ghost
+                |> Button.toAnchor (href (Path.toString path) :: class "text-muted-foreground" :: attrs)
+
+        links attrs =
+            div (class "flex shrink-0 items-center gap-1" :: attrs)
+                [ entry Path.SignIn "Log in" [ class "max-sm:hidden" ]
+                , entry Path.SignUp "Sign up" []
+                ]
+    in
+    case model.session of
+        SignedOut ->
+            links []
+
+        Unknown ->
+            links [ class "invisible", attribute "aria-hidden" "true" ]
+
+        _ ->
+            text ""
 
 
 viewContent : List (Html Msg) -> Html Msg
 viewContent children =
     Html.section [ class "flex min-w-0 flex-1 flex-col" ] children
-
-
-viewPage : Model -> List (Html Msg)
-viewPage model =
-    case model.page of
-        SignUp signUp ->
-            [ viewSignUp signUp ]
-
-        SignIn signIn ->
-            [ viewSignIn model.ceremony signIn ]
-
-        Dashboard dashboard ->
-            case model.session of
-                SignedIn _ ->
-                    [ viewDashboard model.session, viewPasskeys model.ceremony dashboard ]
-
-                _ ->
-                    [ viewDashboard model.session ]
-
-        Verify verification ->
-            [ viewVerification model.ceremony verification ]
-
-        _ ->
-            [ notice "Not found"
-                "There is nothing at this address."
-                (link Path.Explore "Go home" :: notFoundOptions model.session)
-            ]
-
-
-link : Path.Path -> String -> Html Msg
-link path label =
-    Button.new
-        |> Button.text label
-        |> Button.link
-        |> Button.toAnchor [ href (Path.toString path) ]
 
 
 notice : String -> String -> List (Html Msg) -> Html Msg
@@ -1051,64 +1183,112 @@ retry =
 
 notFoundOptions : Session -> List (Html Msg)
 notFoundOptions session =
+    let
+        option path label =
+            Button.new
+                |> Button.text label
+                |> Button.outline
+                |> Button.toAnchor [ href (Path.toString path), class "h-10 flex-1" ]
+    in
     case session of
         Unknown ->
             []
 
         Unavailable _ ->
-            [ retry ]
+            [ Button.new
+                |> Button.text "Try again"
+                |> Button.outline
+                |> Button.toHtml [ onClick SessionRetried, class "h-10 flex-1" ]
+            ]
 
         SignedOut ->
-            [ link Path.SignIn "Sign in"
-            , link Path.SignUp "Create an account"
+            [ option Path.SignIn "Log in"
+            , option Path.SignUp "Create an account"
             ]
 
         SignedIn _ ->
-            [ link Path.Dashboard "Dashboard" ]
+            [ option Path.Account "Account" ]
 
 
-viewSignUp : SignUpForm -> Html Msg
+viewPlain : Theme -> List (Html Msg) -> Html Msg
+viewPlain theme children =
+    div [ class "grid min-h-svh bg-background text-foreground lg:grid-cols-2" ]
+        [ div [ class "flex flex-col p-6 md:p-10" ]
+            [ Html.header [ class "flex h-9 items-center" ]
+                [ a
+                    [ href (Path.toString Path.Explore)
+                    , class "flex h-8 items-center rounded-lg ring-ring outline-hidden focus-visible:ring-2"
+                    ]
+                    [ Logo.wordmark [ Svg.Attributes.class "h-4 w-auto" ]
+                    , span [ class "sr-only" ] [ text "pixo" ]
+                    ]
+                ]
+            , Html.main_ [ class "flex flex-1 items-center justify-center py-10" ]
+                [ div [ class "flex w-full max-w-sm flex-col gap-8" ] children ]
+            , Html.footer [ class "flex h-9 items-center" ] [ viewThemeTabs theme ]
+            ]
+        , div [ class "hidden p-4 ps-0 lg:block", attribute "aria-hidden" "true" ]
+            [ div [ class "relative h-full overflow-hidden mask-b-from-55%" ]
+                [ div [ class "absolute inset-x-0 top-0 columns-3 gap-4" ] ExploreView.mosaic ]
+            ]
+        ]
+
+
+viewAuthTabs : Path.Path -> Html Msg
+viewAuthTabs current =
+    Tabs.new
+        |> Tabs.id "auth"
+        |> Tabs.onSelect PathSelected
+        |> Tabs.value current
+        |> Tabs.tabs
+            [ Tabs.tab Path.SignIn [ text "Log in" ] []
+            , Tabs.tab Path.SignUp [ text "Create an account" ] []
+            ]
+        |> Tabs.toHtml
+            [ attribute "aria-label" "Log in or create an account"
+            , class "*:data-[slot=tabs-list]:w-full"
+            ]
+
+
+viewLead : String -> String -> Html Msg
+viewLead heading body =
+    div [ class "flex flex-col gap-2" ]
+        [ Html.h1 [ class "text-2xl font-semibold tracking-tight" ] [ text heading ]
+        , p [ class "text-sm text-pretty text-muted-foreground" ] [ text body ]
+        ]
+
+
+viewSent : String -> List (Html Msg)
+viewSent body =
+    [ viewLead "Check your inbox" body ]
+
+
+viewSignUp : SignUpForm -> List (Html Msg)
 viewSignUp signUp =
     case signUp.state of
         Sent ->
-            notice "Check your inbox"
-                ("We sent a link to " ++ String.trim signUp.email ++ ". It expires in 15 minutes.")
-                []
+            viewSent ("We sent a link to " ++ String.trim signUp.email ++ ". It expires in 15 minutes.")
 
         Open attempt ->
-            viewSignUpForm signUp attempt
-
-
-viewSignUpForm : SignUpForm -> Attempt -> Html Msg
-viewSignUpForm signUp attempt =
-    Card.new
-        |> Card.title [ text "Create your account" ]
-        |> Card.description [ text "We'll email you a link. No password needed." ]
-        |> Card.content []
-            [ form [ onSubmit SignUpSubmitted ]
+            [ viewLead "Create your account" "We'll email you a link. No password needed."
+            , form [ onSubmit SignUpSubmitted ]
                 [ Field.group []
-                    [ Field.view []
-                        [ Field.label [ for "email" ] [ text "Email" ]
-                        , Input.view
-                            [ id "email"
-                            , name "email"
-                            , type_ "email"
-                            , autocomplete True
-                            , required True
-                            , value signUp.email
-                            , onInput EmailChanged
-                            ]
-                        ]
+                    [ viewEmailField signUp.email EmailChanged
                     , Field.view []
-                        [ Field.label [ for "username" ] [ text "Username" ]
-                        , Input.view
-                            [ id "username"
-                            , name "username"
-                            , attribute "autocapitalize" "none"
-                            , attribute "spellcheck" "false"
-                            , required True
-                            , value signUp.username
-                            , onInput UsernameChanged
+                        [ Field.label [ for "username", class "sr-only" ] [ text "Username" ]
+                        , InputGroup.view [ class "h-10" ]
+                            [ InputGroup.input
+                                [ id "username"
+                                , name "username"
+                                , Html.Attributes.placeholder "Username"
+                                , class "font-medium"
+                                , attribute "autocapitalize" "none"
+                                , attribute "spellcheck" "false"
+                                , required True
+                                , value signUp.username
+                                , onInput UsernameChanged
+                                ]
+                            , InputGroup.start [] [ Phosphor.at Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
                             ]
                         , Field.description [] [ text "3 to 20 letters, digits or underscores." ]
                         ]
@@ -1117,46 +1297,22 @@ viewSignUpForm signUp attempt =
                     ]
                 ]
             ]
-        |> Card.footer [ class "text-sm text-muted-foreground" ]
-            [ text "Already have an account?", link Path.SignIn "Sign in" ]
-        |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewSignIn : Ceremony -> SignInForm -> Html Msg
+viewSignIn : Ceremony -> SignInForm -> List (Html Msg)
 viewSignIn ceremony signIn =
     case signIn.state of
         Sent ->
-            notice "Check your inbox"
-                ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
-                []
+            viewSent ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
 
         Open attempt ->
-            viewSignInForm ceremony signIn attempt
-
-
-viewSignInForm : Ceremony -> SignInForm -> Attempt -> Html Msg
-viewSignInForm ceremony signIn attempt =
-    Card.new
-        |> Card.title [ text "Sign in" ]
-        |> Card.description [ text "We'll email you a link. No password needed." ]
-        |> Card.content []
-            [ form [ onSubmit SignInSubmitted ]
+            [ viewLead "Log in to your account" "We'll email you a link. No password needed."
+            , form [ onSubmit SignInSubmitted ]
                 [ Field.group []
-                    [ Field.view []
-                        [ Field.label [ for "email" ] [ text "Email" ]
-                        , Input.view
-                            [ id "email"
-                            , name "email"
-                            , type_ "email"
-                            , autocomplete True
-                            , required True
-                            , value signIn.email
-                            , onInput SignInEmailChanged
-                            ]
-                        ]
+                    [ viewEmailField signIn.email SignInEmailChanged
                     , viewAttemptProblem attempt
                     , viewSubmit attempt
-                    , Field.separator [ class "*:data-[slot=field-separator-content]:bg-card" ] [ text "Or" ]
+                    , Field.separator [] [ text "or" ]
                     , viewProblem ceremony
                     , Button.new
                         |> Button.text
@@ -1164,21 +1320,54 @@ viewSignInForm ceremony signIn attempt =
                                 "Waiting for your device…"
 
                              else
-                                "Sign in with a passkey"
+                                "Use a passkey"
                             )
                         |> Button.outline
-                        |> Button.startIcon (Phosphor.key Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                        |> Button.toHtml [ type_ "button", onClick PasskeySignInRequested, disabled (ceremony == Waiting) ]
+                        |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                        |> Button.toHtml
+                            [ type_ "button"
+                            , onClick PasskeySignInRequested
+                            , disabled (ceremony == Waiting)
+                            , class "h-10"
+                            ]
                     ]
                 ]
             ]
-        |> Card.footer [ class "text-sm text-muted-foreground" ]
-            [ text "New here?", link Path.SignUp "Create an account" ]
-        |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewDashboard : Session -> Html Msg
-viewDashboard session =
+viewEmailField : String -> (String -> Msg) -> Html Msg
+viewEmailField email toMsg =
+    Field.view []
+        [ Field.label [ for "email", class "sr-only" ] [ text "Email" ]
+        , InputGroup.view [ class "h-10" ]
+            [ InputGroup.input
+                [ id "email"
+                , name "email"
+                , type_ "email"
+                , Html.Attributes.placeholder "Email"
+                , class "font-medium"
+                , autocomplete True
+                , required True
+                , value email
+                , onInput toMsg
+                ]
+            , InputGroup.start [] [ Phosphor.envelopeSimple Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
+            ]
+        ]
+
+
+viewAccount : Session -> Ceremony -> AccountState -> List (Html Msg)
+viewAccount session ceremony account =
+    case session of
+        SignedIn _ ->
+            [ viewProfile session, viewPasskeys ceremony account ]
+
+        _ ->
+            [ viewProfile session ]
+
+
+viewProfile : Session -> Html Msg
+viewProfile session =
     case session of
         SignedIn account ->
             Card.new
@@ -1191,7 +1380,6 @@ viewDashboard session =
                         |> Button.small
                         |> Button.toHtml [ onClick SignOutClicked ]
                     )
-                |> Card.footer [ class "gap-2" ] [ link Path.Studio "Studio", link Path.Library "Library" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
         Unavailable message ->
@@ -1199,7 +1387,7 @@ viewDashboard session =
 
         _ ->
             Card.new
-                |> Card.title [ text "Dashboard" ]
+                |> Card.title [ text "Account" ]
                 |> Card.content [ attribute "aria-hidden" "true" ]
                     [ div [ class "flex flex-col gap-3" ]
                         [ Skeleton.view [ class "h-4 w-40" ]
@@ -1209,7 +1397,7 @@ viewDashboard session =
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
 
-viewPasskeys : Ceremony -> DashboardState -> Html Msg
+viewPasskeys : Ceremony -> AccountState -> Html Msg
 viewPasskeys ceremony { passkeys, confirming, removalProblem } =
     Card.new
         |> Card.title [ text "Passkeys" ]
@@ -1316,87 +1504,120 @@ viewSubmit attempt =
                 Editing _ ->
                     "Email me a link"
             )
-        |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting) ]
+        |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting), class "h-10" ]
 
 
-viewVerification : Ceremony -> Verification -> Html Msg
+viewVerification : Ceremony -> Verification -> List (Html Msg)
 viewVerification ceremony verification =
     case verification of
         Looking _ ->
-            Card.new
-                |> Card.title [ text "Checking your link" ]
-                |> Card.content [ attribute "aria-hidden" "true" ]
-                    [ div [ class "flex flex-col gap-3" ]
-                        [ Skeleton.view [ class "h-4 w-40" ]
-                        , Skeleton.view [ class "h-4 w-56" ]
-                        , Skeleton.view [ class "h-8 w-full" ]
-                        ]
+            [ viewLead "Checking your link" "This takes a moment."
+            , div [ class "flex flex-col gap-4", attribute "aria-hidden" "true" ]
+                [ viewIdentity
+                    (Skeleton.view [ class "size-10 shrink-0 rounded-full!" ])
+                    [ Skeleton.view [ class "h-3.5 w-16" ]
+                    , Skeleton.view [ class "mt-1.5 h-3.5 w-40" ]
                     ]
-                |> Card.toHtml [ class "w-full max-w-sm" ]
+                , Skeleton.view [ class "h-10 w-full" ]
+                , Skeleton.view [ class "my-0.5 h-4 w-40" ]
+                ]
+            ]
 
         Found _ found acceptance ->
             viewFound found acceptance
 
         Accepted ->
-            Card.new
-                |> Card.title [ text "Your account is ready" ]
-                |> Card.description
-                    [ text "Add a passkey to sign in with your fingerprint, face or screen lock." ]
-                |> Card.content []
-                    [ div [ class "flex flex-col gap-5" ]
-                        [ viewProblem ceremony
-                        , Button.new
-                            |> Button.text
-                                (if ceremony == Waiting then
-                                    "Waiting for your device…"
-
-                                 else
-                                    "Create a passkey"
-                                )
-                            |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting) ]
-                        ]
-                    ]
-                |> Card.footer [] [ link Path.Dashboard "Not now" ]
-                |> Card.toHtml [ class "w-full max-w-sm" ]
-
-        Refused reason ->
-            notice "This link didn't work" reason [ link Path.SignUp "Sign up again" ]
-
-
-viewFound : Api.Verification -> Acceptance -> Html Msg
-viewFound found acceptance =
-    Card.new
-        |> Card.title
-            [ text
-                (if found.newAccount then
-                    "Create this account?"
-
-                 else
-                    "Sign in to this account?"
-                )
-            ]
-        |> Card.content []
-            [ div [ class "flex flex-col gap-5" ]
-                [ dl [ class "grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm" ]
-                    [ dt [ class "text-muted-foreground" ] [ text "Username" ]
-                    , dd [ class "font-medium" ] [ text (Username.toString found.username) ]
-                    , dt [ class "text-muted-foreground" ] [ text "Email" ]
-                    , dd [ class "font-medium break-all" ] [ text (Email.toString found.email) ]
-                    ]
+            [ viewLead "Your account is ready"
+                "Add a passkey to sign in with your fingerprint, face or screen lock."
+            , div [ class "flex flex-col gap-4" ]
+                [ viewProblem ceremony
                 , Button.new
                     |> Button.text
-                        (if found.newAccount then
-                            "Create my account"
+                        (if ceremony == Waiting then
+                            "Waiting for your device…"
 
                          else
-                            "Sign in"
+                            "Create a passkey"
                         )
-                    |> Button.toHtml [ onClick VerificationAccepted, disabled (acceptance == Accepting) ]
-                , p [ class "text-sm text-muted-foreground" ]
-                    [ text "Not you? Close this page." ]
+                    |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting), class "h-10" ]
+                , Button.new
+                    |> Button.text "Not now"
+                    |> Button.outline
+                    |> Button.toAnchor [ href (Path.toString Path.Explore), class "h-10" ]
                 ]
             ]
-        |> Card.toHtml [ class "w-full max-w-sm" ]
+
+        Refused reason ->
+            [ viewLead "This link didn't work" reason
+            , div [ class "flex flex-col gap-4" ]
+                [ Button.new
+                    |> Button.text "Sign up again"
+                    |> Button.toAnchor [ href (Path.toString Path.SignUp), class "h-10" ]
+                , Button.new
+                    |> Button.text "Log in"
+                    |> Button.outline
+                    |> Button.toAnchor [ href (Path.toString Path.SignIn), class "h-10" ]
+                ]
+            ]
+
+
+viewFound : Api.Verification -> Acceptance -> List (Html Msg)
+viewFound found acceptance =
+    let
+        username =
+            Username.toString found.username
+
+        words =
+            if found.newAccount then
+                { heading = "Create this account?"
+                , body = "This creates your account and signs you in."
+                , accept = "Create my account"
+                , accepting = "Creating your account…"
+                }
+
+            else
+                { heading = "Log in to this account?"
+                , body = "This signs you in on this device."
+                , accept = "Log in"
+                , accepting = "Logging in…"
+                }
+    in
+    [ viewLead words.heading words.body
+    , div [ class "flex flex-col gap-4" ]
+        [ viewIdentity
+            (Avatar.new
+                |> Avatar.fallback [ text (String.toUpper (String.left 2 username)) ]
+                |> Avatar.large
+                |> Avatar.toHtml [ attribute "aria-hidden" "true" ]
+            )
+            [ dl [ class "grid text-sm leading-tight" ]
+                [ dt [ class "sr-only" ] [ text "Username" ]
+                , dd [ class "truncate font-medium" ] [ text username ]
+                , dt [ class "sr-only" ] [ text "Email" ]
+                , dd [ class "break-all text-muted-foreground" ] [ text (Email.toString found.email) ]
+                ]
+            ]
+        , Button.new
+            |> Button.text
+                (if acceptance == Accepting then
+                    words.accepting
+
+                 else
+                    words.accept
+                )
+            |> Button.toHtml [ onClick VerificationAccepted, disabled (acceptance == Accepting), class "h-10" ]
+        , p [ class "text-sm text-muted-foreground" ] [ text "Not you? Close this page." ]
+        ]
+    ]
+
+
+viewIdentity : Html Msg -> List (Html Msg) -> Html Msg
+viewIdentity avatar details =
+    div [ class "flex items-center gap-3 rounded-xl border p-3" ]
+        [ avatar
+        , div [ class "min-w-0 flex-1" ] details
+        ]
 
 
 viewHealth : Health -> Html Msg
@@ -1571,7 +1792,7 @@ viewThemeTabs theme =
 themeTab : Theme -> Phosphor.Icon -> String -> Tabs.Tab Theme Msg
 themeTab theme icon label =
     Tabs.tab theme
-        [ icon Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+        [ icon Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
         , span [ class "sr-only" ] [ text label ]
         ]
         []

@@ -157,9 +157,9 @@ fromElm =
         |> TsEncode.variant0 "CheckWebGpu"
         |> TsEncode.variantTagged "LoadModel"
             (TsEncode.object
-                [ TsEncode.required "model" (.weights >> Pipeline.weightsId) TsEncode.string
+                [ TsEncode.required "model" Pipeline.weightsId TsEncode.string
                 , TsEncode.required "cache" (always True) TsEncode.bool
-                , TsEncode.required "force" .fresh TsEncode.bool
+                , TsEncode.required "force" (always False) TsEncode.bool
                 ]
             )
         |> TsEncode.variantTagged "GenerateImage"

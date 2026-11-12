@@ -28,6 +28,6 @@ email { url, username, passkey } =
                     ++ ". It can no longer sign in."
                 )
             , Layout.Button { label = "Review your passkeys", url = url }
-            , Layout.Footnote "If this wasn't you, review the passkeys left on your dashboard. You can always sign in with an emailed link."
+            , Layout.Footnote "If this wasn't you, review the passkeys left in your account settings. You can always sign in with an emailed link."
             ]
         }
