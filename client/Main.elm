@@ -14,14 +14,18 @@ import Html.Events exposing (onClick, onInput, onSubmit)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
 import Json.Decode as Decode
+import Library
+import LibraryView
+import ModelsView
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
-import PipelineView
+import StudioView
 import UI.Button as Button
 import UI.Card as Card
 import UI.Field as Field
 import UI.Input as Input
+import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 import UI.Tabs as Tabs
 import Url exposing (Url)
@@ -56,6 +60,8 @@ type alias Model =
     , session : Session
     , ceremony : Ceremony
     , pipeline : Pipeline.Model
+    , library : Library.Model
+    , sidebar : Sidebar.State
     , page : Page
     }
 
@@ -86,13 +92,19 @@ type Session
 
 
 type Page
-    = Home
+    = Studio
+    | Library
+    | Settings Section
     | SignUp SignUpForm
     | SignIn SignInForm
     | Verify Verification
     | Dashboard DashboardState
-    | Generate
     | NotFound
+
+
+type Section
+    = Models
+    | Server
 
 
 type alias SignUpForm =
@@ -139,9 +151,9 @@ type Health
 init : Decode.Value -> Url -> ( Model, Effect )
 init flags url =
     let
-        { theme, systemDark, entropy } =
+        { theme, systemDark, entropy, models, canShare } =
             InteropPorts.decodeFlags flags
-                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0 }
+                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, canShare = False }
     in
     open url
         { theme = Maybe.withDefault Interop.System theme
@@ -149,7 +161,9 @@ init flags url =
         , health = Checking Nothing
         , session = Unknown
         , ceremony = Resting Nothing
-        , pipeline = Pipeline.init entropy
+        , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
+        , library = Library.init canShare
+        , sidebar = Sidebar.init
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
@@ -159,11 +173,20 @@ open : Url -> Model -> ( Model, Effect )
 open url opened =
     let
         model =
-            { opened | ceremony = Resting Nothing }
+            { opened | ceremony = Resting Nothing, sidebar = { open = opened.sidebar.open, openMobile = False } }
     in
     case Path.parse url of
-        Path.Home ->
-            ( { model | page = Home, health = Checking (lastReport model.health) }, checkHealth )
+        Path.Studio ->
+            runPipeline { model | page = Studio } (Pipeline.enter model.pipeline)
+
+        Path.Library ->
+            runLibrary { model | page = Library } (Library.enter model.library)
+
+        Path.Models ->
+            runPipeline { model | page = Settings Models } (Pipeline.enter model.pipeline)
+
+        Path.Server ->
+            ( { model | page = Settings Server, health = Checking (lastReport model.health) }, checkHealth )
 
         Path.SignUp ->
             ( { model | page = SignUp { email = "", username = "", state = Open (Editing Nothing) } }, NoEffect )
@@ -191,9 +214,6 @@ open url opened =
         Path.Verify Nothing ->
             ( { model | page = Verify (Refused missingToken) }, NoEffect )
 
-        Path.Generate ->
-            runPipeline { model | page = Generate } (Pipeline.enter model.pipeline)
-
         Path.NotFound ->
             ( { model | page = NotFound }, NoEffect )
 
@@ -206,12 +226,30 @@ missingToken =
 runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect )
 runPipeline model ( pipeline, command ) =
     ( { model | pipeline = pipeline }
-    , case command of
-        Just run ->
-            SendToJs (Interop.RunPipeline run)
+    , Batch
+        (List.filterMap identity
+            [ Maybe.map (Interop.RunPipeline >> SendToJs) command
+            , if pipeline.downloaded == model.pipeline.downloaded then
+                Nothing
 
-        Nothing ->
-            NoEffect
+              else
+                Just
+                    (SendToJs
+                        (Interop.WriteToLocalStorage
+                            { key = "models"
+                            , value = Pipeline.remember pipeline.downloaded
+                            }
+                        )
+                    )
+            ]
+        )
+    )
+
+
+runLibrary : Model -> ( Library.Model, List Library.Command ) -> ( Model, Effect )
+runLibrary model ( library, commands ) =
+    ( { model | library = library }
+    , Batch (List.map (Interop.RunLibrary >> SendToJs) commands)
     )
 
 
@@ -270,6 +308,8 @@ type Msg
     | GotSignInOptions (Result ApiClient.Error Api.SignInOptions)
     | GotPasskeySignIn (Result ApiClient.Error Api.Account)
     | GotPipeline Pipeline.Msg
+    | GotLibrary Library.Msg
+    | SidebarChanged Sidebar.State
 
 
 update : Msg -> Model -> ( Model, Effect )
@@ -312,11 +352,20 @@ update msg model =
         GotInterop (Ok (Interop.PipelineEvent event)) ->
             runPipeline model (Pipeline.update (Pipeline.Happened event) model.pipeline)
 
+        GotInterop (Ok (Interop.LibraryEvent event)) ->
+            runLibrary model (Library.update (Library.Happened event) model.library)
+
         GotInterop (Err _) ->
             ( model, NoEffect )
 
         GotPipeline pipelineMsg ->
             runPipeline model (Pipeline.update pipelineMsg model.pipeline)
+
+        GotLibrary libraryMsg ->
+            runLibrary model (Library.update libraryMsg model.library)
+
+        SidebarChanged sidebar ->
+            ( { model | sidebar = sidebar }, NoEffect )
 
         GotHealth (Ok health) ->
             ( { model | health = Checked health }, NoEffect )
@@ -489,7 +538,7 @@ update msg model =
             ( model, Request (ApiClient.request Api.signOut () GotSignOut) )
 
         GotSignOut (Ok ()) ->
-            ( { model | session = SignedOut }, PushUrl (Path.toString Path.Home) )
+            ( { model | session = SignedOut }, PushUrl (Path.toString Path.Studio) )
 
         GotSignOut (Err _) ->
             ( model, NoEffect )
@@ -711,9 +760,7 @@ view model =
                     ""
                 )
             ]
-            [ div [ class "flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6 text-foreground" ]
-                (viewPage model ++ [ viewThemeTabs model.theme ])
-            ]
+            [ viewBody model ]
         ]
     }
 
@@ -721,8 +768,17 @@ view model =
 title : Page -> String
 title page =
     case page of
-        Home ->
-            "pixo"
+        Studio ->
+            "Studio · pixo"
+
+        Library ->
+            "Library · pixo"
+
+        Settings Models ->
+            "Models · pixo"
+
+        Settings Server ->
+            "Server · pixo"
 
         SignUp _ ->
             "Sign up · pixo"
@@ -736,41 +792,172 @@ title page =
         Verify _ ->
             "Verify · pixo"
 
-        Generate ->
-            "Generate · pixo"
-
         NotFound ->
             "Not found · pixo"
+
+
+viewBody : Model -> Html Msg
+viewBody model =
+    case model.page of
+        Studio ->
+            viewShell model
+                [ viewAside "md:w-80" model "Studio" [ Html.map GotPipeline (StudioView.controls model.pipeline) ]
+                , viewContent
+                    [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline ]
+                ]
+
+        Library ->
+            viewShell model
+                [ viewContent
+                    [ viewBar [ class "sticky top-0 z-10 bg-background/85 backdrop-blur" ]
+                        model
+                        "Library"
+                        [ Html.map GotLibrary (LibraryView.search model.library) ]
+                    , Html.map GotLibrary (LibraryView.view model.library)
+                    ]
+                ]
+
+        Settings section ->
+            viewShell model
+                [ viewAside "md:w-56"
+                    model
+                    "Settings"
+                    [ Sidebar.group []
+                        [ Sidebar.menu []
+                            [ viewDestination (section == Models) Path.Models Phosphor.cube "Models"
+                            , viewDestination (section == Server) Path.Server Phosphor.hardDrives "Server"
+                            ]
+                        ]
+                    ]
+                , viewContent
+                    [ case section of
+                        Models ->
+                            Html.map GotPipeline (ModelsView.view model.pipeline)
+
+                        Server ->
+                            div [ class "flex flex-1 flex-col items-center p-4 md:p-8" ] [ viewHealth model.health ]
+                    ]
+                ]
+
+        _ ->
+            div [ class "flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6 text-foreground" ]
+                (viewPage model ++ [ viewThemeTabs model.theme ])
+
+
+viewShell : Model -> List (Html Msg) -> Html Msg
+viewShell model page =
+    Sidebar.new
+        |> Sidebar.state model.sidebar SidebarChanged
+        |> Sidebar.collapsesToIcons
+        |> Sidebar.width "13rem"
+        |> Sidebar.header
+            [ Sidebar.menu []
+                [ Sidebar.menuItem []
+                    [ Sidebar.menuLink [ href (Path.toString Path.Studio), Sidebar.large ]
+                        [ span [ class "flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground" ]
+                            [ Phosphor.sparkle Fill |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
+                        , span [ class "text-base font-semibold" ] [ text "pixo" ]
+                        ]
+                    ]
+                ]
+            ]
+        |> Sidebar.content
+            [ Sidebar.group []
+                [ Sidebar.menu []
+                    [ viewDestination (model.page == Studio) Path.Studio Phosphor.paintBrush "Studio"
+                    , viewDestination (model.page == Library) Path.Library Phosphor.images "Library"
+                    , viewDestination (isSettings model.page) Path.Models Phosphor.gear "Settings"
+                    ]
+                ]
+            ]
+        |> Sidebar.footer
+            [ Sidebar.menu [] (viewAccount model.session)
+            , div [ class "flex justify-center md:group-data-[collapsible=icon]:hidden" ] [ viewThemeTabs model.theme ]
+            ]
+        |> Sidebar.rail
+        |> Sidebar.page [ class "min-w-0 md:flex-row" ] page
+        |> Sidebar.toHtml [ class "bg-background text-foreground" ]
+
+
+isSettings : Page -> Bool
+isSettings page =
+    case page of
+        Settings _ ->
+            True
+
+        _ ->
+            False
+
+
+viewDestination : Bool -> Path.Path -> Phosphor.Icon -> String -> Html Msg
+viewDestination current path icon label =
+    Sidebar.menuItem []
+        [ Sidebar.menuLink
+            (href (Path.toString path)
+                :: Sidebar.tooltip label
+                :: (if current then
+                        [ Sidebar.active, attribute "aria-current" "page" ]
+
+                    else
+                        []
+                   )
+            )
+            [ icon Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            , span [] [ text label ]
+            ]
+        ]
+
+
+viewAccount : Session -> List (Html Msg)
+viewAccount session =
+    case session of
+        Unknown ->
+            [ Sidebar.menuItem [ attribute "aria-hidden" "true" ] [ Sidebar.menuSkeleton [ Sidebar.showIcon ] ] ]
+
+        Unavailable _ ->
+            [ li [ class "flex flex-col items-start gap-2 p-2 text-sm text-muted-foreground md:group-data-[collapsible=icon]:hidden" ]
+                [ text "Can't check who is signed in."
+                , retry
+                ]
+            ]
+
+        SignedOut ->
+            [ viewDestination False Path.SignIn Phosphor.signIn "Sign in"
+            , viewDestination False Path.SignUp Phosphor.userPlus "Create an account"
+            ]
+
+        SignedIn _ ->
+            [ viewDestination False Path.Dashboard Phosphor.userCircle "Dashboard" ]
+
+
+viewAside : String -> Model -> String -> List (Html Msg) -> Html Msg
+viewAside wide model heading children =
+    Html.aside
+        [ class "flex w-full shrink-0 flex-col border-b bg-sidebar text-sidebar-foreground md:sticky md:top-0 md:h-svh md:border-e md:border-b-0"
+        , class wide
+        ]
+        [ viewBar [] model heading []
+        , div [ class "min-h-0 flex-1 md:overflow-y-auto" ] children
+        ]
+
+
+viewBar : List (Html.Attribute Msg) -> Model -> String -> List (Html Msg) -> Html Msg
+viewBar attrs model heading children =
+    Html.header (class "flex h-12 shrink-0 items-center gap-2 border-b px-3" :: attrs)
+        (Sidebar.trigger [ class "-ms-1" ] model.sidebar SidebarChanged
+            :: Html.h1 [ class "text-sm font-medium" ] [ text heading ]
+            :: children
+        )
+
+
+viewContent : List (Html Msg) -> Html Msg
+viewContent children =
+    Html.section [ class "flex min-w-0 flex-1 flex-col" ] children
 
 
 viewPage : Model -> List (Html Msg)
 viewPage model =
     case model.page of
-        Home ->
-            [ viewHealth model.health
-            , div [ class "flex h-8 items-center gap-2" ]
-                (case model.session of
-                    Unknown ->
-                        [ Skeleton.view [ class "h-4 w-40", attribute "aria-hidden" "true" ] ]
-
-                    Unavailable _ ->
-                        [ span [ class "text-sm text-muted-foreground" ] [ text "Can't check who is signed in." ]
-                        , retry
-                        ]
-
-                    SignedOut ->
-                        [ link Path.SignUp "Create an account"
-                        , link Path.SignIn "Sign in"
-                        , link Path.Generate "Make a picture"
-                        ]
-
-                    SignedIn _ ->
-                        [ link Path.Dashboard "Dashboard"
-                        , link Path.Generate "Make a picture"
-                        ]
-                )
-            ]
-
         SignUp signUp ->
             [ viewSignUp signUp ]
 
@@ -788,14 +975,10 @@ viewPage model =
         Verify verification ->
             [ viewVerification model.ceremony verification ]
 
-        Generate ->
-            List.map (Html.map GotPipeline) (PipelineView.view model.pipeline)
-                ++ [ link Path.Home "Home" ]
-
-        NotFound ->
+        _ ->
             [ notice "Not found"
                 "There is nothing at this address."
-                (link Path.Home "Go home" :: notFoundOptions model.session)
+                (link Path.Studio "Go home" :: notFoundOptions model.session)
             ]
 
 
@@ -974,7 +1157,7 @@ viewDashboard session =
                     )
                 |> Card.content [ class "text-sm text-muted-foreground" ]
                     [ text "Your dashboard is empty for now." ]
-                |> Card.footer [ class "gap-2" ] [ link Path.Home "Server status", link Path.Generate "Make a picture" ]
+                |> Card.footer [ class "gap-2" ] [ link Path.Studio "Studio", link Path.Library "Library" ]
                 |> Card.toHtml [ class "w-full max-w-sm" ]
 
         Unavailable message ->

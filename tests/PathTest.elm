@@ -30,6 +30,11 @@ suite =
                             Url.fromString "https://pixo.pics/dashboard/"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just Path.Dashboard)
+                   , test "opens the models at the settings" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/settings"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.Models)
                    , test "leaves a query string out of it" <|
                         \() ->
                             Url.fromString "https://pixo.pics/auth/signin?from=email"
@@ -47,7 +52,7 @@ suite =
 
 paths : List Path
 paths =
-    collect (Just Path.Home) []
+    collect (Just Path.Studio) []
 
 
 collect : Maybe Path -> List Path -> List Path
@@ -63,7 +68,16 @@ collect path found =
 next : Path -> Maybe Path
 next path =
     case path of
-        Path.Home ->
+        Path.Studio ->
+            Just Path.Library
+
+        Path.Library ->
+            Just Path.Models
+
+        Path.Models ->
+            Just Path.Server
+
+        Path.Server ->
             Just Path.SignUp
 
         Path.SignUp ->
@@ -80,9 +94,6 @@ next path =
             Just Path.Dashboard
 
         Path.Dashboard ->
-            Just Path.Generate
-
-        Path.Generate ->
             Just Path.NotFound
 
         Path.NotFound ->

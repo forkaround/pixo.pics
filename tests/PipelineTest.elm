@@ -4,7 +4,7 @@ import Data.Dimension as Dimension
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Weights(..))
+import Pipeline exposing (Command(..), Component(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -57,25 +57,113 @@ suite =
                         |> .settings
                         |> .seeding
                         |> Expect.equal (FixedSeed "31")
-            , test "download again only once" <|
+            , test "take a preset's width and height" <|
                 \() ->
-                    run [ FreshToggled True, LoadClicked, Happened ModelLoaded ] supported
-                        |> .settings
-                        |> .fresh
-                        |> Expect.equal False
+                    List.filter (\preset -> preset.name == "Story") Pipeline.presets
+                        |> List.map (\preset -> run [ PresetChosen preset ] ready)
+                        |> List.map (\model -> ( Dimension.toInt model.settings.width, Dimension.toInt model.settings.height ))
+                        |> Expect.equal [ ( 576, 1024 ) ]
+            ]
+        , describe "presets"
+            [ test "are all on the grid the model takes" <|
+                \() ->
+                    List.map .name Pipeline.presets
+                        |> Expect.equal [ "Square", "Portrait", "Story", "Widescreen", "Pin", "Link card", "Banner" ]
+            , test "have the shape they name" <|
+                \() ->
+                    List.map
+                        (\preset ->
+                            case List.filterMap String.toInt (String.split ":" preset.ratio) of
+                                [ across, down ] ->
+                                    Dimension.toInt preset.width * down == Dimension.toInt preset.height * across
+
+                                _ ->
+                                    False
+                        )
+                        Pipeline.presets
+                        |> Expect.equal (List.repeat 7 True)
+            ]
+        , describe "models"
+            [ test "are remembered once they have loaded" <|
+                \() ->
+                    run [ DownloadClicked Binary, Happened ModelLoaded ] supported
+                        |> .downloaded
+                        |> Expect.equal [ Binary ]
+            , test "are not remembered when the download stops halfway" <|
+                \() ->
+                    run [ DownloadClicked Binary, CancelClicked, Happened (Failed { name = "AbortError", message = "" }) ] supported
+                        |> (\model -> ( model.engine, model.downloaded ))
+                        |> Expect.equal ( Empty, [] )
+            , test "load one part at a time, the last one heard of" <|
+                \() ->
+                    run
+                        [ DownloadClicked Ternary
+                        , Happened (Downloaded { component = TextEncoder, loaded = 5, total = 5, cached = False })
+                        , Happened (Downloaded { component = Transformer, loaded = 1, total = 9, cached = False })
+                        , Happened (Downloaded { component = Transformer, loaded = 2, total = 9, cached = False })
+                        ]
+                        supported
+                        |> .engine
+                        |> (\engine ->
+                                case engine of
+                                    Loading _ parts _ ->
+                                        Maybe.map (\part -> ( part.component, part.loaded )) (Pipeline.current parts)
+
+                                    _ ->
+                                        Nothing
+                           )
+                        |> Expect.equal (Just ( Transformer, 2 ))
+            , test "are forgotten when the downloads are removed" <|
+                \() ->
+                    run [ DownloadClicked Binary, Happened ModelLoaded, ReleaseClicked, Happened ModelReleased, ClearClicked, Happened CacheCleared ] supported
+                        |> .downloaded
+                        |> Expect.equal []
+            , test "come back from what the browser stored" <|
+                \() ->
+                    Pipeline.remembered (Pipeline.remember [ Binary, Ternary ])
+                        |> Expect.equal [ Binary, Ternary ]
+            , test "leave out a stored model that is not offered any more" <|
+                \() ->
+                    Pipeline.remembered """["prism-ml/bonsai-image-binary-4B-mlx-1bit","gone"]"""
+                        |> Expect.equal [ Binary ]
+            , test "are none when what the browser stored is no list" <|
+                \() ->
+                    Pipeline.remembered "nonsense"
+                        |> Expect.equal []
+            , test "download again with the copy in memory released first" <|
+                \() ->
+                    Pipeline.update (DownloadAgainClicked Ternary) ready
+                        |> Tuple.mapFirst (Pipeline.update (Happened ModelReleased) >> Tuple.second)
+                        |> Expect.equal ( Just (Load { weights = Ternary, fresh = True }), Just Release )
             ]
         , describe "update"
             [ test "checks the browser on the first visit only" <|
                 \() ->
-                    Pipeline.enter (Pipeline.init 1)
+                    Pipeline.enter (Pipeline.init 1 [])
                         |> Tuple.mapFirst Pipeline.enter
                         |> (\( ( _, second ), first ) -> ( first, second ))
                         |> Expect.equal ( Just Check, Nothing )
-            , test "loads nothing while a model is in memory" <|
+            , test "loads nothing while that model is in memory" <|
                 \() ->
-                    Pipeline.update LoadClicked ready
+                    Pipeline.update (DownloadClicked Ternary) ready
                         |> Tuple.second
                         |> Expect.equal Nothing
+            , test "loads the model a picture needs, then makes the picture" <|
+                \() ->
+                    Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", SeedChanged "7" ] supported)
+                        |> Tuple.mapFirst (Pipeline.update (Happened ModelLoaded) >> Tuple.second >> Maybe.andThen seedOf)
+                        |> Expect.equal ( Just 7, Just (Load { weights = Ternary, fresh = False }) )
+            , test "makes room for another model before it loads it" <|
+                \() ->
+                    Pipeline.update GenerateClicked
+                        (run [ PromptChanged "a bonsai", WeightsChosen Binary ] ready)
+                        |> Tuple.mapFirst (Pipeline.update (Happened ModelReleased) >> Tuple.second)
+                        |> Expect.equal ( Just (Load { weights = Binary, fresh = False }), Just Release )
+            , test "asks for a prompt before it loads anything" <|
+                \() ->
+                    Pipeline.update GenerateClicked supported
+                        |> Tuple.mapFirst .message
+                        |> Expect.equal ( Just (Problem "Describe the picture first."), Nothing )
             , test "refuses a seed that is not a whole number in range" <|
                 \() ->
                     List.map
@@ -106,9 +194,30 @@ suite =
                         ready
                         |> (\model -> ( model.engine, model.message ))
                         |> Expect.equal ( Ready Ternary, Just (Problem "Out of memory") )
+            , test "says so when a picture is aborted and nobody asked" <|
+                \() ->
+                    run
+                        [ PromptChanged "a bonsai"
+                        , GenerateClicked
+                        , Happened (Failed { name = "AbortError", message = "Device was lost before MapAsync completed." })
+                        ]
+                        ready
+                        |> (\model -> ( model.engine, model.message ))
+                        |> Expect.equal ( Ready Ternary, Just (Problem "Device was lost before MapAsync completed.") )
+            , test "says nothing when a picture is aborted on request" <|
+                \() ->
+                    run
+                        [ PromptChanged "a bonsai"
+                        , GenerateClicked
+                        , CancelClicked
+                        , Happened (Failed { name = "AbortError", message = "The operation was aborted." })
+                        ]
+                        ready
+                        |> (\model -> ( model.engine, model.message ))
+                        |> Expect.equal ( Ready Ternary, Nothing )
             , test "names a failure that says nothing" <|
                 \() ->
-                    run [ LoadClicked, Happened (Failed { name = "OperationError", message = "" }) ] supported
+                    run [ DownloadClicked Ternary, Happened (Failed { name = "OperationError", message = "" }) ] supported
                         |> .message
                         |> Expect.equal (Just (Problem "Something went wrong: OperationError."))
             , test "keeps the picture that arrives after a cancel" <|
@@ -122,6 +231,14 @@ suite =
                         ready
                         |> (\model -> ( model.engine, List.map .url model.pictures ))
                         |> Expect.equal ( Ready Ternary, [ "blob:1" ] )
+            , test "pins the details of one picture at a time" <|
+                \() ->
+                    [ [ DetailsToggled "blob:1" ]
+                    , [ DetailsToggled "blob:1", DetailsToggled "blob:2" ]
+                    , [ DetailsToggled "blob:1", DetailsToggled "blob:1" ]
+                    ]
+                        |> List.map (\msgs -> (run msgs ready).detailed)
+                        |> Expect.equal [ Just "blob:1", Just "blob:2", Nothing ]
             , test "ignores what arrives for work it did not start" <|
                 \() ->
                     run [ Happened ModelLoaded, Happened (PictureMade "blob:1"), Happened (StepFinished 2) ] supported
@@ -139,14 +256,14 @@ suite =
 
 supported : Pipeline.Model
 supported =
-    Pipeline.enter (Pipeline.init 1)
+    Pipeline.enter (Pipeline.init 1 [])
         |> Tuple.first
         |> run [ Happened (SupportChecked True) ]
 
 
 ready : Pipeline.Model
 ready =
-    run [ LoadClicked, Happened ModelLoaded, RandomSeedToggled False ] supported
+    run [ DownloadClicked Ternary, Happened ModelLoaded, RandomSeedToggled False ] supported
 
 
 run : List Msg -> Pipeline.Model -> Pipeline.Model

@@ -378,7 +378,8 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
   `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
-  address: `/`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, `/generate`, and
+  address: `/` (the studio), `/library`, `/settings/models` (also `/settings`),
+  `/settings/server`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
   `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
   same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
@@ -408,30 +409,60 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`
   words it. `main.ts` only converts base64url and buffers: the ceremony's options
   (`residentKey: "required"`, `attestation: "none"`) are its only constants.
-- Home: the Server card (one row per `Api.checks`, release and region in the
-  footer) and links to sign up and sign in, or to the dashboard, and to `/generate`. Every page: a theme toggle (`UI.Tabs` without panels, saved to `localStorage` via the
-  `WriteToLocalStorage` port, read back from the flags).
-- `/generate` makes pictures in the browser and needs no session (see
-  [Image pipeline](#image-pipeline)).
+- The studio, the library and the settings share a shell, `viewShell`: a `UI.Sidebar`
+  that collapses to its icons (a sheet below `md`, closed by `open` once a page is
+  picked; its `State` is `model.sidebar`) with Studio, Library and Settings, and in its
+  footer what fits the session (sign-in and sign-up, the dashboard, or "Try again") and
+  the theme toggle. The page beside it is an optional second sidebar (`viewAside`: the
+  studio's controls, the settings' sections) and the content. The other pages stay a
+  centred column of cards, with the theme toggle under them.
+- The theme toggle is `UI.Tabs` without panels, saved to `localStorage` via the
+  `WriteToLocalStorage` port and read back from the flags.
+- `/` makes pictures in the browser and `/library` keeps them there: neither needs a
+  session (see [Image pipeline](#image-pipeline) and [Library](#library)).
+- `/settings/models` lists the models (see [Image pipeline](#image-pipeline));
+  `/settings/server` has the Server card (one row per `Api.checks`, release and region in
+  the footer), which asks `Api.health` when it opens.
 - No layout shift while loading: rows come from `Api.checkNames` with `UI.Skeleton`s,
   refreshes keep the last report, an empty footer keeps its height. Name checks only in
   `Api.namedChecks`.
 
 ### Image pipeline
 
-`/generate` runs [bonsai-image-pipeline-lib](https://github.com/nishlumi/bonsai-image-pipeline-lib)
+The studio (`/`) runs [bonsai-image-pipeline-lib](https://github.com/nishlumi/bonsai-image-pipeline-lib)
 (WebGPU, MIT), a dependency pinned to a commit in `package.json`: the model is downloaded
 from Hugging Face into the browser and runs there. The server takes no part.
 
-- `client/Pipeline.elm` decides everything: `Settings` (the `Weights`, whether to keep a
-  copy and whether to download again, the prompt, width, height, steps and seed), the
-  `Engine` (`Unchecked`, `Checking`, `Unsupported`, `Empty`, `Clearing`, `Loading`,
-  `Ready`, `Generating`, `Releasing`) and `update`, which returns the model and a
-  `Maybe Command`. It imports no `Html`: `client/PipelineView.elm` draws it.
+- `client/Pipeline.elm` decides everything: `Settings` (the `Weights`, the prompt, width,
+  height, steps and seed), the `Engine` (`Unchecked`, `Checking`, `Unsupported`, `Empty`,
+  `Clearing`, `Loading`, `Ready`, `Generating`, `Releasing`) and `update`, which returns
+  the model and a `Maybe Command`. It imports no `Html`: `client/StudioView.elm` draws
+  the studio (`controls`, the second sidebar, and `canvas`, the pictures) and
+  `client/ModelsView.elm` the list at `/settings/models`.
 - `Main` keeps it in `model.pipeline`, not in the page, since the model stays in the
   graphics card's memory across pages: `GotPipeline` wraps its `Msg`, `runPipeline` turns
-  a `Command` into `SendToJs (Interop.RunPipeline command)`, and opening `/generate`
-  calls `Pipeline.enter`, which asks once whether the browser has WebGPU.
+  a `Command` into `SendToJs (Interop.RunPipeline command)`, and opening the studio or
+  the models calls `Pipeline.enter`, which asks once whether the browser has WebGPU.
+- Nobody loads a model by hand. "Generate" plans the `Job`, then `start`s it: with the
+  chosen weights in memory it generates; with none, `Loading` holds the job and
+  `ModelLoaded` starts it; with other weights in memory, `Releasing` holds a `Pending`
+  (weights, `fresh`, the job) and `ModelReleased` loads it. "Download" at
+  `/settings/models` is the same path without a job, so a download ends with the model in
+  memory; "Download again" is `fresh`, the library's `force`. `cache` is always true.
+- The library loads a model one part after the other (`Component`: the text encoder, the
+  transformer, the decoder). The studio shows one bar, like the one for the steps: the
+  part last heard of (`Pipeline.current`) and how far it is, so the bar starts over for
+  each part. `/settings/models` shows all three, with their megabytes.
+- `model.pipeline.downloaded` lists the weights that finished loading, newest first:
+  the library can't tell whether its cache holds a whole model. `runPipeline` writes it
+  to `localStorage` (`models`, a JSON list of ids, `Pipeline.remember`) whenever it
+  changes, and the `models` flag brings it back (`Pipeline.remembered`, which drops ids
+  no longer in `Weights`). A cancelled download is not in it; "Remove downloaded models"
+  empties it. The studio's button says "Download and generate" for weights not in it.
+- `Pipeline.presets` are the sizes for social networks (`Square` 1:1, `Portrait` 4:5,
+  `Story` 9:16, `Widescreen` 16:9, `Pin` 2:3, `Link card` 2:1, `Banner` 3:1), each the
+  largest of its shape on the `Dimension` grid: a new one must be on it, or `preset`
+  leaves it out. One is pressed when the width and height are its own.
 - The library runs in a web worker, `client/pipeline.worker.ts`, so downloading and
   generating never block the page. Each `Command` is a `FromElm` variant (`CheckWebGpu`,
   `LoadModel`, `GenerateImage`, `CancelPipeline`, `ReleaseModel`, `ClearModelCache`)
@@ -471,7 +502,10 @@ from Hugging Face into the browser and runs there. The server takes no part.
 - An event is applied only in the state that waits for it, so one that arrives late
   (after a cancel, or for work never started) changes nothing. A cancel waits for the
   library to stop (`PipelineFailed` with the name `AbortError`, which shows no message):
-  the library runs one job at a time.
+  the library runs one job at a time. An `AbortError` shows no message only while
+  loading or `Stopping`: a graphics card that drops the device mid-picture rejects with
+  the same name ("Device was lost before MapAsync completed"), and that one is shown.
+  The model in memory is then unusable until it is released and loaded again.
 - The values the library takes have types in `client/Data/`: a `Dimension` is 256 to 1024
   in steps of 64 (the model needs multiples of 16), `Steps` 1 to 50, a `Seed` 0 to
   4294967295 (the library reads it as 32 bits), a `Prompt` trimmed and never blank.
@@ -482,14 +516,74 @@ from Hugging Face into the browser and runs there. The server takes no part.
 - A random seed is drawn in Elm, from `model.random`, a `Random.Seed` started from the
   `entropy` flag (`crypto.getRandomValues` in `main.ts`) and stepped on each picture: no
   `Effect` for it, and a test fixes it through the flags.
-- "Download again" (`force`) turns itself off once a model has loaded. "Remove downloaded
-  models" (`clearCache`) is offered only with no model in memory, as the library needs.
-- A picture is that object URL, kept in `model.pipeline.pictures` with
-  the `Job` that made it, until the page is closed. Nothing is uploaded.
+- "Remove downloaded models" (`clearCache`) works only with no model in memory, as the
+  library needs: it removes every model, since they share one cache.
+- A picture is that object URL, kept in `model.pipeline.pictures` with the `Job` and the
+  `Weights` that made it, until the page is closed or it is saved (see
+  [Library](#library)). Nothing is uploaded.
+- The studio shows a picture as the picture and nothing else, like the library's dialog:
+  hover or keyboard focus lays the prompt, the settings, "Save to library", download and
+  "Use this seed" over it, and since a touch screen has no hover the picture is a button
+  that pins them (`model.pipeline.detailed`, one picture at a time). The buttons over a
+  picture share their looks in `client/Overlay.elm` (`glass`, `solid`, `red`).
 - `client/bonsai.d.ts` types the library, which ships none: keep it to what the worker
   calls. Vite builds the worker, library included, as its own file (`worker.format` is
   `es` in `vite.config.ts`), fetched on the first `CheckWebGpu`. The worker imports
   `Main.elm` for its types only: Elm never runs there.
+
+### Library
+
+`/library` shows the pictures saved from the studio. They live in the browser's
+IndexedDB (database `pixo`, store `pictures`), each row the PNG and what made it: `id`
+(auto-incremented, so a higher id is a newer picture), `prompt`, `width`, `height`,
+`steps`, `seed` and `model` (the weights' id).
+
+- `client/Library.elm` decides everything, like `Pipeline.elm`: `update` returns the
+  model and a list of `Command`s, and `client/LibraryView.elm` draws it (`search`, the
+  field in the page's bar, and `view`). `Main` keeps it in `model.library`: `GotLibrary`
+  wraps its `Msg`, `runLibrary` turns each `Command` into
+  `SendToJs (Interop.RunLibrary command)`, and opening `/library` calls `Library.enter`,
+  which reads the pictures once (again after a failed read).
+- `client/library.ts` is the whole of IndexedDB and decides nothing: `LoadLibrary` reads
+  every row, `SavePicture` fetches the studio's object URL and adds the `Blob` with the
+  settings Elm sent, as they are, `DeletePicture` deletes by id and revokes the URL. It
+  answers `LibraryLoaded`, `PictureSaved` (with the `source` URL it was asked to save)
+  and `PictureDeleted`, each picture with a new object URL, or `LibraryFailed` with the
+  error's message. A new field is one more line in `InteropDefinitions`.
+- A stored row comes back as a `Library.Stored`, raw; `fromStored` parses it into a
+  `Picture` with the `Data` types, and a row that doesn't parse is left out.
+- `model.library.saves` tells the studio what became of each of its pictures, by object
+  URL: `Saving`, then `Saved`, or unsaved again after `LibraryFailed`.
+- The grid is CSS columns (`columns-2` up to `2xl:columns-5`), each tile sized by its
+  own `aspect-ratio` with the picture covering it, so pictures of any shape fill their
+  cards and nothing shifts as they load. Newest first, down each column. Hover or focus
+  shows the prompt, download, the share menu and the red bin, which asks before
+  `DeletePicture`.
+- A click on a tile opens `UI.Dialog` as the picture and nothing else: no padding, no
+  title (`Dialog.label` names it), no close button of its own, and as wide as the
+  picture, which takes the most of the viewport its shape allows, up to twice its own
+  pixels. Hover, keyboard focus or an open share menu lay the prompt, the settings, the
+  same actions and "Close" over it. A touch screen has no hover: the picture is a button
+  that pins them (`model.library.detailed`, off again for the next picture), and a
+  question or a notice pins them too.
+- Search is BM25 over the prompts, in `client/Bm25.elm` (`k1` 1.2, `b` 0.75): `shelve`
+  rebuilds the index whenever the pictures change, and `Library.visible` ranks them for
+  `model.query`, best first, newer first on a tie. Words are lower-cased and split at
+  ASCII punctuation and spaces, and lose their accents (`Bm25.fold`: "Kraków" and
+  "krakow" are one word, "ß" is "ss", a combining accent is dropped), in the prompts
+  and in the query alike: Elm has no Unicode normalisation, so a Latin letter missing
+  from `plain` is added there. Other alphabets are kept as they are. The last word of
+  the query matches as a prefix, since it is still being typed, the others whole. Any word may match: more words rank, they
+  don't filter.
+- Sharing: a picture has no address to share, so the menu hands over the file. "Share…"
+  is the device's share sheet (`SharePicture`, `navigator.share` with the file and the
+  prompt), offered only when the `canShare` flag says the browser can; "Copy picture"
+  is `CopyPicture` (`navigator.clipboard`); a network (`client/Share.elm`: X, Threads,
+  Bluesky, LinkedIn, Reddit) copies the picture and opens the network's composer with
+  the prompt (`OpenTab`, `window.open`), to paste it there. `client/share.ts` answers
+  `PictureCopied` or `ShareFailed` with the error's name; `AbortError`, a closed share
+  sheet, shows nothing. A new network is a `Network` variant: `compose` and
+  `LibraryView.logo` don't compile until they handle it, and `Share.networks` lists it.
 
 ### elmcn components
 
@@ -499,14 +593,18 @@ shadcn/ui for Elm, copied into `client/UI/` and ours to change. Read a module fo
 npx shadcn@latest search ricardocasares/elmcn -q dialog
 npx shadcn@latest view ricardocasares/elmcn/dialog
 npx shadcn@latest add ricardocasares/elmcn/dialog
-mv -n src/UI/*.elm client/UI/ && ls src/UI
+mv -n src/UI/* client/UI/ && ls src/UI
 ```
 
 - The registry installs into `src/UI/`. `mv -n` keeps existing (maybe edited) components;
   whatever `ls` still lists, merge by hand, then delete `src/`. `--diff` can't see
   `client/UI/`.
 - Follow the CLI's notes: some items need an Elm package (`elm install` at the root) or
-  a script import in `client/main.ts`. Strip their comments.
+  a script import in `client/main.ts` (`UI/elmcn-dialog.ts`, the custom element that
+  opens `UI.Dialog` and the sidebar's sheet). Strip their comments, keeping the
+  `-- SECTION` headings.
+- A class of ours that must win over a component's own takes Tailwind's `!`
+  (`bg-red-600!`): the order of two classes in the attribute decides nothing.
 - Builders: `X.new`, content, variants and sizes, `toHtml`; one `|>` per line.
 
   ```elm
@@ -745,7 +843,11 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   `Interop` encoders: the test then pins the format the other side relies on.
 - Browser: act as a user does. `startAt "/auth/signup"` opens a page; `fillIn` a field by
   its id and label, `clickButton` by its text (the `sr-only` label on an icon-only
-  control), `clickLink`, then look for text in the view.
+  control), `clickLink`, then look for text in the view. `clickButton` takes any button
+  that contains the text, and fails when two do: a button repeated per row gets an
+  `aria-label` that names its row ("Download Bonsai binary, 1-bit").
+- `/` sends `CheckWebGpu` and `/library` sends `LoadLibrary` as they open: a test that
+  reads every port value starts at `/settings/server`, which sends none.
 - Server: `request "first" "GET" [ "api", "health" ]` sends a request in through the port.
   Its first argument stands for the Promise's `resolve` and comes back in the response.
   Neon and Brevo are the only HTTP calls: answer Neon with
@@ -754,9 +856,13 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
 - A passing check of outgoing port values clears them: look at logs and responses in one
   `expectSent`, not one after the other.
 - `tests/PipelineTest.elm` runs `Pipeline.update` with no program, for the rules a user
-  can't reach from the page (an event out of turn, a slider off its grid);
-  `tests/MainTest.elm` covers the page, sending the library's events in through
-  `interopToElm`. No test runs the library or the worker: they need WebGPU and the model.
+  can't reach from the page (an event out of turn, a slider off its grid), and
+  `tests/LibraryTest.elm` does the same for `Library.update`; `tests/MainTest.elm` covers
+  the pages, sending the library's and IndexedDB's events in through `interopToElm`. No
+  test runs the library, the worker, IndexedDB, the clipboard or the share sheet: they
+  need a browser.
+- `tests/Bm25Test.elm` pins the search's ranking on prompts small enough to rank by
+  hand, and `tests/ShareTest.elm` each network's address.
 - `api/tests/NeonTest.elm` needs no program: a `Neon.Request` is a record, so `.body` is
   what would be sent and `.onResponse` decodes an `Http.Response`.
 - `api/tests/BrevoMailerTest.elm` works the same way, on the `Http` effect the mailer's

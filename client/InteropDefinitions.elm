@@ -7,6 +7,7 @@ import Data.Dimension as Dimension
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
+import Library
 import Pipeline
 import TsJson.Decode as TsDecode exposing (Decoder)
 import TsJson.Encode as TsEncode exposing (Encoder)
@@ -35,6 +36,7 @@ type FromElm
     | CreatePasskey Api.PasskeyOptions
     | GetPasskey Api.SignInOptions
     | RunPipeline Pipeline.Command
+    | RunLibrary Library.Command
 
 
 type ToElm
@@ -43,12 +45,15 @@ type ToElm
     | PasskeyUsed Api.Assertion
     | PasskeyFailed String
     | PipelineEvent Pipeline.Event
+    | LibraryEvent Library.Event
 
 
 type alias Flags =
     { theme : Maybe Theme
     , systemDark : Bool
     , entropy : Int
+    , models : Maybe String
+    , canShare : Bool
     }
 
 
@@ -68,7 +73,7 @@ themeToString theme =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache value ->
+        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache loadLibrary savePicture deletePicture sharePicture copyPicture openTab value ->
             case value of
                 WriteToLocalStorage entry ->
                     writeToLocalStorage entry
@@ -96,6 +101,24 @@ fromElm =
 
                 RunPipeline Pipeline.ClearCache ->
                     clearModelCache
+
+                RunLibrary Library.Load ->
+                    loadLibrary
+
+                RunLibrary (Library.Save picture) ->
+                    savePicture picture
+
+                RunLibrary (Library.Delete picture) ->
+                    deletePicture picture
+
+                RunLibrary (Library.Share picture) ->
+                    sharePicture picture
+
+                RunLibrary (Library.Copy picture) ->
+                    copyPicture picture
+
+                RunLibrary (Library.Open url) ->
+                    openTab url
         )
         |> TsEncode.variantTagged "WriteToLocalStorage"
             (TsEncode.object
@@ -135,7 +158,7 @@ fromElm =
         |> TsEncode.variantTagged "LoadModel"
             (TsEncode.object
                 [ TsEncode.required "model" (.weights >> Pipeline.weightsId) TsEncode.string
-                , TsEncode.required "cache" .keep TsEncode.bool
+                , TsEncode.required "cache" (always True) TsEncode.bool
                 , TsEncode.required "force" .fresh TsEncode.bool
                 ]
             )
@@ -153,6 +176,35 @@ fromElm =
         |> TsEncode.variant0 "CancelPipeline"
         |> TsEncode.variant0 "ReleaseModel"
         |> TsEncode.variant0 "ClearModelCache"
+        |> TsEncode.variant0 "LoadLibrary"
+        |> TsEncode.variantTagged "SavePicture"
+            (TsEncode.object
+                [ TsEncode.required "source" .url TsEncode.string
+                , TsEncode.required "prompt" (.job >> .prompt >> Prompt.toString) TsEncode.string
+                , TsEncode.required "width" (.job >> .width >> Dimension.toInt) TsEncode.int
+                , TsEncode.required "height" (.job >> .height >> Dimension.toInt) TsEncode.int
+                , TsEncode.required "steps" (.job >> .steps >> Steps.toInt) TsEncode.int
+                , TsEncode.required "seed" (.job >> .seed >> Seed.toInt) TsEncode.int
+                , TsEncode.required "model" (.weights >> Pipeline.weightsId) TsEncode.string
+                ]
+            )
+        |> TsEncode.variantTagged "DeletePicture"
+            (TsEncode.object
+                [ TsEncode.required "id" .id TsEncode.int
+                , TsEncode.required "url" .url TsEncode.string
+                ]
+            )
+        |> TsEncode.variantTagged "SharePicture"
+            (TsEncode.object
+                [ TsEncode.required "url" .url TsEncode.string
+                , TsEncode.required "name" (.job >> Library.fileName) TsEncode.string
+                , TsEncode.required "text" (.job >> .prompt >> Prompt.toString) TsEncode.string
+                ]
+            )
+        |> TsEncode.variantTagged "CopyPicture"
+            (TsEncode.object [ TsEncode.required "url" .url TsEncode.string ])
+        |> TsEncode.variantTagged "OpenTab"
+            (TsEncode.object [ TsEncode.required "url" identity TsEncode.string ])
         |> TsEncode.buildUnion
 
 
@@ -206,7 +258,40 @@ toElm =
                     (TsDecode.field "message" TsDecode.string)
                 )
           )
+        , ( "LibraryLoaded"
+          , TsDecode.map (Library.PicturesLoaded >> LibraryEvent) (TsDecode.field "pictures" (TsDecode.list storedDecoder))
+          )
+        , ( "PictureSaved"
+          , TsDecode.map LibraryEvent
+                (TsDecode.map2 Library.PictureSaved
+                    (TsDecode.field "source" TsDecode.string)
+                    (TsDecode.field "picture" storedDecoder)
+                )
+          )
+        , ( "PictureDeleted"
+          , TsDecode.map (Library.PictureDeleted >> LibraryEvent) (TsDecode.field "id" TsDecode.int)
+          )
+        , ( "LibraryFailed"
+          , TsDecode.map (Library.Failed >> LibraryEvent) (TsDecode.field "message" TsDecode.string)
+          )
+        , ( "PictureCopied", TsDecode.succeed (LibraryEvent Library.Copied) )
+        , ( "ShareFailed"
+          , TsDecode.map (Library.ShareFailed >> LibraryEvent) (TsDecode.field "name" TsDecode.string)
+          )
         ]
+
+
+storedDecoder : Decoder Library.Stored
+storedDecoder =
+    TsDecode.map8 Library.Stored
+        (TsDecode.field "id" TsDecode.int)
+        (TsDecode.field "url" TsDecode.string)
+        (TsDecode.field "prompt" TsDecode.string)
+        (TsDecode.field "width" TsDecode.int)
+        (TsDecode.field "height" TsDecode.int)
+        (TsDecode.field "steps" TsDecode.int)
+        (TsDecode.field "seed" TsDecode.int)
+        (TsDecode.field "model" TsDecode.string)
 
 
 componentDecoder : Decoder Pipeline.Component
@@ -225,7 +310,9 @@ themeDecoder =
 
 flags : Decoder Flags
 flags =
-    TsDecode.map3 Flags
+    TsDecode.map5 Flags
         (TsDecode.field "theme" (TsDecode.nullable themeDecoder))
         (TsDecode.field "systemDark" TsDecode.bool)
         (TsDecode.field "entropy" TsDecode.int)
+        (TsDecode.field "models" (TsDecode.nullable TsDecode.string))
+        (TsDecode.field "canShare" TsDecode.bool)

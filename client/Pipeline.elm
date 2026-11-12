@@ -9,17 +9,25 @@ module Pipeline exposing
     , Message(..)
     , Model
     , Msg(..)
+    , Pending
     , Picture
+    , Preset
     , Seeding(..)
     , Settings
     , Stage(..)
     , Weights(..)
     , components
+    , current
     , download
     , enter
     , frameBudget
     , guidance
+    , inMemory
     , init
+    , isDownloaded
+    , presets
+    , remember
+    , remembered
     , update
     , weights
     , weightsFromId
@@ -32,6 +40,8 @@ import Data.Dimension as Dimension exposing (Dimension)
 import Data.Prompt as Prompt exposing (Prompt)
 import Data.Seed as Seed exposing (Seed)
 import Data.Steps as Steps exposing (Steps)
+import Json.Decode as Decode
+import Json.Encode as Encode
 import Random
 
 
@@ -44,6 +54,8 @@ type alias Model =
     , settings : Settings
     , message : Maybe Message
     , pictures : List Picture
+    , detailed : Maybe String
+    , downloaded : List Weights
     , random : Random.Seed
     }
 
@@ -54,10 +66,17 @@ type Engine
     | Unsupported
     | Empty
     | Clearing
-    | Loading Weights (List Download)
+    | Loading Weights (List Download) (Maybe Job)
     | Ready Weights
     | Generating Weights Job Stage
-    | Releasing
+    | Releasing (Maybe Pending)
+
+
+type alias Pending =
+    { weights : Weights
+    , fresh : Bool
+    , job : Maybe Job
+    }
 
 
 type Stage
@@ -77,8 +96,6 @@ type Weights
 
 type alias Settings =
     { weights : Weights
-    , keep : Bool
-    , fresh : Bool
     , prompt : String
     , width : Dimension
     , height : Dimension
@@ -104,6 +121,16 @@ type alias Job =
 type alias Picture =
     { url : String
     , job : Job
+    , weights : Weights
+    }
+
+
+type alias Preset =
+    { name : String
+    , ratio : String
+    , use : String
+    , width : Dimension
+    , height : Dimension
     }
 
 
@@ -127,13 +154,11 @@ type alias Failure =
     }
 
 
-init : Int -> Model
-init entropy =
+init : Int -> List Weights -> Model
+init entropy downloaded =
     { engine = Unchecked
     , settings =
-        { weights = Ternary
-        , keep = True
-        , fresh = False
+        { weights = Maybe.withDefault Ternary (List.head downloaded)
         , prompt = ""
         , width = Dimension.default
         , height = Dimension.default
@@ -142,6 +167,8 @@ init entropy =
         }
     , message = Nothing
     , pictures = []
+    , detailed = Nothing
+    , downloaded = downloaded
     , random = Random.initialSeed entropy
     }
 
@@ -198,6 +225,59 @@ download component downloads =
         |> List.head
 
 
+presets : List Preset
+presets =
+    List.filterMap identity
+        [ preset "Square" "1:1" "Instagram post, profile picture" 1024 1024
+        , preset "Portrait" "4:5" "Instagram portrait" 768 960
+        , preset "Story" "9:16" "Stories, Reels, TikTok, Shorts" 576 1024
+        , preset "Widescreen" "16:9" "YouTube thumbnail, X post" 1024 576
+        , preset "Pin" "2:3" "Pinterest pin" 640 960
+        , preset "Link card" "2:1" "Link preview on X, LinkedIn, Facebook" 1024 512
+        , preset "Banner" "3:1" "X header" 960 320
+        ]
+
+
+preset : String -> String -> String -> Int -> Int -> Maybe Preset
+preset name ratio use width height =
+    Maybe.map2 (Preset name ratio use) (Dimension.fromInt width) (Dimension.fromInt height)
+
+
+isDownloaded : Weights -> Model -> Bool
+isDownloaded chosen model =
+    List.member chosen model.downloaded
+
+
+inMemory : Engine -> Maybe Weights
+inMemory engine =
+    case engine of
+        Ready loaded ->
+            Just loaded
+
+        Generating loaded _ _ ->
+            Just loaded
+
+        _ ->
+            Nothing
+
+
+remember : List Weights -> String
+remember downloaded =
+    Encode.encode 0 (Encode.list (weightsId >> Encode.string) downloaded)
+
+
+remembered : String -> List Weights
+remembered stored =
+    Decode.decodeString (Decode.list Decode.string) stored
+        |> Result.withDefault []
+        |> List.filterMap weightsFromId
+
+
+current : List Download -> Maybe Download
+current downloads =
+    List.head downloads
+
+
 guidance : Float
 guidance =
     1
@@ -213,20 +293,21 @@ frameBudget =
 
 
 type Msg
-    = WeightsChosen String
-    | KeepToggled Bool
-    | FreshToggled Bool
-    | LoadClicked
+    = WeightsChosen Weights
+    | DownloadClicked Weights
+    | DownloadAgainClicked Weights
     | CancelClicked
     | ReleaseClicked
     | ClearClicked
     | PromptChanged String
+    | PresetChosen Preset
     | WidthChanged Float
     | HeightChanged Float
     | StepsChanged Float
     | RandomSeedToggled Bool
     | SeedChanged String
     | SeedReused Seed
+    | DetailsToggled String
     | GenerateClicked
     | Happened Event
 
@@ -244,7 +325,7 @@ type Event
 
 type Command
     = Check
-    | Load { weights : Weights, keep : Bool, fresh : Bool }
+    | Load { weights : Weights, fresh : Bool }
     | Generate Job
     | Cancel
     | Release
@@ -264,17 +345,14 @@ enter model =
 update : Msg -> Model -> ( Model, Maybe Command )
 update msg model =
     case msg of
-        WeightsChosen id ->
-            ( edit (\settings -> { settings | weights = Maybe.withDefault settings.weights (weightsFromId id) }) model, Nothing )
-
-        KeepToggled keep ->
-            ( edit (\settings -> { settings | keep = keep }) model, Nothing )
-
-        FreshToggled fresh ->
-            ( edit (\settings -> { settings | fresh = fresh }) model, Nothing )
+        WeightsChosen chosen ->
+            ( edit (\settings -> { settings | weights = chosen }) model, Nothing )
 
         PromptChanged prompt ->
             ( edit (\settings -> { settings | prompt = prompt }) model, Nothing )
+
+        PresetChosen chosen ->
+            ( edit (\settings -> { settings | width = chosen.width, height = chosen.height }) model, Nothing )
 
         WidthChanged pixels ->
             ( edit (\settings -> { settings | width = Maybe.withDefault settings.width (Dimension.fromInt (round pixels)) }) model, Nothing )
@@ -294,28 +372,30 @@ update msg model =
         SeedChanged seed ->
             ( edit (\settings -> { settings | seeding = FixedSeed seed }) model, Nothing )
 
+        DetailsToggled url ->
+            ( { model
+                | detailed =
+                    if model.detailed == Just url then
+                        Nothing
+
+                    else
+                        Just url
+              }
+            , Nothing
+            )
+
         SeedReused seed ->
             ( edit (\settings -> { settings | seeding = FixedSeed (Seed.toString seed) }) model, Nothing )
 
-        LoadClicked ->
-            case model.engine of
-                Empty ->
-                    ( { model | engine = Loading model.settings.weights [], message = Nothing }
-                    , Just
-                        (Load
-                            { weights = model.settings.weights
-                            , keep = model.settings.keep
-                            , fresh = model.settings.fresh
-                            }
-                        )
-                    )
+        DownloadClicked chosen ->
+            start { weights = chosen, fresh = False, job = Nothing } model
 
-                _ ->
-                    ( model, Nothing )
+        DownloadAgainClicked chosen ->
+            start { weights = chosen, fresh = True, job = Nothing } model
 
         CancelClicked ->
             case model.engine of
-                Loading _ _ ->
+                Loading _ _ _ ->
                     ( model, Just Cancel )
 
                 Generating loaded job (Denoising _) ->
@@ -327,7 +407,7 @@ update msg model =
         ReleaseClicked ->
             case model.engine of
                 Ready _ ->
-                    ( { model | engine = Releasing, message = Nothing }, Just Release )
+                    ( { model | engine = Releasing Nothing, message = Nothing }, Just Release )
 
                 _ ->
                     ( model, Nothing )
@@ -341,71 +421,145 @@ update msg model =
                     ( model, Nothing )
 
         GenerateClicked ->
-            case ( model.engine, plan model ) of
-                ( Ready loaded, Ok ( job, random ) ) ->
-                    ( { model | engine = Generating loaded job (Denoising 0), message = Nothing, random = random }
-                    , Just (Generate job)
-                    )
+            if inMemory model.engine == Nothing && model.engine /= Empty then
+                ( model, Nothing )
 
-                ( Ready _, Err problem ) ->
-                    ( { model | message = Just (Problem problem) }, Nothing )
+            else
+                case plan model of
+                    Ok ( job, random ) ->
+                        start { weights = model.settings.weights, fresh = False, job = Just job } { model | random = random }
 
-                _ ->
-                    ( model, Nothing )
+                    Err problem ->
+                        ( { model | message = Just (Problem problem) }, Nothing )
 
         Happened event ->
-            ( happened event model, Nothing )
+            happened event model
 
 
-happened : Event -> Model -> Model
+start : Pending -> Model -> ( Model, Maybe Command )
+start pending model =
+    case model.engine of
+        Empty ->
+            load pending model
+
+        Ready loaded ->
+            if loaded /= pending.weights || pending.fresh then
+                ( { model | engine = Releasing (Just pending), message = Nothing }, Just Release )
+
+            else
+                case pending.job of
+                    Just job ->
+                        generate loaded job model
+
+                    Nothing ->
+                        ( model, Nothing )
+
+        _ ->
+            ( model, Nothing )
+
+
+load : Pending -> Model -> ( Model, Maybe Command )
+load pending model =
+    ( { model | engine = Loading pending.weights [] pending.job, message = Nothing }
+    , Just (Load { weights = pending.weights, fresh = pending.fresh })
+    )
+
+
+generate : Weights -> Job -> Model -> ( Model, Maybe Command )
+generate loaded job model =
+    ( { model | engine = Generating loaded job (Denoising 0), message = Nothing }, Just (Generate job) )
+
+
+happened : Event -> Model -> ( Model, Maybe Command )
 happened event model =
     case ( event, model.engine ) of
         ( SupportChecked True, Checking ) ->
-            { model | engine = Empty }
+            ( { model | engine = Empty }, Nothing )
 
         ( SupportChecked False, Checking ) ->
-            { model | engine = Unsupported }
+            ( { model | engine = Unsupported }, Nothing )
 
-        ( Downloaded progress, Loading chosen downloads ) ->
-            { model
+        ( Downloaded progress, Loading chosen downloads waiting ) ->
+            ( { model
                 | engine =
                     Loading chosen
                         (progress :: List.filter (\known -> known.component /= progress.component) downloads)
-            }
+                        waiting
+              }
+            , Nothing
+            )
 
-        ( ModelLoaded, Loading chosen _ ) ->
-            edit (\settings -> { settings | fresh = False }) { model | engine = Ready chosen }
+        ( ModelLoaded, Loading chosen _ waiting ) ->
+            let
+                loaded =
+                    { model
+                        | engine = Ready chosen
+                        , downloaded = chosen :: List.filter (\known -> known /= chosen) model.downloaded
+                    }
+            in
+            case waiting of
+                Just job ->
+                    generate chosen job loaded
+
+                Nothing ->
+                    ( loaded, Nothing )
 
         ( StepFinished index, Generating loaded job (Denoising _) ) ->
-            { model | engine = Generating loaded job (Denoising (index + 1)) }
+            ( { model | engine = Generating loaded job (Denoising (index + 1)) }, Nothing )
 
         ( PictureMade url, Generating loaded job _ ) ->
-            { model | engine = Ready loaded, pictures = { url = url, job = job } :: model.pictures }
+            ( { model | engine = Ready loaded, pictures = { url = url, job = job, weights = loaded } :: model.pictures }
+            , Nothing
+            )
 
-        ( ModelReleased, Releasing ) ->
-            { model | engine = Empty }
+        ( ModelReleased, Releasing (Just pending) ) ->
+            load pending { model | engine = Empty }
+
+        ( ModelReleased, Releasing Nothing ) ->
+            ( { model | engine = Empty }, Nothing )
 
         ( CacheCleared, Clearing ) ->
-            { model | engine = Empty, message = Just (Info "The downloaded models are gone from this browser.") }
+            ( { model
+                | engine = Empty
+                , downloaded = []
+                , message = Just (Info "The downloaded models are gone from this browser.")
+              }
+            , Nothing
+            )
 
         ( Failed failure, _ ) ->
             case rest model.engine of
                 Just engine ->
-                    { model
+                    ( { model
                         | engine = engine
                         , message =
-                            if failure.name == "AbortError" then
+                            if failure.name == "AbortError" && isCancellable model.engine then
                                 Nothing
 
                             else
                                 Just (Problem (explain failure))
-                    }
+                      }
+                    , Nothing
+                    )
 
                 Nothing ->
-                    model
+                    ( model, Nothing )
 
         _ ->
-            model
+            ( model, Nothing )
+
+
+isCancellable : Engine -> Bool
+isCancellable engine =
+    case engine of
+        Loading _ _ _ ->
+            True
+
+        Generating _ _ Stopping ->
+            True
+
+        _ ->
+            False
 
 
 rest : Engine -> Maybe Engine
@@ -426,7 +580,7 @@ rest engine =
         Clearing ->
             Just Empty
 
-        Loading _ _ ->
+        Loading _ _ _ ->
             Just Empty
 
         Ready _ ->
@@ -435,7 +589,7 @@ rest engine =
         Generating loaded _ _ ->
             Just (Ready loaded)
 
-        Releasing ->
+        Releasing _ ->
             Just Empty
 
 

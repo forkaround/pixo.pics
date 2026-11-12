@@ -1,5 +1,8 @@
+import "./UI/elmcn-dialog";
 import { Elm, type Flags, type FromElm, type ToElm } from "./Main.elm";
+import { library } from "./library";
 import type { Command, Reply } from "./pipeline.worker";
+import { canShare, copyPicture, sharePicture } from "./share";
 
 type PasskeyOptions = Extract<FromElm, { tag: "CreatePasskey" }>["data"];
 type SignInOptions = Extract<FromElm, { tag: "GetPasskey" }>["data"];
@@ -7,9 +10,9 @@ type SignInOptions = Extract<FromElm, { tag: "GetPasskey" }>["data"];
 //-- FLAGS
 
 const media = window.matchMedia("(prefers-color-scheme: dark)");
-const getStoredTheme = () => {
+const stored = (key: string) => {
   try {
-    return (localStorage.getItem("theme") as Flags["theme"]) ?? null;
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -94,9 +97,11 @@ const getPasskey = async (options: SignInOptions): Promise<ToElm> => {
 
 const app = Elm.Main.init({
   flags: {
-    theme: getStoredTheme(),
+    theme: stored("theme") as Flags["theme"],
     systemDark: media.matches,
     entropy: crypto.getRandomValues(new Uint32Array(1))[0] ?? 0,
+    models: stored("models"),
+    canShare: canShare(),
   },
 });
 
@@ -158,6 +163,20 @@ app.ports.interopFromElm.subscribe((msg) => {
     case "ReleaseModel":
     case "ClearModelCache":
       return void pipeline(msg);
+
+    case "LoadLibrary":
+    case "SavePicture":
+    case "DeletePicture":
+      return void library(msg).then(send);
+
+    case "SharePicture":
+      return void sharePicture(msg.data).then((reply) => reply && send(reply));
+
+    case "CopyPicture":
+      return void copyPicture(msg.data).then(send);
+
+    case "OpenTab":
+      return void window.open(msg.data.url, "_blank", "noopener,noreferrer");
 
     default:
       return msg satisfies never;

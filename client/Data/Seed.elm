@@ -1,4 +1,4 @@
-module Data.Seed exposing (Seed, fromString, generator, largest, toInt, toString)
+module Data.Seed exposing (Seed, fromInt, fromString, generator, largest, toInt, toString)
 
 import Random
 
@@ -12,6 +12,15 @@ largest =
     4294967295
 
 
+fromInt : Int -> Maybe Seed
+fromInt number =
+    if number >= 0 && number <= largest then
+        Just (Seed number)
+
+    else
+        Nothing
+
+
 fromString : String -> Maybe Seed
 fromString value =
     let
@@ -20,14 +29,7 @@ fromString value =
     in
     if not (String.isEmpty clean) && String.all Char.isDigit clean then
         String.toInt clean
-            |> Maybe.andThen
-                (\number ->
-                    if number <= largest then
-                        Just (Seed number)
-
-                    else
-                        Nothing
-                )
+            |> Maybe.andThen fromInt
 
     else
         Nothing
