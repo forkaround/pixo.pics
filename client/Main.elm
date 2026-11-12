@@ -8,6 +8,7 @@ import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
 import Data.LinkToken exposing (LinkToken)
 import Data.Username as Username
+import ExploreView
 import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
 import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, href, id, name, rel, required, target, type_, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
@@ -94,7 +95,8 @@ type Session
 
 
 type Page
-    = Studio
+    = Explore
+    | Studio
     | Library
     | Settings Section
     | SignUp SignUpForm
@@ -178,6 +180,9 @@ open url opened =
             { opened | ceremony = Resting Nothing, sidebar = { open = opened.sidebar.open, openMobile = False } }
     in
     case Path.parse url of
+        Path.Explore ->
+            ( { model | page = Explore }, NoEffect )
+
         Path.Studio ->
             runPipeline { model | page = Studio } (Pipeline.enter model.pipeline)
 
@@ -540,7 +545,7 @@ update msg model =
             ( model, Request (ApiClient.request Api.signOut () GotSignOut) )
 
         GotSignOut (Ok ()) ->
-            ( { model | session = SignedOut }, PushUrl (Path.toString Path.Studio) )
+            ( { model | session = SignedOut }, PushUrl (Path.toString Path.Explore) )
 
         GotSignOut (Err _) ->
             ( model, NoEffect )
@@ -770,6 +775,9 @@ view model =
 title : Page -> String
 title page =
     case page of
+        Explore ->
+            "Explore · pixo"
+
         Studio ->
             "Studio · pixo"
 
@@ -819,6 +827,14 @@ viewBody model =
                     ]
                 ]
 
+        Explore ->
+            viewShell model
+                [ viewContent
+                    [ viewBar [ class "sticky top-0 z-10 bg-background/85 backdrop-blur" ] model "Explore" []
+                    , ExploreView.view (hero model.session)
+                    ]
+                ]
+
         Settings section ->
             viewShell model
                 [ viewAside "md:w-56"
@@ -854,7 +870,7 @@ viewShell model page =
         |> Sidebar.width "15rem"
         |> Sidebar.header
             [ a
-                [ href (Path.toString Path.Studio)
+                [ href (Path.toString Path.Explore)
                 , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
                 ]
                 [ span [ class "flex h-4 shrink-0 overflow-hidden md:group-data-[collapsible=icon]:w-4" ]
@@ -867,7 +883,8 @@ viewShell model page =
         |> Sidebar.content
             [ Sidebar.group []
                 [ Sidebar.menu []
-                    [ viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
+                    [ viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
+                    , viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
                     , viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
                     , viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings"
                     ]
@@ -880,6 +897,22 @@ viewShell model page =
         |> Sidebar.rail
         |> Sidebar.page [ class "min-w-0 md:flex-row" ] page
         |> Sidebar.toHtml [ class "bg-background text-foreground" ]
+
+
+hero : Session -> ExploreView.Hero
+hero session =
+    case session of
+        Unknown ->
+            ExploreView.Reserved
+
+        Unavailable _ ->
+            ExploreView.Hidden
+
+        SignedOut ->
+            ExploreView.Shown
+
+        SignedIn _ ->
+            ExploreView.Hidden
 
 
 isSettings : Page -> Bool
@@ -981,7 +1014,7 @@ viewPage model =
         _ ->
             [ notice "Not found"
                 "There is nothing at this address."
-                (link Path.Studio "Go home" :: notFoundOptions model.session)
+                (link Path.Explore "Go home" :: notFoundOptions model.session)
             ]
 
 

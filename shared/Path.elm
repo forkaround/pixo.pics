@@ -6,7 +6,8 @@ import Url.Parser as Parser exposing ((</>), Parser)
 
 
 type Path
-    = Studio
+    = Explore
+    | Studio
     | Library
     | Models
     | Server
@@ -20,8 +21,11 @@ type Path
 toString : Path -> String
 toString path =
     case path of
-        Studio ->
+        Explore ->
             "/"
+
+        Studio ->
+            "/studio"
 
         Library ->
             "/library"
@@ -60,7 +64,8 @@ parse url =
 parser : Parser (Path -> a) a
 parser =
     Parser.oneOf
-        [ Parser.map Studio Parser.top
+        [ Parser.map Explore Parser.top
+        , Parser.map Studio (Parser.s "studio")
         , Parser.map Library (Parser.s "library")
         , Parser.map Models (Parser.s "settings")
         , Parser.map Models (Parser.s "settings" </> Parser.s "models")

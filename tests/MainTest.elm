@@ -521,10 +521,19 @@ suite =
                             (Expect.equal [ { tag = "WriteToLocalStorage", key = "theme", value = "dark" } ])
             ]
         , describe "Shell"
-            [ test "opens the studio at home" <|
+            [ test "opens Explore at home" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.expectViewHas [ tag "h1", containing [ text "Explore" ] ]
+            , test "opens the studio" <|
+                \() ->
+                    startAt "/studio" defaultFlags
+                        |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
+            , test "leads home from the logo" <|
                 \() ->
                     start defaultFlags
-                        |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
+                        |> ProgramTest.clickLink "pixo" "/"
+                        |> ProgramTest.expectViewHas [ tag "h1", containing [ text "Explore" ] ]
             , test "leads to the library and the settings" <|
                 \() ->
                     start defaultFlags
@@ -534,7 +543,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Remove downloaded models" ]
                         |> ProgramTest.clickLink "Server" "/settings/server"
                         |> ProgramTest.ensureViewHas [ text "GET /api/health" ]
-                        |> ProgramTest.clickLink "Studio" "/"
+                        |> ProgramTest.clickLink "Studio" "/studio"
                         |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
             , test "marks the page it is on" <|
                 \() ->
@@ -550,6 +559,44 @@ suite =
                         |> ProgramTest.update (Main.SidebarChanged { open = True, openMobile = True })
                         |> ProgramTest.clickLink "Library" "/library"
                         |> ProgramTest.expectModel (.sidebar >> Expect.equal { open = True, openMobile = False })
+            ]
+        , describe "Explore"
+            [ test "opens from the menu and marks it" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.clickLink "Explore" "/"
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
+                        |> ProgramTest.expectViewHas
+                            [ tag "a"
+                            , attribute (Html.Attributes.attribute "aria-current" "page")
+                            , attribute (Html.Attributes.href "/")
+                            ]
+            , test "invites a visitor who is signed out to sign up" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.ensureViewHas [ text "See what people are making" ]
+                        |> ProgramTest.clickLink "Sign up" "/auth/signup"
+                        |> ProgramTest.expectViewHas [ text "Create your account" ]
+            , test "keeps the banner's place, unseen, until it knows who is there" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.expectViewHas
+                            [ tag "section"
+                            , class "invisible"
+                            , containing [ text "See what people are making" ]
+                            ]
+            , test "shows no banner to someone signed in" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.expectViewHasNot [ text "See what people are making" ]
+            , test "asks nothing of the browser" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
             ]
         , describe "Studio"
             [ test "asks the browser whether it can run the model" <|
@@ -739,7 +786,7 @@ suite =
                     ready
                         |> ProgramTest.clickLink "Settings" "/settings/models"
                         |> ProgramTest.ensureViewHas [ text "In memory" ]
-                        |> ProgramTest.clickLink "Studio" "/"
+                        |> ProgramTest.clickLink "Studio" "/studio"
                         |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
@@ -934,7 +981,7 @@ suite =
                     startAt "/library" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryLoaded [])
                         |> ProgramTest.ensureViewHas [ text "No pictures yet" ]
-                        |> ProgramTest.clickLink "Open the studio" "/"
+                        |> ProgramTest.clickLink "Open the studio" "/studio"
                         |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
             , test "says why the pictures could not be read" <|
                 \() ->
@@ -1121,7 +1168,7 @@ ready =
         |> ProgramTest.clickLink "Settings" "/settings/models"
         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit again"
         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
-        |> ProgramTest.clickLink "Studio" "/"
+        |> ProgramTest.clickLink "Studio" "/studio"
         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
             (Decode.field "tag" Decode.string)
             (Expect.equal [ "CheckWebGpu", "LoadModel" ])
@@ -1141,7 +1188,7 @@ library =
 
 start : Flags -> ProgramTest Main.Model Main.Msg Main.Effect
 start =
-    startAt "/"
+    startAt "/studio"
 
 
 startAt : String -> Flags -> ProgramTest Main.Model Main.Msg Main.Effect

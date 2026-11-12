@@ -381,7 +381,7 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   beside the model and hands it to `perform`, for the `PushUrl` and `Load` effects.
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
   `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
-  address: `/` (the studio), `/library`, `/settings/models` (also `/settings`),
+  address: `/` (Explore), `/studio`, `/library`, `/settings/models` (also `/settings`),
   `/settings/server`, `/auth/signup`, `/auth/signin`, `/auth/verify`, `/dashboard`, and
   `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
@@ -412,11 +412,11 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`
   words it. `main.ts` only converts base64url and buffers: the ceremony's options
   (`residentKey: "required"`, `attestation: "none"`) are its only constants.
-- The studio, the library and the settings share a shell, `viewShell`: a `UI.Sidebar`
-  that collapses to its icons (a sheet below `md`, closed by `open` once a page is
-  picked; its `State` is `model.sidebar`) with Studio, Library and Settings, and in its
-  footer what fits the session (sign-in and sign-up, the dashboard, or "Try again") and
-  the theme toggle. Its header is the logo, `Logo.wordmark` (`client/Logo.elm`), the one
+- The studio, the library, Explore and the settings share a shell, `viewShell`: a
+  `UI.Sidebar` that collapses to its icons (a sheet below `md`, closed by `open` once a
+  page is picked; its `State` is `model.sidebar`) with Explore, Studio, Library and
+  Settings, and in its footer what fits the session (sign-in and sign-up, the
+  dashboard, or "Try again") and the theme toggle. Its header is the logo, `Logo.wordmark` (`client/Logo.elm`), the one
   SVG drawn by hand, stroked in `currentColor` so it takes the text's color. Its paths
   run along the middle of a 5-unit stroke and the view box leaves room for it: change
   the stroke and both change. A class goes on it with `Svg.Attributes.class`. It is as
@@ -438,8 +438,15 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   centred column of cards, with the theme toggle under them.
 - The theme toggle is `UI.Tabs` without panels, saved to `localStorage` via the
   `WriteToLocalStorage` port and read back from the flags.
-- `/` makes pictures in the browser and `/library` keeps them there: neither needs a
-  session (see [Image pipeline](#image-pipeline) and [Library](#library)).
+- `/studio` makes pictures in the browser and `/library` keeps them there: neither
+  needs a session (see [Image pipeline](#image-pipeline) and [Library](#library)).
+- `/`, Explore, is home (the logo, "Go home" and a sign-out lead there) and a
+  placeholder, wired to nothing yet: `client/ExploreView.elm` draws `tiles`, blocks of
+  several shapes and colors, in the library's columns, and holds no state. Above them a signed-out visitor gets a banner that links to `/auth/signup`
+  (`ExploreView.Hero`, which `Main.hero` picks from the session): `Shown` when
+  `SignedOut`, `Reserved` while `Unknown` (drawn `invisible`, so the banner moves
+  nothing when it appears), `Hidden` otherwise. Its button says "Sign up", not the
+  sidebar's "Create an account": a test clicks each by its text.
 - `/settings/models` lists the models (see [Image pipeline](#image-pipeline));
   `/settings/server` has the Server card (one row per `Api.checks`, release and region in
   the footer), which asks `Api.health` when it opens.
@@ -449,7 +456,7 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
 
 ### Image pipeline
 
-The studio (`/`) runs [bonsai-image-pipeline-lib](https://github.com/nishlumi/bonsai-image-pipeline-lib)
+The studio (`/studio`) runs [bonsai-image-pipeline-lib](https://github.com/nishlumi/bonsai-image-pipeline-lib)
 (WebGPU, MIT), a dependency pinned to a commit in `package.json`: the model is downloaded
 from Hugging Face into the browser and runs there. The server takes no part.
 
@@ -868,8 +875,8 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   control), `clickLink`, then look for text in the view. `clickButton` takes any button
   that contains the text, and fails when two do: a button repeated per row gets an
   `aria-label` that names its row ("Download Bonsai binary, 1-bit").
-- `/` sends `CheckWebGpu` and `/library` sends `LoadLibrary` as they open: a test that
-  reads every port value starts at `/settings/server`, which sends none.
+- `/studio` sends `CheckWebGpu` and `/library` sends `LoadLibrary` as they open: a test
+  that reads every port value starts at `/settings/server`, which sends none.
 - Server: `request "first" "GET" [ "api", "health" ]` sends a request in through the port.
   Its first argument stands for the Promise's `resolve` and comes back in the response.
   Neon and Brevo are the only HTTP calls: answer Neon with

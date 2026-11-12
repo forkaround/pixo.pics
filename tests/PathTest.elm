@@ -52,7 +52,7 @@ suite =
 
 paths : List Path
 paths =
-    collect (Just Path.Studio) []
+    collect (Just Path.Explore) []
 
 
 collect : Maybe Path -> List Path -> List Path
@@ -68,6 +68,9 @@ collect path found =
 next : Path -> Maybe Path
 next path =
     case path of
+        Path.Explore ->
+            Just Path.Studio
+
         Path.Studio ->
             Just Path.Library
 
