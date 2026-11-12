@@ -104,6 +104,7 @@ type Page
     | SignUp SignUpForm
     | SignIn SignInForm
     | Verify Verification
+    | Passkey
     | NotFound
 
 
@@ -139,7 +140,6 @@ type Attempt
 type Verification
     = Looking LinkToken
     | Found LinkToken Api.Verification Acceptance
-    | Accepted
     | Refused String
 
 
@@ -223,6 +223,15 @@ open url opened =
         Path.Verify Nothing ->
             ( { model | page = Verify (Refused missingToken) }, NoEffect )
 
+        Path.Passkey ->
+            ( { model | page = Passkey }
+            , if model.session == SignedOut then
+                PushUrl (Path.toString Path.SignIn)
+
+              else
+                NoEffect
+            )
+
         Path.NotFound ->
             ( { model | page = NotFound }, NoEffect )
 
@@ -298,6 +307,7 @@ type Msg
     | GotVerification (Result ApiClient.Error Api.Verification)
     | VerificationAccepted
     | GotAccount (Result ApiClient.Error Api.Account)
+    | GotPasskeyCheck (Result ApiClient.Error (List Api.Passkey))
     | GotSession (Result ApiClient.Error Api.Account)
     | SessionRetried
     | SignInEmailChanged String
@@ -469,15 +479,32 @@ update msg model =
 
         GotAccount result ->
             case ( model.page, result ) of
-                ( Verify (Found _ found Accepting), Ok account ) ->
-                    if found.newAccount then
-                        ( { model | session = SignedIn account, page = Verify Accepted }, NoEffect )
-
-                    else
-                        ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Explore) )
+                ( Verify (Found _ _ Accepting), Ok account ) ->
+                    ( { model | session = SignedIn account }
+                    , Request (ApiClient.request Api.passkeys () GotPasskeyCheck)
+                    )
 
                 ( Verify (Found _ _ Accepting), Err error ) ->
                     ( { model | page = Verify (Refused (ApiClient.errorToString error)) }, NoEffect )
+
+                _ ->
+                    ( model, NoEffect )
+
+        GotPasskeyCheck result ->
+            case model.page of
+                Verify (Found _ _ Accepting) ->
+                    ( model
+                    , PushUrl
+                        (Path.toString
+                            (case result of
+                                Ok [] ->
+                                    Path.Passkey
+
+                                _ ->
+                                    Path.Explore
+                            )
+                        )
+                    )
 
                 _ ->
                     ( model, NoEffect )
@@ -494,6 +521,9 @@ update msg model =
                     ( { model | session = SignedOut }
                     , case model.page of
                         Settings (Account _) ->
+                            PushUrl (Path.toString Path.SignIn)
+
+                        Passkey ->
                             PushUrl (Path.toString Path.SignIn)
 
                         _ ->
@@ -590,7 +620,7 @@ update msg model =
                             _ ->
                                 account
                     )
-            , if model.page == Verify Accepted then
+            , if model.page == Passkey then
                 PushUrl (Path.toString Path.Explore)
 
               else
@@ -808,6 +838,9 @@ title page =
         Verify _ ->
             "Verify · pixo"
 
+        Passkey ->
+            "Create a passkey · pixo"
+
         NotFound ->
             "Not found · pixo"
 
@@ -872,7 +905,10 @@ viewBody model =
             viewPlain model.theme (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
 
         Verify verification ->
-            viewPlain model.theme (viewVerification model.ceremony verification)
+            viewPlain model.theme (viewVerification verification)
+
+        Passkey ->
+            viewPlain model.theme (viewEnrolment model.ceremony)
 
         NotFound ->
             viewPlain model.theme
@@ -1015,7 +1051,7 @@ viewSession model =
         Unknown ->
             Sidebar.menuItem [ attribute "aria-hidden" "true" ]
                 [ div [ class "flex h-12 items-center gap-2 p-2 md:group-data-[collapsible=icon]:p-0" ]
-                    [ Skeleton.view [ class "size-8 shrink-0 rounded-full" ]
+                    [ Skeleton.view [ class "size-8 shrink-0 rounded-full!" ]
                     , div [ class "flex flex-1 flex-col gap-1.5 md:group-data-[collapsible=icon]:hidden" ]
                         [ Skeleton.view [ class "h-3.5 w-20" ]
                         , Skeleton.view [ class "h-3 w-32" ]
@@ -1306,23 +1342,18 @@ viewSignIn ceremony signIn =
             viewSent ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
 
         Open attempt ->
-            [ viewLead "Log in to your account" "We'll email you a link. No password needed."
+            [ viewLead "Log in to your account" "Use your passkey, or get a link by email."
             , form [ onSubmit SignInSubmitted ]
                 [ Field.group []
-                    [ viewEmailField signIn.email SignInEmailChanged
-                    , viewAttemptProblem attempt
-                    , viewSubmit attempt
-                    , Field.separator [] [ text "or" ]
-                    , viewProblem ceremony
+                    [ viewProblem ceremony
                     , Button.new
                         |> Button.text
                             (if ceremony == Waiting then
                                 "Waiting for your device…"
 
                              else
-                                "Use a passkey"
+                                "Log in with a passkey"
                             )
-                        |> Button.outline
                         |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml
                             [ type_ "button"
@@ -1330,6 +1361,13 @@ viewSignIn ceremony signIn =
                             , disabled (ceremony == Waiting)
                             , class "h-10"
                             ]
+                    , Field.separator [] [ text "or" ]
+                    , viewEmailField signIn.email SignInEmailChanged
+                    , viewAttemptProblem attempt
+                    , Button.new
+                        |> Button.text (submitLabel attempt)
+                        |> Button.outline
+                        |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting), class "h-10" ]
                     ]
                 ]
             ]
@@ -1496,19 +1534,46 @@ viewAttemptProblem attempt =
 viewSubmit : Attempt -> Html Msg
 viewSubmit attempt =
     Button.new
-        |> Button.text
-            (case attempt of
-                Submitting ->
-                    "Sending the link…"
-
-                Editing _ ->
-                    "Email me a link"
-            )
+        |> Button.text (submitLabel attempt)
         |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting), class "h-10" ]
 
 
-viewVerification : Ceremony -> Verification -> List (Html Msg)
-viewVerification ceremony verification =
+submitLabel : Attempt -> String
+submitLabel attempt =
+    case attempt of
+        Submitting ->
+            "Sending the link…"
+
+        Editing _ ->
+            "Email me a link"
+
+
+viewEnrolment : Ceremony -> List (Html Msg)
+viewEnrolment ceremony =
+    [ viewLead "Create your passkey"
+        "A passkey signs you in with your fingerprint, face or screen lock, with no email to wait for."
+    , div [ class "flex flex-col gap-4" ]
+        [ viewProblem ceremony
+        , Button.new
+            |> Button.text
+                (if ceremony == Waiting then
+                    "Waiting for your device…"
+
+                 else
+                    "Create a passkey"
+                )
+            |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+            |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting), class "h-10" ]
+        , Button.new
+            |> Button.text "Not now"
+            |> Button.outline
+            |> Button.toAnchor [ href (Path.toString Path.Explore), class "h-10" ]
+        ]
+    ]
+
+
+viewVerification : Verification -> List (Html Msg)
+viewVerification verification =
     case verification of
         Looking _ ->
             [ viewLead "Checking your link" "This takes a moment."
@@ -1525,28 +1590,6 @@ viewVerification ceremony verification =
 
         Found _ found acceptance ->
             viewFound found acceptance
-
-        Accepted ->
-            [ viewLead "Your account is ready"
-                "Add a passkey to sign in with your fingerprint, face or screen lock."
-            , div [ class "flex flex-col gap-4" ]
-                [ viewProblem ceremony
-                , Button.new
-                    |> Button.text
-                        (if ceremony == Waiting then
-                            "Waiting for your device…"
-
-                         else
-                            "Create a passkey"
-                        )
-                    |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting), class "h-10" ]
-                , Button.new
-                    |> Button.text "Not now"
-                    |> Button.outline
-                    |> Button.toAnchor [ href (Path.toString Path.Explore), class "h-10" ]
-                ]
-            ]
 
         Refused reason ->
             [ viewLead "This link didn't work" reason

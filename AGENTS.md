@@ -383,8 +383,8 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `open` picks the `Page` from `Path.parse` (`shared/Path.elm`; `Path.Verify` holds a
   `Maybe LinkToken`, and `ApiClient.withToken` takes a `LinkToken`), which names every
   address: `/` (Explore), `/studio`, `/library`, `/settings/models` (also `/settings`),
-  `/settings/server`, `/settings/account`, `/signup`, `/login`, `/verify`, and
-  `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
+  `/settings/server`, `/settings/account`, `/signup`, `/login`, `/verify`, `/passkey`,
+  and `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
   same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
   compile until it handles it) and its line in `Path.parse`'s parser. `open` also ends a
@@ -399,10 +399,10 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   (`Api.passkeys`, "Add a passkey", and a bin on each row that asks "Remove ...?"
   before `Api.deletePasskey`: the `Account` section holds the list, the id being
   confirmed and why a removal failed, and a removal never touches `model.ceremony`),
-  and sends a signed-out visitor to `/login`. There is no dashboard: a sign-in, by
-  link or by passkey, leads home.
-- `/signup`, `/login`, `/verify` and the not-found page fill the window, outside the
-  shell, in one frame, `viewPlain`: the logo, which leads home, over a narrow column in the middle
+  and sends a signed-out visitor to `/login`. There is no dashboard: a sign-in leads
+  home, or to `/passkey` when it was by link and the account has no passkey.
+- `/signup`, `/login`, `/verify`, `/passkey` and the not-found page fill the window,
+  outside the shell, in one frame, `viewPlain`: the logo, which leads home, over a narrow column in the middle
   of what is left, its text aligned left, over the theme toggle; and beside all that,
   from `lg` up, `ExploreView.mosaic`, Explore's tiles in three columns that fade out
   towards the bottom (`mask-b-from-55%`): decoration only. The column starts with a
@@ -414,16 +414,26 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   URL and `open` starts its form empty. Under the tabs come the heading and the form. Each input is a `UI.InputGroup` with
   an icon at its start and a placeholder, its text medium like the menus'; its label is still there, `sr-only`, for
   screen readers and for `fillIn` in the tests.
-- They post `Api.signUp` and `Api.signIn`, then say to check the inbox. `/login` also
-  has "Use a passkey": post `Api.passkeySignInOptions`, the `GetPasskey` port
-  (`navigator.credentials.get`, any passkey the device has for this site), then
-  `PasskeyUsed` goes to `Api.passkeySignIn` and on to `/`. `/verify#<token>` asks
+- They post `Api.signUp` and `Api.signIn`, then say to check the inbox. On `/login`
+  the passkey comes first, since a passkey costs no email: "Log in with a passkey",
+  the form's only filled button, then under "or" the email field and "Email me a
+  link", an outline button. The passkey: post `Api.passkeySignInOptions`, the
+  `GetPasskey` port (`navigator.credentials.get`, any passkey the device has for
+  this site), then `PasskeyUsed` goes to `Api.passkeySignIn` and on to `/`.
+  `/verify#<token>` asks
   `Api.verification` who the link is for, shows the username and the email
   (`viewIdentity`: an avatar of two letters beside them, as in the user menu), and
   only on the button's click posts `Api.verify`. Both send the token with
-  `ApiClient.withToken`, as a bearer token. A sign-in then goes to `/`; a new account
-  is first offered a passkey ("Not now" skips it). A link that is refused offers
-  "Sign up again" and "Log in".
+  `ApiClient.withToken`, as a bearer token. Once the link is used the page asks
+  `Api.passkeys` (`GotPasskeyCheck`): an account with none goes on to `/passkey`,
+  new or not and every time it signs in by link; one that has a passkey, or whose
+  list can't be read, goes to `/`. A link that is refused offers "Sign up again"
+  and "Log in".
+- `/passkey` asks the account for a passkey, on a page of its own: "Create a passkey"
+  runs the ceremony below and then leads home, "Not now" leads home without one
+  (a browser may have no passkeys, and the next sign-in is then by link). It holds
+  no state but `model.ceremony`, so anyone signed in may open it; a signed-out
+  visitor is sent to `/login`, as at `/settings/account`.
 - Showing who the link is for gives nothing away: the token that reads the email and
   the username could sign in as them. It is there so that someone sent another
   person's link sees whose account it is before the click. While the link is
@@ -434,8 +444,8 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`
   words it. `main.ts` only converts base64url and buffers: the ceremony's options
   (`residentKey: "required"`, `attestation: "none"`) are its only constants.
-- Every page but `/signup`, `/login`, `/verify` and the not-found page is in a
-  shell, `viewShell`: a
+- Every page but `/signup`, `/login`, `/verify`, `/passkey` and the not-found page
+  is in a shell, `viewShell`: a
   `UI.Sidebar` that collapses to its icons (a sheet below `md`, closed by `open` once a
   page is picked; its `State` is `model.sidebar`) with Explore, Studio, Library and
   Settings, and in its footer the user menu, whoever is there. Its header is the logo,

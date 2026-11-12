@@ -15,6 +15,7 @@ type Path
     | SignUp
     | SignIn
     | Verify (Maybe LinkToken)
+    | Passkey
     | NotFound
 
 
@@ -51,6 +52,9 @@ toString path =
         Verify (Just token) ->
             "/verify#" ++ LinkToken.toString token
 
+        Passkey ->
+            "/passkey"
+
         NotFound ->
             "/404"
 
@@ -74,4 +78,5 @@ parser =
         , Parser.map SignUp (Parser.s "signup")
         , Parser.map SignIn (Parser.s "login")
         , Parser.map Verify (Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))
+        , Parser.map Passkey (Parser.s "passkey")
         ]

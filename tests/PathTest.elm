@@ -97,6 +97,9 @@ next path =
                 |> Maybe.map (\token -> Path.Verify (Just token))
 
         Path.Verify (Just _) ->
+            Just Path.Passkey
+
+        Path.Passkey ->
             Just Path.NotFound
 
         Path.NotFound ->
