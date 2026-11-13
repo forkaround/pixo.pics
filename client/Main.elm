@@ -1,4 +1,4 @@
-module Main exposing (Effect(..), Model, Msg(..), init, main, update, view)
+module Main exposing (Model, Msg(..), init, main, update, view)
 
 import Api
 import ApiClient
@@ -9,6 +9,7 @@ import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
 import Data.LinkToken exposing (LinkToken)
 import Data.Username as Username
+import Effect exposing (Effect(..))
 import ExploreView
 import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
 import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, href, id, name, required, type_, value)
@@ -161,7 +162,7 @@ type Acceptance
     | Accepting
 
 
-init : Decode.Value -> Url -> ( Model, Effect )
+init : Decode.Value -> Url -> ( Model, Effect Msg )
 init flags url =
     let
         { theme, systemDark, entropy, models, canShare } =
@@ -182,7 +183,7 @@ init flags url =
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
 
 
-open : Url -> Model -> ( Model, Effect )
+open : Url -> Model -> ( Model, Effect Msg )
 open url opened =
     let
         model =
@@ -245,7 +246,7 @@ missingToken =
     "This link is incomplete. Open the one from your email again."
 
 
-runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect )
+runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect Msg )
 runPipeline model ( pipeline, command ) =
     ( { model | pipeline = pipeline }
     , Batch
@@ -268,7 +269,7 @@ runPipeline model ( pipeline, command ) =
     )
 
 
-runLibrary : Model -> ( Library.Model, List Library.Command ) -> ( Model, Effect )
+runLibrary : Model -> ( Library.Model, List Library.Command ) -> ( Model, Effect Msg )
 runLibrary model ( library, commands ) =
     ( { model | library = library }
     , Batch (List.map (Interop.RunLibrary >> SendToJs) commands)
@@ -356,7 +357,7 @@ sidebarTarget sidebar =
         1
 
 
-update : Msg -> Model -> ( Model, Effect )
+update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     case msg of
         GotInterop (Ok (Interop.SystemThemeChanged systemDark)) ->
@@ -657,7 +658,7 @@ update msg model =
             ( editAccount (\account -> { account | now = Just now }) model, NoEffect )
 
         GotPasskeys (Ok found) ->
-            ( editAccount (\account -> { account | passkeys = Loaded found }) model, ReadTime )
+            ( editAccount (\account -> { account | passkeys = Loaded found }) model, ReadTime GotTime )
 
         GotPasskeys (Err error) ->
             ( editAccount (\account -> { account | passkeys = NotLoaded (ApiClient.errorToString error) }) model
@@ -694,7 +695,7 @@ update msg model =
                 PushUrl (Path.toString Path.Explore)
 
               else
-                ReadTime
+                ReadTime GotTime
             )
 
         GotPasskey (Err error) ->
@@ -825,17 +826,7 @@ editAccount edit model =
 -- EFFECTS
 
 
-type Effect
-    = NoEffect
-    | Batch (List Effect)
-    | Request (ApiClient.Request Msg)
-    | SendToJs Interop.FromElm
-    | PushUrl String
-    | Load String
-    | ReadTime
-
-
-perform : Navigation.Key -> Effect -> Cmd Msg
+perform : Navigation.Key -> Effect Msg -> Cmd Msg
 perform key effect =
     case effect of
         NoEffect ->
@@ -856,8 +847,8 @@ perform key effect =
         Load url ->
             Navigation.load url
 
-        ReadTime ->
-            Task.perform GotTime Time.now
+        ReadTime toMsg ->
+            Task.perform toMsg Time.now
 
 
 

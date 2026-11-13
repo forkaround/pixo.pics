@@ -1,5 +1,6 @@
 module MainTest exposing (suite)
 
+import Effect exposing (Effect)
 import Expect
 import Html.Attributes
 import Http
@@ -1371,7 +1372,7 @@ defaultFlags =
     { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, canShare = False }
 
 
-ready : ProgramTest Main.Model Main.Msg Main.Effect
+ready : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 ready =
     start defaultFlags
         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
@@ -1384,7 +1385,7 @@ ready =
             (Expect.equal [ "CheckWebGpu", "LoadModel", "WriteToLocalStorage" ])
 
 
-library : ProgramTest Main.Model Main.Msg Main.Effect
+library : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 library =
     startAt "/library" defaultFlags
         |> ProgramTest.simulateIncomingPort "interopToElm"
@@ -1396,12 +1397,12 @@ library =
             )
 
 
-start : Flags -> ProgramTest Main.Model Main.Msg Main.Effect
+start : Flags -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 start =
     startAt "/studio"
 
 
-startAt : String -> Flags -> ProgramTest Main.Model Main.Msg Main.Effect
+startAt : String -> Flags -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 startAt path flags =
     ProgramTest.createApplication
         { init = \json url () -> Main.init json url
@@ -1424,16 +1425,16 @@ startAt path flags =
             )
 
 
-simulateEffects : Main.Effect -> ProgramTest.SimulatedEffect Main.Msg
+simulateEffects : Effect Main.Msg -> ProgramTest.SimulatedEffect Main.Msg
 simulateEffects effect =
     case effect of
-        Main.NoEffect ->
+        Effect.NoEffect ->
             SimulatedEffect.Cmd.none
 
-        Main.Batch effects ->
+        Effect.Batch effects ->
             SimulatedEffect.Cmd.batch (List.map simulateEffects effects)
 
-        Main.Request { method, headers, url, body, onResponse } ->
+        Effect.Request { method, headers, url, body, onResponse } ->
             SimulatedEffect.Http.request
                 { method = method
                 , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers
@@ -1450,18 +1451,18 @@ simulateEffects effect =
                 , tracker = Nothing
                 }
 
-        Main.SendToJs value ->
+        Effect.SendToJs value ->
             SimulatedEffect.Ports.send "interopFromElm"
                 (TsEncode.encoder Interop.interop.fromElm value)
 
-        Main.PushUrl url ->
+        Effect.PushUrl url ->
             SimulatedEffect.Navigation.pushUrl url
 
-        Main.Load url ->
+        Effect.Load url ->
             SimulatedEffect.Navigation.load url
 
-        Main.ReadTime ->
-            SimulatedEffect.Task.perform Main.GotTime SimulatedEffect.Time.now
+        Effect.ReadTime toMsg ->
+            SimulatedEffect.Task.perform toMsg SimulatedEffect.Time.now
 
 
 simulateSubscriptions : Main.Model -> ProgramTest.SimulatedSub Main.Msg
