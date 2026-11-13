@@ -27,11 +27,11 @@ suite : Test
 suite =
     describe "Main"
         [ describe "Sign up"
-            [ test "is one click away, at the end of the top bar" <|
+            [ test "is in the guest's menu" <|
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.clickLink "Sign up" "/signup"
+                        |> ProgramTest.clickButton "Create an account"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/signup")
                         |> ProgramTest.expectViewHas [ id "username" ]
             , test "marks its tab" <|
@@ -191,17 +191,10 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.expectHttpRequestWasMade "GET" "/api/auth/session"
-            , test "offers to sign in, in the top bar, when signed out" <|
+            , test "offers to sign in, in the guest's menu, when signed out" <|
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.clickLink "Log in" "/login"
-                        |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/login")
-            , test "offers to sign up, in the top bar, or sign in, in the guest's menu, when signed out" <|
-                \() ->
-                    start defaultFlags
-                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.ensureViewHas [ text "Sign up" ]
                         |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Not signed in" ] ]
                         |> ProgramTest.clickButton "Log in"
                         |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/login")
@@ -210,7 +203,7 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.ensureViewHasNot [ text "Log in" ]
-                        |> ProgramTest.ensureViewHasNot [ text "Sign up" ]
+                        |> ProgramTest.ensureViewHasNot [ text "Create an account" ]
                         |> ProgramTest.ensureViewHas [ tag "button", containing [ text "ada@example.com" ] ]
                         |> ProgramTest.clickButton "Account settings"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/account")
@@ -222,12 +215,13 @@ suite =
                         |> ProgramTest.clickButton "Sign out"
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/session" "{}"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
-                        |> ProgramTest.expectViewHas [ text "Sign up" ]
-            , test "keeps the place of the ways in, unseen, until it knows who is there" <|
+                        |> ProgramTest.expectViewHas [ text "Create an account" ]
+            , test "leaves the ways in out of the top bar, so its tools stay put" <|
                 \() ->
-                    start defaultFlags
-                        |> ProgramTest.expectViewHas
-                            [ class "invisible", containing [ tag "a", containing [ text "Sign up" ] ] ]
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.expectView
+                            (Query.find [ tag "header" ] >> Query.hasNot [ tag "a", containing [ text "Log in" ] ])
             , test "has one top bar across the page, with the studio's panel under it" <|
                 \() ->
                     start defaultFlags
@@ -238,7 +232,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" Test.Http.networkError
-                        |> ProgramTest.ensureViewHasNot [ text "Sign up" ]
+                        |> ProgramTest.ensureViewHasNot [ text "Create an account" ]
                         |> ProgramTest.ensureViewHas [ text "Can't check who is signed in" ]
                         |> ProgramTest.clickButton "Try again"
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
@@ -256,7 +250,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Deleting…" ]
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
-                        |> ProgramTest.expectViewHas [ text "Sign up" ]
+                        |> ProgramTest.expectViewHas [ text "Create an account" ]
             , test "signs out when the deletion is answered once the page is left" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -267,7 +261,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ tag "button", containing [ text "ada@example.com" ] ]
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
-                        |> ProgramTest.expectViewHas [ text "Sign up" ]
+                        |> ProgramTest.expectViewHas [ text "Create an account" ]
             , test "cancels account deletion" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -344,7 +338,7 @@ suite =
                         |> ProgramTest.within (Query.find [ tag "section" ]) (ProgramTest.clickButton "Sign out")
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/session" "{}"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
-                        |> ProgramTest.ensureViewHas [ text "Sign up" ]
+                        |> ProgramTest.ensureViewHas [ text "Create an account" ]
                         |> ProgramTest.clickButton "Log in"
                         |> ProgramTest.expectViewHas [ text "Use your passkey, or get a link by email." ]
             , test "stays put and says why when the session can't be checked" <|
@@ -823,37 +817,47 @@ suite =
                 \() ->
                     startAt "/" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.ensureViewHas [ tag "h2", containing [ text "Ask no one." ] ]
+                        |> ProgramTest.ensureViewHas [ tag "h2", containing [ text "Unplug the cloud." ] ]
                         |> ProgramTest.expectViewHas
                             [ tag "section"
                             , containing
                                 [ tag "a"
                                 , attribute (Html.Attributes.href "/signup")
-                                , containing [ text "Sign up" ]
+                                , containing [ text "Create an account" ]
                                 ]
                             ]
-            , test "leads a visitor who is signed out to the studio" <|
+            , test "lets a visitor who is signed out log in from the banner" <|
                 \() ->
                     startAt "/" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.clickLink "Open the studio" "/studio"
-                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/studio")
-                        |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
-            , test "keeps the banner's place, unseen, until it knows who is there" <|
+                        |> ProgramTest.ensureViewHasNot [ tag "section", containing [ tag "a", attribute (Html.Attributes.href "/studio") ] ]
+                        |> ProgramTest.clickLink "Log in" "/login"
+                        |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/login")
+            , test "invites to sign up until it knows who is there" <|
                 \() ->
                     startAt "/" defaultFlags
                         |> ProgramTest.expectViewHas
                             [ tag "section"
-                            , class "invisible"
-                            , containing [ text "Ask no one." ]
+                            , containing [ text "Unplug the cloud." ]
+                            , containing [ tag "a", attribute (Html.Attributes.href "/signup") ]
                             ]
-            , test "shows no banner to someone signed in" <|
+            , test "leads someone signed in to the studio" <|
                 \() ->
                     startAt "/" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
-                        |> ProgramTest.ensureViewHasNot [ text "Ask no one." ]
-                        |> ProgramTest.ensureViewHas [ tag "h2", containing [ text "See what people are making" ] ]
-                        |> ProgramTest.expectViewHas [ tag "img" ]
+                        |> ProgramTest.clickLink "Start creating" "/studio"
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/studio")
+                        |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
+            , test "keeps the banner for someone signed in, with a way down to the pictures" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.ensureViewHas [ tag "h2", containing [ text "Unplug the cloud." ] ]
+                        |> ProgramTest.ensureViewHasNot [ tag "a", attribute (Html.Attributes.href "/signup") ]
+                        |> ProgramTest.ensureViewHas [ id "gallery", containing [ text "See what people are making" ] ]
+                        |> ProgramTest.ensureViewHasNot [ tag "section", containing [ tag "a", attribute (Html.Attributes.href "/login") ] ]
+                        |> ProgramTest.clickLink "Explore creations" "#gallery"
+                        |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/")
             , test "asks nothing of the browser" <|
                 \() ->
                     startAt "/" defaultFlags
@@ -1261,6 +1265,58 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (stylistFailed "Error" "Out of memory.")
                         |> ProgramTest.ensureViewHas [ text "Out of memory." ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
+            ]
+        , describe "About"
+            [ test "checks the server as it opens, with its release, region and latency" <|
+                \() ->
+                    startAt "/settings/about" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET"
+                            "/api/health"
+                            """{"status":"pass","releaseId":"7990ba2c0ffee","region":"fra1","links":{"release":"https://github.com/ricardocasares/pixo.pics/commit/7990ba2c0ffee"},"checks":{"database":{"status":"pass","latencyMs":25}}}"""
+                        |> ProgramTest.ensureViewHas [ text "fra1" ]
+                        |> ProgramTest.ensureViewHas [ text "25 ms" ]
+                        |> ProgramTest.expectViewHas
+                            [ tag "a"
+                            , attribute (Html.Attributes.href "https://github.com/ricardocasares/pixo.pics/commit/7990ba2c0ffee")
+                            , containing [ text "7990ba2" ]
+                            ]
+            , test "says that prompts and pictures never reach the server" <|
+                \() ->
+                    startAt "/settings/about" defaultFlags
+                        |> ProgramTest.ensureViewHas [ text "Your prompts and pictures stay on this device." ]
+                        |> ProgramTest.expectViewHas [ text "The server is only used for authentication: your account, passkeys and sessions." ]
+            , test "checks again each time it is opened" <|
+                \() ->
+                    startAt "/settings/about" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/health" health
+                        |> ProgramTest.clickLink "Models" "/settings/models"
+                        |> ProgramTest.clickLink "About" "/settings/about"
+                        |> ProgramTest.expectHttpRequestWasMade "GET" "/api/health"
+            , test "says why the database is slow" <|
+                \() ->
+                    startAt "/settings/about" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET"
+                            "/api/health"
+                            """{"status":"warn","region":"fra1","checks":{"database":{"status":"warn","latencyMs":1500,"output":"Slower than 1000 ms."}}}"""
+                        |> ProgramTest.ensureViewHas [ text "1500 ms" ]
+                        |> ProgramTest.expectViewHas [ text "Slower than 1000 ms." ]
+            , test "reads a failed check from its 503" <|
+                \() ->
+                    startAt "/settings/about" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET"
+                            "/api/health"
+                            (response 503 """{"status":"fail","checks":{"database":{"status":"fail","latencyMs":5000,"output":"Timed out after 5000 ms."}}}""")
+                        |> ProgramTest.expectViewHas [ text "Timed out after 5000 ms." ]
+            , test "says when the server can't be reached" <|
+                \() ->
+                    startAt "/settings/about" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/health" Test.Http.networkError
+                        |> ProgramTest.expectViewHas [ text "Could not reach the server. Start both apps with `bun dev`." ]
+            , test "is listed in the settings" <|
+                \() ->
+                    startAt "/settings/models" defaultFlags
+                        |> ProgramTest.clickLink "About" "/settings/about"
+                        |> ProgramTest.expectHttpRequestWasMade "GET" "/api/health"
             ]
         , describe "Models"
             [ test "removes the prompt model it downloaded" <|
@@ -1698,6 +1754,9 @@ simulateEffects effect =
         Effect.ReadTime toMsg ->
             SimulatedEffect.Task.perform toMsg SimulatedEffect.Time.now
 
+        Effect.ScrollTo _ ->
+            SimulatedEffect.Cmd.none
+
 
 simulateSubscriptions : Main.Model -> ProgramTest.SimulatedSub Main.Msg
 simulateSubscriptions _ =
@@ -2004,6 +2063,11 @@ passkeyOptions =
 account : String
 account =
     """{"email":"ada@example.com","username":"ada"}"""
+
+
+health : String
+health =
+    """{"status":"pass","releaseId":"local","region":"local","checks":{"database":{"status":"pass","latencyMs":3}}}"""
 
 
 notSignedIn : Http.Response String

@@ -80,6 +80,9 @@ next path =
             Just Path.Library
 
         Path.Library ->
+            Just Path.About
+
+        Path.About ->
             Just Path.Models
 
         Path.Models ->

@@ -1,4 +1,4 @@
-module Overlay exposing (glass, red, solid)
+module Overlay exposing (glass, link, red, solid)
 
 import Html exposing (Attribute)
 import Html.Attributes exposing (class)
@@ -12,6 +12,11 @@ glass =
 solid : Attribute msg
 solid =
     class "border-transparent! bg-white! text-black! hover:bg-white/85!"
+
+
+link : Attribute msg
+link =
+    class "text-white! hover:text-white/85!"
 
 
 red : Attribute msg

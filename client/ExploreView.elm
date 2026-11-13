@@ -1,23 +1,27 @@
-module ExploreView exposing (Hero(..), mosaic, view)
+module ExploreView exposing (Invitation(..), gallery, mosaic, view)
 
 import Html exposing (Html, div, h2, img, p, span, text)
-import Html.Attributes exposing (alt, attribute, class, height, href, src, style, width)
-import Overlay exposing (glass, solid)
+import Html.Attributes exposing (alt, attribute, class, height, href, id, src, style, width)
+import Overlay
 import Path
 import UI.Button as Button
 
 
-type Hero
-    = Shown
-    | Reserved
-    | Hidden
+type Invitation
+    = Guest
+    | Member
 
 
-view : Hero -> Html msg
-view hero =
+gallery : String
+gallery =
+    "gallery"
+
+
+view : Invitation -> Html msg
+view invitation =
     div [ class "flex flex-1 flex-col" ]
-        [ viewHero hero
-        , div [ class "flex flex-col gap-6 p-4 pt-8" ]
+        [ banner invitation
+        , div [ id gallery, class "flex flex-col gap-6 p-4 pt-8" ]
             [ div [ class "flex flex-col gap-1" ]
                 [ h2 [ class "text-2xl font-semibold tracking-tight" ] [ text "See what people are making" ]
                 , p [ class "text-sm text-pretty text-muted-foreground" ] [ text "Every picture here was made in a browser." ]
@@ -33,25 +37,9 @@ mosaic =
     List.map viewTile tiles
 
 
-viewHero : Hero -> Html msg
-viewHero hero =
-    case hero of
-        Shown ->
-            banner []
-
-        Reserved ->
-            banner [ class "invisible", attribute "aria-hidden" "true" ]
-
-        Hidden ->
-            text ""
-
-
-banner : List (Html.Attribute msg) -> Html msg
-banner attrs =
-    Html.section
-        (class "relative flex min-h-[calc(100svh-3rem)] flex-col justify-end text-white"
-            :: attrs
-        )
+banner : Invitation -> Html msg
+banner invitation =
+    Html.section [ class "relative flex min-h-[calc(100svh-3rem)] flex-col justify-end text-white" ]
         [ div [ class "absolute inset-0 bg-neutral-900 mask-dissolve" ]
             [ img
                 [ src (cover 1600)
@@ -66,23 +54,42 @@ banner attrs =
             ]
         , div [ class "relative flex flex-col gap-6 p-6 pb-[29svh] md:p-10 md:pb-[29svh] lg:p-14 lg:pb-[29svh]" ]
             [ div [ class "flex flex-col gap-4" ]
-                [ h2 [ class "max-w-3xl text-4xl leading-none font-semibold tracking-tight text-balance sm:text-5xl lg:text-7xl" ]
-                    [ span [ class "block" ] [ text "Make pictures." ]
-                    , span [ class "block" ] [ text "Ask no one." ]
-                    ]
+                [ h2 [ class "text-4xl leading-none font-semibold tracking-tight text-balance sm:text-5xl lg:text-7xl" ]
+                    [ text "Unplug the cloud." ]
                 , p [ class "max-w-xl text-pretty text-white/80 md:text-lg" ]
-                    [ text "No cloud, no credits, no account. The model runs on your own graphics card." ]
+                    [ span [ class "block" ] [ text "No tokens, no credits, no one watching." ]
+                    , span [ class "block" ] [ text "Unlimited local & private AI image generation." ]
+                    ]
                 ]
             , div [ class "flex flex-wrap items-center gap-2" ]
-                [ Button.new
-                    |> Button.text "Open the studio"
-                    |> Button.toAnchor [ href (Path.toString Path.Studio), solid, class "h-11! px-5! text-base!" ]
-                , Button.new
-                    |> Button.text "Sign up"
-                    |> Button.toAnchor [ href (Path.toString Path.SignUp), glass, class "h-11! px-5! text-base!" ]
-                ]
+                (case invitation of
+                    Guest ->
+                        [ primary "Create an account" (Path.toString Path.SignUp)
+                        , secondary "Log in" (Path.toString Path.SignIn)
+                        ]
+
+                    Member ->
+                        [ primary "Start creating" (Path.toString Path.Studio)
+                        , secondary "Explore creations" ("#" ++ gallery)
+                        ]
+                )
             ]
         ]
+
+
+primary : String -> String -> Html msg
+primary label url =
+    Button.new
+        |> Button.text label
+        |> Button.toAnchor [ href url, Overlay.solid, class "h-11! px-5! text-base!" ]
+
+
+secondary : String -> String -> Html msg
+secondary label url =
+    Button.new
+        |> Button.text label
+        |> Button.link
+        |> Button.toAnchor [ href url, Overlay.link, class "h-11! px-5! text-base!" ]
 
 
 cover : Int -> String

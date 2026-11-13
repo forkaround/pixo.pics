@@ -3,6 +3,7 @@ module Main exposing (Model, Msg(..), init, main, update, view)
 import Api
 import ApiClient
 import Browser
+import Browser.Dom as Dom
 import Browser.Events
 import Browser.Navigation as Navigation
 import Data.Email as Email
@@ -21,6 +22,7 @@ import LibraryView
 import Logo
 import Minidenticons
 import ModelsView
+import Page.About
 import Page.Account
 import Page.Passkey
 import Page.SignIn
@@ -94,7 +96,8 @@ type Page
 
 
 type Section
-    = Models
+    = About Page.About.Model
+    | Models
     | Account Page.Account.Model
 
 
@@ -134,6 +137,10 @@ open url opened =
 
         Path.Library ->
             runLibrary { model | page = Library } (Library.enter model.library)
+
+        Path.About ->
+            Page.About.load
+                |> Tuple.mapBoth (\page -> { model | page = Settings (About page) }) (Effect.map GotAbout)
 
         Path.Models ->
             runPipeline { model | page = Settings Models } (Pipeline.enter model.pipeline)
@@ -267,6 +274,7 @@ type Msg
     | SignOutClicked
     | GotSignOut (Result ApiClient.Error ())
     | GotPasskey Page.Passkey.Msg
+    | GotAbout Page.About.Msg
     | GotAccount Page.Account.Msg
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
@@ -274,6 +282,7 @@ type Msg
     | GotStylist Stylist.Msg
     | SidebarChanged Sidebar.State
     | SidebarAnimated Float
+    | Scrolled
 
 
 subscriptions : Model -> Sub Msg
@@ -357,7 +366,14 @@ update msg model =
             ( model, PushUrl (Path.toString path) )
 
         UrlRequested (Browser.Internal url) ->
-            ( model, PushUrl (Url.toString url) )
+            if model.page == Explore && Path.parse url == Path.Explore && url.fragment == Just ExploreView.gallery then
+                ( model, ScrollTo ExploreView.gallery )
+
+            else
+                ( model, PushUrl (Url.toString url) )
+
+        Scrolled ->
+            ( model, NoEffect )
 
         UrlRequested (Browser.External url) ->
             ( model, Load url )
@@ -469,6 +485,15 @@ update msg model =
                 _ ->
                     ( model, NoEffect )
 
+        GotAbout pageMsg ->
+            case model.page of
+                Settings (About page) ->
+                    Page.About.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { model | page = Settings (About next) }) (Effect.map GotAbout)
+
+                _ ->
+                    ( model, NoEffect )
+
         GotAccount pageMsg ->
             let
                 believed =
@@ -539,6 +564,13 @@ perform key effect =
         ReadTime toMsg ->
             Task.perform toMsg Time.now
 
+        ScrollTo target ->
+            Task.map2 (\element bar -> element.element.y - bar.element.height)
+                (Dom.getElement target)
+                (Dom.getElement "bar")
+                |> Task.andThen (Dom.setViewport 0)
+                |> Task.attempt (always Scrolled)
+
 
 
 -- VIEW
@@ -574,6 +606,9 @@ title page =
 
         Library ->
             "Library · pixo"
+
+        Settings (About _) ->
+            "About · pixo"
 
         Settings Models ->
             "Models · pixo"
@@ -618,7 +653,7 @@ viewBody model =
                 [ viewContent [ Html.map GotLibrary (LibraryView.view model.library) ] ]
 
         Explore ->
-            viewFrame model "Explore" [] [ viewContent [ ExploreView.view (hero model.session) ] ]
+            viewFrame model "Explore" [] [ viewContent [ ExploreView.view (invitation model.session) ] ]
 
         Settings section ->
             viewFrame model
@@ -627,7 +662,8 @@ viewBody model =
                 [ viewAside "md:w-56 md:pt-6"
                     [ Sidebar.group []
                         [ Sidebar.menu [ class "max-md:flex-row max-md:flex-wrap" ]
-                            (viewDestination (section == Models) Path.Models Phosphor.cube "Models"
+                            (viewDestination (isAbout model.page) Path.About Phosphor.info "About"
+                                :: viewDestination (section == Models) Path.Models Phosphor.cube "Models"
                                 :: (if isAccount model.page || isSignedIn model.session then
                                         [ viewDestination (isAccount model.page) Path.Account Phosphor.userCircle "Account" ]
 
@@ -639,6 +675,11 @@ viewBody model =
                     ]
                 , viewContent
                     [ case section of
+                        About about ->
+                            viewSettingsPage "About"
+                                (text "What stays on this device, and the server this app talks to.")
+                                (Page.About.view about)
+
                         Models ->
                             viewSettingsPage "Models"
                                 (text
@@ -759,20 +800,24 @@ viewShell model page =
         |> Sidebar.toHtml [ class "sidebar-morph bg-background text-foreground" ]
 
 
-hero : Session -> ExploreView.Hero
-hero session =
+invitation : Session -> ExploreView.Invitation
+invitation session =
     case session of
-        Unknown ->
-            ExploreView.Reserved
-
-        Unavailable _ ->
-            ExploreView.Hidden
-
-        SignedOut ->
-            ExploreView.Shown
-
         SignedIn _ ->
-            ExploreView.Hidden
+            ExploreView.Member
+
+        _ ->
+            ExploreView.Guest
+
+
+isAbout : Page -> Bool
+isAbout page =
+    case page of
+        Settings (About _) ->
+            True
+
+        _ ->
+            False
 
 
 isAccount : Page -> Bool
@@ -953,42 +998,17 @@ viewBar model heading tools =
         [ div [ class "pointer-events-none absolute inset-y-0 start-0 z-10 w-1/2 will-change-transform" ]
             [ div [ class "sticky top-0 h-12" ]
                 [ Html.header
-                    [ class "pointer-events-auto relative flex h-12 w-[200%] items-center gap-3 border-b px-4"
+                    [ Html.Attributes.id "bar"
+                    , class "pointer-events-auto relative flex h-12 w-[200%] items-center gap-3 border-b px-4"
                     , class "before:absolute before:inset-x-0 before:-top-24 before:-bottom-px before:-z-10 before:bg-background/85 before:backdrop-blur"
                     ]
                     [ Sidebar.trigger [ class "-ms-1 text-muted-foreground" ] model.sidebar SidebarChanged
                     , Html.h1 [ class "text-sm font-medium" ] [ text heading ]
-                    , div [ class "ms-auto flex min-w-0 flex-1 items-center justify-end gap-3" ] (tools ++ [ viewEntry model ])
+                    , div [ class "ms-auto flex min-w-0 flex-1 items-center justify-end gap-3" ] tools
                     ]
                 ]
             ]
         ]
-
-
-viewEntry : Model -> Html Msg
-viewEntry model =
-    let
-        entry path label attrs =
-            Button.new
-                |> Button.text label
-                |> Button.ghost
-                |> Button.toAnchor (href (Path.toString path) :: class "text-muted-foreground" :: attrs)
-
-        links attrs =
-            div (class "flex shrink-0 items-center gap-1" :: attrs)
-                [ entry Path.SignIn "Log in" [ class "max-sm:hidden" ]
-                , entry Path.SignUp "Sign up" []
-                ]
-    in
-    case model.session of
-        SignedOut ->
-            links []
-
-        Unknown ->
-            links [ class "invisible", attribute "aria-hidden" "true" ]
-
-        _ ->
-            text ""
 
 
 viewContent : List (Html Msg) -> Html Msg

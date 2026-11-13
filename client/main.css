@@ -24,6 +24,12 @@
   }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  html:has(#gallery) {
+    scroll-behavior: smooth;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sidebar-morph [data-slot="sidebar"] {
     --sidebar-progress: 0;

@@ -8,7 +8,7 @@ Tests of the browser app and the shared modules; the server's are in `api/tests/
 - `clickButton` and `clickLink` fail when two elements match. A button repeated per row
   gets an `aria-label` that names its row; where a page and the sidebar both have one,
   as "Try again" and "Sign out" at `/settings/account`, click inside one:
-  `ProgramTest.within (Query.find [ tag "section" ])`. At `/` there are two "Sign up".
+  `ProgramTest.within (Query.find [ tag "section" ])`.
 - `/studio` sends `CheckWebGpu` and `/library` sends `IdbGetAll` as they open: a test
   that reads every port value starts at `/`, which sends none.
 - A passing check of outgoing port values clears them: look at logs and responses in one

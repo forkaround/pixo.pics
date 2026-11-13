@@ -13,6 +13,7 @@ type Effect msg
     | PushUrl String
     | Load String
     | ReadTime (Time.Posix -> msg)
+    | ScrollTo String
 
 
 map : (a -> b) -> Effect a -> Effect b
@@ -44,3 +45,6 @@ map toMsg effect =
 
         ReadTime toTime ->
             ReadTime (toTime >> toMsg)
+
+        ScrollTo target ->
+            ScrollTo target
