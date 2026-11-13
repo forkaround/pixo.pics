@@ -5,14 +5,13 @@ import ApiClient
 import Browser
 import Browser.Events
 import Browser.Navigation as Navigation
-import Ceremony exposing (Ceremony(..))
-import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
 import Data.Username as Username
 import Effect exposing (Effect(..))
+import Enrolment
 import ExploreView
-import Html exposing (Html, a, div, li, p, span, text, ul)
-import Html.Attributes exposing (attribute, class, disabled, href)
+import Html exposing (Html, a, div, span, text)
+import Html.Attributes exposing (attribute, class, href)
 import Html.Events exposing (onClick)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
@@ -21,6 +20,8 @@ import Library
 import LibraryView
 import Logo
 import ModelsView
+import Page.Account
+import Page.Passkey
 import Page.SignIn
 import Page.SignUp
 import Page.Verify
@@ -28,19 +29,15 @@ import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
 import Plain
-import RelativeTime
 import Session exposing (Session(..))
 import StudioView
 import Svg.Attributes
 import Task
 import Time
-import UI.AlertDialog as AlertDialog
 import UI.Avatar as Avatar
 import UI.Button as Button
 import UI.Card as Card
 import UI.DropdownMenu as DropdownMenu
-import UI.Field as Field
-import UI.Item as Item
 import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 import UI.Tabs as Tabs
@@ -73,34 +70,12 @@ type alias Model =
     { theme : Theme
     , systemDark : Bool
     , session : Session
-    , ceremony : Ceremony
     , pipeline : Pipeline.Model
     , library : Library.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
     , page : Page
     }
-
-
-type Passkeys
-    = Loading
-    | Loaded (List Api.Passkey)
-    | NotLoaded String
-
-
-type alias AccountState =
-    { passkeys : Passkeys
-    , confirming : Maybe CredentialId
-    , removalProblem : Maybe String
-    , deletion : AccountDeletion
-    , now : Maybe Time.Posix
-    }
-
-
-type AccountDeletion
-    = KeepAccount
-    | ConfirmDeletion (Maybe String)
-    | DeletingAccount
 
 
 type Page
@@ -111,13 +86,13 @@ type Page
     | SignUp Page.SignUp.Model
     | SignIn Page.SignIn.Model
     | Verify Page.Verify.Model
-    | Passkey
+    | Passkey Page.Passkey.Model
     | NotFound
 
 
 type Section
     = Models
-    | Account AccountState
+    | Account Page.Account.Model
 
 
 init : Decode.Value -> Url -> ( Model, Effect Msg )
@@ -131,7 +106,6 @@ init flags url =
         { theme = Maybe.withDefault Interop.System theme
         , systemDark = systemDark
         , session = Unknown
-        , ceremony = Resting Nothing
         , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , library = Library.init canShare
         , sidebar = Sidebar.init
@@ -145,7 +119,7 @@ open : Url -> Model -> ( Model, Effect Msg )
 open url opened =
     let
         model =
-            { opened | ceremony = Resting Nothing, sidebar = { open = opened.sidebar.open, openMobile = False } }
+            { opened | sidebar = { open = opened.sidebar.open, openMobile = False } }
     in
     case Path.parse url of
         Path.Explore ->
@@ -167,20 +141,19 @@ open url opened =
             ( { model | page = SignIn Page.SignIn.init }, NoEffect )
 
         Path.Account ->
-            ( { model | page = Settings (Account { passkeys = Loading, confirming = Nothing, removalProblem = Nothing, deletion = KeepAccount, now = Nothing }) }
-            , if model.session == SignedOut then
-                PushUrl (Path.toString Path.SignIn)
+            if model.session == SignedOut then
+                ( { model | page = Settings (Account Page.Account.init) }, PushUrl (Path.toString Path.SignIn) )
 
-              else
-                Request (ApiClient.request Api.passkeys () GotPasskeys)
-            )
+            else
+                Page.Account.load Page.Account.init
+                    |> Tuple.mapBoth (\page -> { model | page = Settings (Account page) }) (Effect.map GotAccount)
 
         Path.Verify link ->
             Page.Verify.init link
                 |> Tuple.mapBoth (\page -> { model | page = Verify page }) (Effect.map GotVerify)
 
         Path.Passkey ->
-            ( { model | page = Passkey }
+            ( { model | page = Passkey Page.Passkey.init }
             , if model.session == SignedOut then
                 PushUrl (Path.toString Path.SignIn)
 
@@ -249,21 +222,10 @@ type Msg
     | GotSession (Result ApiClient.Error Api.Account)
     | SessionRetried
     | GotSignIn Page.SignIn.Msg
-    | AccountDeleteRequested
-    | AccountDeleteCancelled
-    | AccountDeleteConfirmed
-    | GotAccountDeleted (Result ApiClient.Error ())
     | SignOutClicked
     | GotSignOut (Result ApiClient.Error ())
-    | GotTime Time.Posix
-    | GotPasskeys (Result ApiClient.Error (List Api.Passkey))
-    | PasskeyRequested
-    | GotPasskeyOptions (Result ApiClient.Error Api.PasskeyOptions)
-    | GotPasskey (Result ApiClient.Error Api.Passkey)
-    | PasskeyRemoveRequested CredentialId
-    | PasskeyRemoveCancelled
-    | PasskeyRemoveConfirmed CredentialId
-    | GotPasskeyRemoved CredentialId (Result ApiClient.Error ())
+    | GotPasskey Page.Passkey.Msg
+    | GotAccount Page.Account.Msg
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
@@ -299,11 +261,7 @@ update msg model =
             ( { model | systemDark = systemDark }, NoEffect )
 
         GotInterop (Ok (Interop.PasskeyCreated attestation)) ->
-            if model.ceremony == Waiting then
-                ( model, Request (ApiClient.request Api.addPasskey attestation GotPasskey) )
-
-            else
-                ( model, NoEffect )
+            enrol (Enrolment.created attestation) model
 
         GotInterop (Ok (Interop.PasskeyUsed assertion)) ->
             update (GotSignIn (Page.SignIn.passkeyUsed assertion)) model
@@ -314,7 +272,7 @@ update msg model =
                     update (GotSignIn (Page.SignIn.passkeyFailed name)) model
 
                 _ ->
-                    ( { model | ceremony = Resting (Just (passkeyProblem name)) }, NoEffect )
+                    enrol (Enrolment.failed name) model
 
         GotInterop (Ok (Interop.PipelineEvent event)) ->
             runPipeline model (Pipeline.update (Pipeline.Happened event) model.pipeline)
@@ -399,7 +357,7 @@ update msg model =
                         Settings (Account _) ->
                             PushUrl (Path.toString Path.SignIn)
 
-                        Passkey ->
+                        Passkey _ ->
                             PushUrl (Path.toString Path.SignIn)
 
                         _ ->
@@ -412,10 +370,14 @@ update msg model =
         SessionRetried ->
             case model.page of
                 Settings (Account account) ->
-                    ( { model | session = Unknown, page = Settings (Account { account | passkeys = Loading }) }
+                    let
+                        ( page, effect ) =
+                            Page.Account.load account
+                    in
+                    ( { model | session = Unknown, page = Settings (Account page) }
                     , Batch
                         [ Request (ApiClient.request Api.session () GotSession)
-                        , Request (ApiClient.request Api.passkeys () GotPasskeys)
+                        , Effect.map GotAccount effect
                         ]
                     )
 
@@ -440,46 +402,6 @@ update msg model =
                 _ ->
                     ( believed, NoEffect )
 
-        AccountDeleteRequested ->
-            ( editAccount (\account -> { account | deletion = ConfirmDeletion Nothing }) model, NoEffect )
-
-        AccountDeleteCancelled ->
-            ( editAccount
-                (\account ->
-                    if account.deletion == DeletingAccount then
-                        account
-
-                    else
-                        { account | deletion = KeepAccount }
-                )
-                model
-            , NoEffect
-            )
-
-        AccountDeleteConfirmed ->
-            case ( model.session, model.page ) of
-                ( SignedIn _, Settings (Account ({ deletion } as account)) ) ->
-                    case deletion of
-                        ConfirmDeletion _ ->
-                            ( { model | page = Settings (Account { account | deletion = DeletingAccount }) }
-                            , Request (ApiClient.request Api.deleteAccount () GotAccountDeleted)
-                            )
-
-                        _ ->
-                            ( model, NoEffect )
-
-                _ ->
-                    ( model, NoEffect )
-
-        GotAccountDeleted (Ok ()) ->
-            ( { model | session = SignedOut, ceremony = Resting Nothing }, PushUrl (Path.toString Path.Explore) )
-
-        GotAccountDeleted (Err (ApiClient.Unauthorized _)) ->
-            ( { model | session = SignedOut, ceremony = Resting Nothing }, PushUrl (Path.toString Path.SignIn) )
-
-        GotAccountDeleted (Err error) ->
-            ( editAccount (\account -> { account | deletion = ConfirmDeletion (Just (ApiClient.errorToString error)) }) model, NoEffect )
-
         SignOutClicked ->
             ( model, Request (ApiClient.request Api.signOut () GotSignOut) )
 
@@ -489,82 +411,32 @@ update msg model =
         GotSignOut (Err _) ->
             ( model, NoEffect )
 
-        GotTime now ->
-            ( editAccount (\account -> { account | now = Just now }) model, NoEffect )
+        GotPasskey pageMsg ->
+            case model.page of
+                Passkey page ->
+                    Page.Passkey.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { model | page = Passkey next }) (Effect.map GotPasskey)
 
-        GotPasskeys (Ok found) ->
-            ( editAccount (\account -> { account | passkeys = Loaded found }) model, ReadTime GotTime )
+                _ ->
+                    ( model, NoEffect )
 
-        GotPasskeys (Err error) ->
-            ( editAccount (\account -> { account | passkeys = NotLoaded (ApiClient.errorToString error) }) model
-            , NoEffect
-            )
+        GotAccount pageMsg ->
+            let
+                believed =
+                    case Page.Account.outcome pageMsg of
+                        Page.Account.SignedOut ->
+                            { model | session = SignedOut }
 
-        PasskeyRequested ->
-            if model.ceremony == Waiting then
-                ( model, NoEffect )
+                        Page.Account.Unchanged ->
+                            model
+            in
+            case model.page of
+                Settings (Account page) ->
+                    Page.Account.update model.session pageMsg page
+                        |> Tuple.mapBoth (\next -> { believed | page = Settings (Account next) }) (Effect.map GotAccount)
 
-            else
-                ( { model | ceremony = Waiting }
-                , Request (ApiClient.request Api.passkeyOptions () GotPasskeyOptions)
-                )
-
-        GotPasskeyOptions (Ok options) ->
-            ( model, SendToJs (Interop.CreatePasskey options) )
-
-        GotPasskeyOptions (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
-
-        GotPasskey (Ok passkey) ->
-            ( { model | ceremony = Resting Nothing }
-                |> editAccount
-                    (\account ->
-                        case account.passkeys of
-                            Loaded found ->
-                                { account | passkeys = Loaded (found ++ [ passkey ]) }
-
-                            _ ->
-                                account
-                    )
-            , if model.page == Passkey then
-                PushUrl (Path.toString Path.Explore)
-
-              else
-                ReadTime GotTime
-            )
-
-        GotPasskey (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
-
-        PasskeyRemoveRequested id ->
-            ( editAccount (\account -> { account | confirming = Just id }) model, NoEffect )
-
-        PasskeyRemoveCancelled ->
-            ( editAccount (\account -> { account | confirming = Nothing }) model, NoEffect )
-
-        PasskeyRemoveConfirmed id ->
-            ( editAccount (\account -> { account | confirming = Nothing, removalProblem = Nothing }) model
-            , Request (ApiClient.request (Api.deletePasskey id) () (GotPasskeyRemoved id))
-            )
-
-        GotPasskeyRemoved id (Ok ()) ->
-            ( editAccount
-                (\account ->
-                    case account.passkeys of
-                        Loaded found ->
-                            { account | passkeys = Loaded (List.filter (\passkey -> passkey.id /= id) found) }
-
-                        _ ->
-                            account
-                )
-                model
-            , NoEffect
-            )
-
-        GotPasskeyRemoved _ (Err error) ->
-            ( editAccount (\account -> { account | removalProblem = Just (ApiClient.errorToString error) }) model
-            , NoEffect
-            )
+                _ ->
+                    ( believed, NoEffect )
 
         ThemeSelected theme ->
             ( { model | theme = theme }
@@ -577,30 +449,17 @@ update msg model =
             )
 
 
-passkeyProblem : String -> String
-passkeyProblem name =
-    case name of
-        "NotAllowedError" ->
-            "The passkey was not created."
-
-        "InvalidStateError" ->
-            "This device already has a passkey for this account."
-
-        "NotSupportedError" ->
-            "This browser can't create passkeys."
-
-        _ ->
-            "The passkey could not be created."
-
-
-editAccount : (AccountState -> AccountState) -> Model -> Model
-editAccount edit model =
+enrol : Enrolment.Msg -> Model -> ( Model, Effect Msg )
+enrol msg model =
     case model.page of
-        Settings (Account account) ->
-            { model | page = Settings (Account (edit account)) }
+        Passkey _ ->
+            update (GotPasskey (Page.Passkey.enrolment msg)) model
+
+        Settings (Account _) ->
+            update (GotAccount (Page.Account.enrolment msg)) model
 
         _ ->
-            model
+            ( model, NoEffect )
 
 
 
@@ -682,7 +541,7 @@ title page =
         Verify _ ->
             "Verify · pixo"
 
-        Passkey ->
+        Passkey _ ->
             "Create a passkey · pixo"
 
         NotFound ->
@@ -761,7 +620,13 @@ viewBody model =
                                     _ ->
                                         text "Manage your account and how you sign in."
                                 )
-                                (viewAccount model.session model.ceremony account)
+                                (case model.session of
+                                    Unavailable message ->
+                                        [ notice "Can't check who is signed in" message [ retry ] ]
+
+                                    _ ->
+                                        List.map (Html.map GotAccount) (Page.Account.view model.session account)
+                                )
                     ]
                 ]
 
@@ -774,8 +639,8 @@ viewBody model =
         Verify verification ->
             Plain.frame { theme = model.theme, onTheme = ThemeSelected } (List.map (Html.map GotVerify) (Page.Verify.view verification))
 
-        Passkey ->
-            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewEnrolment model.ceremony)
+        Passkey page ->
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (List.map (Html.map GotPasskey) (Page.Passkey.view page))
 
         NotFound ->
             Plain.frame { theme = model.theme, onTheme = ThemeSelected }
@@ -1138,248 +1003,3 @@ viewAuthTabs current =
             [ attribute "aria-label" "Log in or create an account"
             , class "*:data-[slot=tabs-list]:w-full"
             ]
-
-
-viewAccount : Session -> Ceremony -> AccountState -> List (Html Msg)
-viewAccount session ceremony account =
-    case session of
-        SignedIn _ ->
-            [ viewPasskeys session ceremony account, viewDeleteAccount (Just account.deletion) ]
-
-        Unknown ->
-            [ viewPasskeys session (Resting Nothing) { account | passkeys = Loading, removalProblem = Nothing }
-            , viewDeleteAccount Nothing
-            ]
-
-        Unavailable message ->
-            [ notice "Can't check who is signed in" message [ retry ] ]
-
-        SignedOut ->
-            []
-
-
-viewDeleteAccount : Maybe AccountDeletion -> Html Msg
-viewDeleteAccount deletion =
-    div []
-        [ Card.new
-            |> Card.title [ Html.h3 [ class "text-destructive" ] [ text "Delete account" ] ]
-            |> Card.description [ text "Permanently delete your account, passkeys and sessions. This cannot be undone." ]
-            |> Card.content []
-                [ p [ class "text-sm text-muted-foreground" ] [ text "Images saved in this browser will remain." ] ]
-            |> Card.footer [ class "justify-end" ]
-                [ Button.new
-                    |> Button.text "Delete account"
-                    |> Button.destructive
-                    |> Button.small
-                    |> (if deletion == Nothing then
-                            viewButtonSkeleton []
-
-                        else
-                            Button.toHtml [ onClick AccountDeleteRequested, disabled (deletion == Just DeletingAccount) ]
-                       )
-                ]
-            |> Card.toHtml [ class "w-full ring-destructive/40! [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
-        , viewDeleteAccountDialog deletion
-        ]
-
-
-viewDeleteAccountDialog : Maybe AccountDeletion -> Html Msg
-viewDeleteAccountDialog deletion =
-    AlertDialog.new
-        |> AlertDialog.id "delete-account"
-        |> AlertDialog.open (deletion /= Nothing && deletion /= Just KeepAccount) AccountDeleteCancelled
-        |> AlertDialog.busy (deletion == Just DeletingAccount)
-        |> AlertDialog.small
-        |> AlertDialog.media [ class "bg-destructive/10 text-destructive dark:bg-destructive/20" ]
-            [ Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
-        |> AlertDialog.title [ text "Are you sure?" ]
-        |> AlertDialog.description
-            [ text "This will permanently delete your account and cannot be undone."
-            , case deletion of
-                Just (ConfirmDeletion (Just reason)) ->
-                    span [ class "mt-3 block text-destructive", attribute "role" "alert" ] [ text reason ]
-
-                _ ->
-                    text ""
-            ]
-        |> AlertDialog.cancel
-            (Button.new
-                |> Button.text "Cancel"
-                |> Button.outline
-                |> Button.small
-            )
-        |> AlertDialog.action AccountDeleteConfirmed
-            (Button.new
-                |> Button.text
-                    (if deletion == Just DeletingAccount then
-                        "Deleting…"
-
-                     else
-                        "Delete"
-                    )
-                |> Button.destructive
-                |> Button.small
-            )
-        |> AlertDialog.toHtml []
-
-
-viewPasskeys : Session -> Ceremony -> AccountState -> Html Msg
-viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
-    Card.new
-        |> Card.title [ Html.h3 [] [ text "Passkeys" ] ]
-        |> Card.description [ text "Sign in with your fingerprint, face or screen lock." ]
-        |> Card.content []
-            [ div [ class "flex flex-col gap-3" ]
-                [ div [ class "max-h-48 overflow-y-auto" ]
-                    [ case passkeys of
-                        Loading ->
-                            ul [ class "flex flex-col gap-2", attribute "aria-hidden" "true" ]
-                                [ li []
-                                    [ Item.new
-                                        |> Item.muted
-                                        |> Item.icon (Skeleton.view [ class "size-4" ])
-                                        |> Item.title [ Skeleton.view [ class "h-[1.375em] w-28 max-w-full" ] ]
-                                        |> Item.actions
-                                            [ Skeleton.view [ class "h-4 w-16" ]
-                                            , Skeleton.view [ class "size-7" ]
-                                            ]
-                                        |> Item.toHtml [ class "flex-nowrap! [&_[data-slot=item-content]]:min-w-0 [&_[data-slot=item-title]]:w-full" ]
-                                    ]
-                                ]
-
-                        Loaded [] ->
-                            Item.new
-                                |> Item.outline
-                                |> Item.icon (Phosphor.fingerprint Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                                |> Item.title [ span [ class "flex h-7 items-center" ] [ text "No passkeys yet." ] ]
-                                |> Item.toHtml [ class "border-dashed" ]
-
-                        Loaded found ->
-                            ul [ class "flex flex-col gap-2" ] (List.map (viewPasskey now confirming) found)
-
-                        NotLoaded message ->
-                            p [ class "text-sm text-muted-foreground" ] [ text message ]
-                    ]
-                , Ceremony.problem ceremony
-                , case removalProblem of
-                    Just reason ->
-                        Field.error [] [ text reason ]
-
-                    Nothing ->
-                        text ""
-                ]
-            ]
-        |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
-            [ p [ class "text-xs text-muted-foreground" ] [ text "You can still log in with an email link." ]
-            , if session == Unknown then
-                Button.new
-                    |> Button.text "Add a passkey"
-                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.small
-                    |> viewButtonSkeleton [ class "max-sm:w-full" ]
-
-              else
-                Button.new
-                    |> Button.text
-                        (if ceremony == Waiting then
-                            "Waiting for your device…"
-
-                         else
-                            "Add a passkey"
-                        )
-                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.small
-                    |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting), class "max-sm:w-full" ]
-            ]
-        |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
-
-
-viewButtonSkeleton : List (Html.Attribute msg) -> Button.Button shape Button.Ready msg -> Html msg
-viewButtonSkeleton attrs button =
-    div (class "relative inline-flex" :: attribute "aria-hidden" "true" :: attrs)
-        [ Button.toHtml [ class "invisible w-full", disabled True ] button
-        , Skeleton.view [ class "absolute inset-0 rounded-lg!" ]
-        ]
-
-
-viewPasskey : Maybe Time.Posix -> Maybe CredentialId -> Api.Passkey -> Html Msg
-viewPasskey now confirming passkey =
-    let
-        name =
-            Maybe.withDefault "Passkey" passkey.name
-    in
-    li []
-        [ Item.new
-            |> Item.muted
-            |> Item.icon (Phosphor.fingerprint Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-            |> Item.title
-                [ span [ class "truncate", Html.Attributes.title name ]
-                    [ text
-                        (if confirming == Just passkey.id then
-                            "Remove " ++ name ++ "?"
-
-                         else
-                            name
-                        )
-                    ]
-                ]
-            |> Item.actions
-                (if confirming == Just passkey.id then
-                    [ Button.new
-                        |> Button.text "Cancel"
-                        |> Button.ghost
-                        |> Button.small
-                        |> Button.toHtml [ onClick PasskeyRemoveCancelled ]
-                    , Button.new
-                        |> Button.text "Remove"
-                        |> Button.destructive
-                        |> Button.small
-                        |> Button.toHtml [ onClick (PasskeyRemoveConfirmed passkey.id) ]
-                    ]
-
-                 else
-                    [ case now of
-                        Just current ->
-                            Html.time
-                                [ attribute "datetime" passkey.createdAt
-                                , Html.Attributes.title ("Added " ++ passkey.createdAt)
-                                , class "whitespace-nowrap text-xs text-muted-foreground"
-                                ]
-                                [ text (RelativeTime.toString current passkey.createdAt) ]
-
-                        Nothing ->
-                            Skeleton.view [ class "h-4 w-16", attribute "aria-hidden" "true" ]
-                    , Button.new
-                        |> Button.icon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                        |> Button.label ("Remove " ++ name)
-                        |> Button.ghost
-                        |> Button.small
-                        |> Button.toHtml [ onClick (PasskeyRemoveRequested passkey.id) ]
-                    ]
-                )
-            |> Item.toHtml [ class "flex-nowrap! [&_[data-slot=item-content]]:min-w-0 [&_[data-slot=item-title]]:w-full" ]
-        ]
-
-
-viewEnrolment : Ceremony -> List (Html Msg)
-viewEnrolment ceremony =
-    [ Plain.lead "Create your passkey"
-        "A passkey signs you in with your fingerprint, face or screen lock, with no email to wait for."
-    , div [ class "flex flex-col gap-4" ]
-        [ Ceremony.problem ceremony
-        , Button.new
-            |> Button.text
-                (if ceremony == Waiting then
-                    "Waiting for your device…"
-
-                 else
-                    "Create a passkey"
-                )
-            |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-            |> Button.toHtml [ onClick PasskeyRequested, disabled (ceremony == Waiting), class "h-10" ]
-        , Button.new
-            |> Button.text "Not now"
-            |> Button.outline
-            |> Button.toAnchor [ href (Path.toString Path.Explore), class "h-10" ]
-        ]
-    ]

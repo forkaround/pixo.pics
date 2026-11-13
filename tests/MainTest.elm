@@ -257,6 +257,17 @@ suite =
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
                         |> ProgramTest.expectViewHas [ text "Sign up" ]
+            , test "signs out when the deletion is answered once the page is left" <|
+                \() ->
+                    startAt "/settings/account" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickButton "Delete account"
+                        |> ProgramTest.within (Query.find [ attribute (Html.Attributes.attribute "role" "alertdialog") ]) (ProgramTest.clickButton "Delete")
+                        |> ProgramTest.clickLink "Explore" "/"
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "ada@example.com" ] ]
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
+                        |> ProgramTest.expectViewHas [ text "Sign up" ]
             , test "cancels account deletion" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -574,6 +585,16 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" passkeyCreated
                         |> ProgramTest.simulateHttpResponse "POST" "/api/auth/passkeys" (response 201 passkey)
                         |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/")
+            , test "asks the browser for no passkey once its page is left" <|
+                \() ->
+                    startAt "/passkey" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickButton "Create a passkey"
+                        |> ProgramTest.clickLink "Not now" "/"
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
             , test "signs in to an account that has a passkey, straight home" <|
                 \() ->
                     startAt "/verify#Zm9vYmFy" defaultFlags
