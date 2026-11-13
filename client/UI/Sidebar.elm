@@ -401,7 +401,7 @@ viewCollapsible config parts =
         containerClass =
             String.join " "
                 [ "fixed inset-0 z-50 m-0 hidden h-full max-h-none w-full max-w-none border-0 bg-transparent p-0 text-inherit outline-none open:block backdrop:bg-transparent"
-                , "md:sticky md:inset-auto md:top-0 md:z-10 md:flex md:max-h-svh md:w-(--sidebar-width) md:shrink-0 md:transition-[translate,width] md:duration-200 md:ease-linear"
+                , "md:sticky md:inset-auto md:top-0 md:z-20 md:flex md:max-h-svh md:w-(--sidebar-width) md:shrink-0 md:transition-[translate,width] md:duration-200 md:ease-linear"
                 , "[html:has(&:modal)]:overflow-hidden [html:has(&:modal)]:[scrollbar-gutter:stable]"
                 , "supports-[-webkit-touch-callout:none]:[html:has(&:modal)]:transition-[filter] supports-[-webkit-touch-callout:none]:[html:has(&:modal)]:duration-200 supports-[-webkit-touch-callout:none]:[html:has(&:modal)]:ease-in-out supports-[-webkit-touch-callout:none]:[html:has(elmcn-dialog[open]>&:modal)]:[filter:blur(var(--blur-xs))_brightness(0.9)]"
                 , if padded then
@@ -792,7 +792,7 @@ menuButtonAttributes =
 
 tooltipClass : String
 tooltipClass =
-    "after:pointer-events-none after:invisible after:fixed after:z-50 after:ms-1 after:-translate-y-1/2 after:rounded-md after:bg-foreground after:px-3 after:py-1.5 after:text-xs after:whitespace-nowrap after:text-background after:opacity-0 after:transition-[opacity,visibility] after:duration-150 after:content-[attr(data-tooltip)] after:[top:anchor(center)] after:[inset-inline-start:anchor(end)] supports-[anchor-name:none]:md:group-data-[collapsible=icon]:data-[tooltip]:hover:after:visible supports-[anchor-name:none]:md:group-data-[collapsible=icon]:data-[tooltip]:hover:after:opacity-100 supports-[anchor-name:none]:md:group-data-[collapsible=icon]:data-[tooltip]:focus-visible:after:visible supports-[anchor-name:none]:md:group-data-[collapsible=icon]:data-[tooltip]:focus-visible:after:opacity-100"
+    "[anchor-name:--sidebar-tooltip] [anchor-scope:--sidebar-tooltip] after:[position-anchor:--sidebar-tooltip] after:pointer-events-none after:invisible after:fixed after:z-50 after:ms-1 after:-translate-y-1/2 after:rounded-md after:bg-foreground after:px-3 after:py-1.5 after:text-xs after:whitespace-nowrap after:text-background after:opacity-0 after:transition-[opacity,visibility] after:duration-150 after:content-[attr(data-tooltip)] after:[top:calc(anchor(top)+2px)] after:[inset-inline-start:calc(anchor(start)+8px)] supports-[anchor-scope:all]:md:group-data-[collapsible=icon]:data-[tooltip]:hover:after:visible supports-[anchor-scope:all]:md:group-data-[collapsible=icon]:data-[tooltip]:hover:after:opacity-100 supports-[anchor-scope:all]:md:group-data-[collapsible=icon]:data-[tooltip]:focus-visible:after:visible supports-[anchor-scope:all]:md:group-data-[collapsible=icon]:data-[tooltip]:focus-visible:after:opacity-100"
 
 
 menuAction : List (Attribute msg) -> List (Html msg) -> Html msg
