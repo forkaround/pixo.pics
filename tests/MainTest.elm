@@ -1720,6 +1720,28 @@ suite =
                     library
                         |> ProgramTest.fillIn "search" "Search prompts" "submarine"
                         |> ProgramTest.expectViewHas [ text "Nothing matches “submarine”" ]
+            , test "lists the library's tags with their counts" <|
+                \() ->
+                    taggedLibrary
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "All pictures" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "sunset" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "fox" ] ]
+                        |> ProgramTest.expectViewHas
+                            [ attribute (Html.Attributes.attribute "data-sidebar" "menu-badge")
+                            , text "2"
+                            ]
+            , test "shows only the pictures with the tag chosen" <|
+                \() ->
+                    taggedLibrary
+                        |> ProgramTest.clickButton "sunset"
+                        |> ProgramTest.ensureViewHas [ text "2 of 3 pictures" ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Open a red fox in the snow") ]
+                        |> ProgramTest.clickButton "All pictures"
+                        |> ProgramTest.expectViewHas [ text "3 pictures" ]
+            , test "says how pictures get tags when none has any" <|
+                \() ->
+                    library
+                        |> ProgramTest.expectViewHas [ text "No tags yet. The prompt writer tags pictures as you save them." ]
             , test "opens a picture with everything that made it" <|
                 \() ->
                     library
@@ -1959,6 +1981,18 @@ library =
                 [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
                 , stored 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576
                 , stored 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
+                ]
+            )
+
+
+taggedLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+taggedLibrary =
+    startAt "/library" defaultFlags
+        |> ProgramTest.simulateIncomingPort "interopToElm"
+            (libraryLoaded
+                [ storedWithTags [ "fox" ] 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
+                , storedWithTags [ "sunset", "lighthouse" ] 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576
+                , storedWithTags [ "sunset" ] 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
                 ]
             )
 
@@ -2204,6 +2238,21 @@ stored id url prompt width height =
         , ( "steps", Encode.int 4 )
         , ( "seed", Encode.int 7 )
         , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
+        ]
+
+
+storedWithTags : List String -> Int -> String -> String -> Int -> Int -> Encode.Value
+storedWithTags names id url prompt width height =
+    Encode.object
+        [ ( "id", Encode.int id )
+        , ( "blob", Encode.string url )
+        , ( "prompt", Encode.string prompt )
+        , ( "width", Encode.int width )
+        , ( "height", Encode.int height )
+        , ( "steps", Encode.int 4 )
+        , ( "seed", Encode.int 7 )
+        , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
+        , ( "tags", Encode.list Encode.string names )
         ]
 
 

@@ -1,7 +1,8 @@
-module LibraryView exposing (search, view)
+module LibraryView exposing (filters, search, view)
 
 import Data.Dimension as Dimension
 import Data.Prompt as Prompt
+import Data.Tag as Tag exposing (Tag)
 import Html exposing (Attribute, Html, button, div, img, p, span, text)
 import Html.Attributes exposing (alt, attribute, class, download, height, href, id, placeholder, src, style, type_, value, width)
 import Html.Events exposing (onClick, onInput)
@@ -15,6 +16,7 @@ import UI.Button as Button
 import UI.DropdownMenu as DropdownMenu
 import UI.Empty as Empty
 import UI.Input as Input
+import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 
 
@@ -33,6 +35,82 @@ search model =
             , class "ps-8"
             ]
         ]
+
+
+filters : Model -> Html Msg
+filters model =
+    let
+        chosen =
+            Library.chosen model
+    in
+    Sidebar.group []
+        [ Sidebar.groupLabel [ class "max-md:sr-only" ] [ text "Tags" ]
+        , Sidebar.menu [ class "max-md:flex-row max-md:overflow-x-auto max-md:pb-1" ]
+            (case model.pictures of
+                Loaded pictures ->
+                    viewFilter (chosen == Nothing) Nothing Phosphor.images "All pictures" (Just (List.length pictures))
+                        :: List.map
+                            (\( tag, n ) -> viewFilter (chosen == Just tag) (Just tag) Phosphor.tag (Tag.toString tag) (Just n))
+                            (Library.tags model)
+
+                Unavailable _ ->
+                    [ viewFilter (chosen == Nothing) Nothing Phosphor.images "All pictures" Nothing ]
+
+                _ ->
+                    viewFilter True Nothing Phosphor.images "All pictures" Nothing
+                        :: List.repeat 4 (Sidebar.menuItem [] [ Sidebar.menuSkeleton [] ])
+            )
+        , viewHint model
+        ]
+
+
+viewFilter : Bool -> Maybe Tag -> Phosphor.Icon -> String -> Maybe Int -> Html Msg
+viewFilter current tag shape label total =
+    Sidebar.menuItem [ class "max-md:shrink-0" ]
+        (Sidebar.menuButton
+            ([ onClick (TagChosen tag)
+             , attribute "aria-pressed"
+                (if current then
+                    "true"
+
+                 else
+                    "false"
+                )
+             , class "pe-8"
+             ]
+                ++ (if current then
+                        [ Sidebar.active ]
+
+                    else
+                        []
+                   )
+            )
+            [ shape Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            , span [] [ text label ]
+            ]
+            :: (case total of
+                    Just n ->
+                        [ Sidebar.menuBadge [] [ text (String.fromInt n) ] ]
+
+                    Nothing ->
+                        []
+               )
+        )
+
+
+viewHint : Model -> Html Msg
+viewHint model =
+    case model.pictures of
+        Loaded (_ :: _) ->
+            if List.isEmpty (Library.tags model) then
+                p [ class "px-2 text-xs text-muted-foreground max-md:hidden" ]
+                    [ text "No tags yet. The prompt writer tags pictures as you save them." ]
+
+            else
+                text ""
+
+        _ ->
+            text ""
 
 
 view : Model -> Html Msg

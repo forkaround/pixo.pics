@@ -7,6 +7,7 @@ module Library exposing
     , Picture
     , Pictures(..)
     , Save(..)
+    , chosen
     , enter
     , fileName
     , find
@@ -14,6 +15,7 @@ module Library exposing
     , modelName
     , saveOf
     , saved
+    , tags
     , update
     , visible
     )
@@ -24,6 +26,7 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Data.Tag as Tag exposing (Tag)
+import Dict
 import Idb
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode exposing (Value)
@@ -39,6 +42,7 @@ type alias Model =
     { pictures : Pictures
     , index : Bm25.Index
     , query : String
+    , tag : Maybe Tag
     , viewing : Maybe Int
     , zoomed : Bool
     , detailed : Bool
@@ -93,6 +97,7 @@ init canShare =
     { pictures = NotLoaded
     , index = Bm25.empty
     , query = ""
+    , tag = Nothing
     , viewing = Nothing
     , zoomed = False
     , detailed = False
@@ -156,9 +161,9 @@ read row =
     Decode.decodeValue decoder row
         |> Result.toMaybe
         |> Maybe.andThen
-            (\( stored, tags ) ->
+            (\( stored, names ) ->
                 fromStored stored
-                    |> Maybe.map (\picture -> { picture | tags = Maybe.map (List.filterMap Tag.fromString) tags })
+                    |> Maybe.map (\picture -> { picture | tags = Maybe.map (List.filterMap Tag.fromString) names })
             )
 
 
@@ -242,15 +247,80 @@ visible : Model -> List Picture
 visible model =
     case model.pictures of
         Loaded pictures ->
-            if List.isEmpty (Bm25.tokens model.query) then
-                pictures
+            let
+                found =
+                    if List.isEmpty (Bm25.tokens model.query) then
+                        pictures
 
-            else
-                Bm25.search model.query model.index
-                    |> List.filterMap (\id -> find id model)
+                    else
+                        Bm25.search model.query model.index
+                            |> List.filterMap (\id -> find id model)
+            in
+            case chosen model of
+                Just tag ->
+                    List.filter (carries tag) found
+
+                Nothing ->
+                    found
 
         _ ->
             []
+
+
+carries : Tag -> Picture -> Bool
+carries tag picture =
+    List.member tag (Maybe.withDefault [] picture.tags)
+
+
+tags : Model -> List ( Tag, Int )
+tags model =
+    case model.pictures of
+        Loaded pictures ->
+            pictures
+                |> List.foldl
+                    (\picture counts ->
+                        List.foldl
+                            (\tag -> Dict.update (Tag.toString tag) (countOne tag))
+                            counts
+                            (distinct (Maybe.withDefault [] picture.tags))
+                    )
+                    Dict.empty
+                |> Dict.values
+                |> List.sortBy (\( tag, n ) -> ( negate n, Tag.toString tag ))
+
+        _ ->
+            []
+
+
+countOne : Tag -> Maybe ( Tag, Int ) -> Maybe ( Tag, Int )
+countOne tag known =
+    case known of
+        Just ( _, n ) ->
+            Just ( tag, n + 1 )
+
+        Nothing ->
+            Just ( tag, 1 )
+
+
+distinct : List Tag -> List Tag
+distinct all =
+    all
+        |> List.map (\tag -> ( Tag.toString tag, tag ))
+        |> Dict.fromList
+        |> Dict.values
+
+
+chosen : Model -> Maybe Tag
+chosen model =
+    model.tag
+        |> Maybe.andThen
+            (\tag ->
+                if List.any (\( known, _ ) -> known == tag) (tags model) then
+                    Just tag
+
+                else
+                    Nothing
+            )
 
 
 
@@ -259,6 +329,7 @@ visible model =
 
 type Msg
     = QueryChanged String
+    | TagChosen (Maybe Tag)
     | Opened Int
     | Closed
     | Stepped Int
@@ -307,6 +378,9 @@ update msg model =
         QueryChanged query ->
             ( { model | query = query }, [] )
 
+        TagChosen tag ->
+            ( { model | tag = tag, confirming = Nothing }, [] )
+
         Opened id ->
             ( { model | viewing = Just id, zoomed = True, detailed = False, confirming = Nothing, notice = Nothing }, [] )
 
@@ -344,14 +418,14 @@ update msg model =
             else
                 ( model, [] )
 
-        Tagged id tags ->
+        Tagged id names ->
             ( case model.pictures of
                 Loaded pictures ->
                     shelve
                         (List.map
                             (\picture ->
                                 if picture.id == id then
-                                    { picture | tags = Just tags }
+                                    { picture | tags = Just names }
 
                                 else
                                     picture
@@ -367,7 +441,7 @@ update msg model =
                         { database = database
                         , store = store
                         , key = Encode.int id
-                        , fields = [ ( "tags", Encode.list (Tag.toString >> Encode.string) tags ) ]
+                        , fields = [ ( "tags", Encode.list (Tag.toString >> Encode.string) names ) ]
                         , label = tagging
                         }
                     )

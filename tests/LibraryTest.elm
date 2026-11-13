@@ -201,6 +201,50 @@ suite =
                         ]
                         ()
             ]
+        , describe "filtering by tag"
+            [ test "counts the tags of the pictures, most used first, then alphabetically" <|
+                \() ->
+                    Library.tags tagged
+                        |> List.map (Tuple.mapFirst Tag.toString)
+                        |> Expect.equal [ ( "sunset", 2 ), ( "fox", 1 ), ( "lighthouse", 1 ) ]
+            , test "counts nothing for a picture without tags" <|
+                \() ->
+                    Library.tags loaded
+                        |> Expect.equal []
+            , test "keeps the pictures with the tag, newest first" <|
+                \() ->
+                    run [ chose "sunset" ] tagged
+                        |> Library.visible
+                        |> List.map .id
+                        |> Expect.equal [ 3, 2 ]
+            , test "keeps the pictures matching both the search and the tag, best first" <|
+                \() ->
+                    run [ QueryChanged "lighthouse sunset", chose "sunset" ] tagged
+                        |> Library.visible
+                        |> List.map .id
+                        |> Expect.equal [ 2, 3 ]
+            , test "searches within the tag only" <|
+                \() ->
+                    run [ QueryChanged "fox", chose "sunset" ] tagged
+                        |> Library.visible
+                        |> Expect.equal []
+            , test "shows everything again when no tag is chosen" <|
+                \() ->
+                    run [ chose "sunset", TagChosen Nothing ] tagged
+                        |> Library.visible
+                        |> List.length
+                        |> Expect.equal 3
+            , test "drops the tag once no picture carries it" <|
+                \() ->
+                    run [ chose "fox", deleted 1 ] tagged
+                        |> (\model -> ( Library.chosen model, List.map .id (Library.visible model) ))
+                        |> Expect.equal ( Nothing, [ 3, 2 ] )
+            , test "drops the question about deleting a picture" <|
+                \() ->
+                    run [ DeleteRequested 1, chose "sunset" ] tagged
+                        |> .confirming
+                        |> Expect.equal Nothing
+            ]
         , describe "deleting"
             [ test "asks first" <|
                 \() ->
@@ -313,6 +357,30 @@ opening =
 loaded : Library.Model
 loaded =
     run [ rows [ fox, lighthouse, skyline ] ] opening
+
+
+tagged : Library.Model
+tagged =
+    run
+        [ Happened
+            (Answered
+                (Idb.Rows
+                    { label = ""
+                    , rows =
+                        [ withTags [ "fox" ] fox
+                        , withTags [ "sunset", "lighthouse" ] lighthouse
+                        , withTags [ "sunset" ] skyline
+                        ]
+                    }
+                )
+            )
+        ]
+        opening
+
+
+chose : String -> Msg
+chose name =
+    TagChosen (List.head (tags [ name ]))
 
 
 run : List Msg -> Library.Model -> Library.Model

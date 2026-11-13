@@ -744,7 +744,9 @@ viewBody model =
             viewFrame model
                 "Library"
                 [ Html.map GotLibrary (LibraryView.search model.library) ]
-                [ viewContent [ Html.map GotLibrary (LibraryView.view model.library) ] ]
+                [ viewAside "md:w-56 md:pt-6" [ Html.map GotLibrary (LibraryView.filters model.library) ]
+                , viewContent [ Html.map GotLibrary (LibraryView.view model.library) ]
+                ]
 
         Explore ->
             viewFrame model "Explore" [] [ viewContent [ ExploreView.view (invitation model.session) ] ]

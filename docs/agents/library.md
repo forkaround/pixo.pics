@@ -43,3 +43,6 @@ IndexedDB for Elm and know nothing of pictures.
   loop.
 - `Idb.Patch` reads a row and writes it back with new fields in one
   transaction; a row deleted meanwhile fails it.
+- `/library` filters by one tag at a time from its side column. The tag is
+  kept in the library's model like the search query, not in the address. A
+  chosen tag that no picture carries any more is dropped (`Library.chosen`).
