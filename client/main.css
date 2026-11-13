@@ -9,6 +9,53 @@
   width: calc(1rem * 150 / 42.5);
 }
 
+.logo-glass-turn {
+  transform-origin: 88.5px 20px;
+  transition: transform 0.8s ease-in-out;
+}
+
+.logo-sand {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.8s ease-out,
+    visibility 0s 0.8s;
+}
+
+.logo-sand.logo-sand-running {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.4s ease-in;
+}
+
+.logo-sand-drain {
+  animation: logo-sand-drain 3s linear 0.8s both;
+}
+
+.logo-sand-fill {
+  animation: logo-sand-fill 3s linear 0.8s both;
+}
+
+@keyframes logo-sand-drain {
+  from {
+    transform: scaleY(1);
+  }
+
+  to {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes logo-sand-fill {
+  from {
+    transform: scaleY(0);
+  }
+
+  to {
+    transform: scaleY(1);
+  }
+}
+
 @media (width >= 48rem) {
   .sidebar-morph [data-slot="sidebar-gap"],
   .sidebar-morph [data-slot="sidebar-container"] {
@@ -22,6 +69,18 @@
   .sidebar-logo {
     width: calc(1rem * (150 - 107.5 * var(--sidebar-progress)) / 42.5);
   }
+
+  .logo-glass {
+    transform: translateX(calc(-68.5px * var(--sidebar-progress)));
+  }
+
+  .logo-letters {
+    transition: opacity 0.8s;
+  }
+
+  .logo-letters-yield {
+    opacity: calc(1 - var(--sidebar-progress));
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -31,6 +90,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .logo-glass-turn {
+    transition: none;
+  }
+
   .sidebar-morph [data-slot="sidebar"] {
     --sidebar-progress: 0;
   }

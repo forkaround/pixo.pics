@@ -79,6 +79,8 @@ type alias Model =
     , library : Library.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
+    , generations : Int
+    , turns : Int
     , page : Page
     }
 
@@ -117,6 +119,8 @@ init flags url =
         , library = Library.init canShare
         , sidebar = Sidebar.init
         , sidebarProgress = 0
+        , generations = 0
+        , turns = 0
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
@@ -178,7 +182,15 @@ open url opened =
 
 runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect Msg )
 runPipeline model ( pipeline, command ) =
-    ( { model | pipeline = pipeline }
+    ( { model
+        | pipeline = pipeline
+        , generations =
+            if isGenerating pipeline.engine && not (isGenerating model.pipeline.engine) then
+                model.generations + 1
+
+            else
+                model.generations
+      }
     , Batch
         (List.filterMap identity
             [ Maybe.map (Interop.RunPipeline >> SendToJs) command
@@ -282,6 +294,7 @@ type Msg
     | GotStylist Stylist.Msg
     | SidebarChanged Sidebar.State
     | SidebarAnimated Float
+    | HourglassTurned
     | Scrolled
 
 
@@ -294,6 +307,11 @@ subscriptions model =
 
           else
             Browser.Events.onAnimationFrameDelta SidebarAnimated
+        , if isGenerating model.pipeline.engine then
+            Time.every 4000 (\_ -> HourglassTurned)
+
+          else
+            Sub.none
         ]
 
 
@@ -361,6 +379,9 @@ update msg model =
               }
             , NoEffect
             )
+
+        HourglassTurned ->
+            ( { model | turns = model.turns + 1 }, NoEffect )
 
         PathSelected path ->
             ( model, PushUrl (Path.toString path) )
@@ -778,6 +799,10 @@ viewShell model page =
                 ]
                 [ span [ class "sidebar-logo flex h-4 shrink-0" ]
                     [ Logo.sidebar model.sidebarProgress
+                        { running = isGenerating model.pipeline.engine
+                        , run = model.generations
+                        , turn = model.turns
+                        }
                         [ Svg.Attributes.class "h-4 w-auto max-w-none shrink-0" ]
                     ]
                 , span [ class "sr-only" ] [ text "pixo" ]
@@ -798,6 +823,16 @@ viewShell model page =
         |> Sidebar.rail
         |> Sidebar.page [ class "min-w-0" ] page
         |> Sidebar.toHtml [ class "sidebar-morph bg-background text-foreground" ]
+
+
+isGenerating : Pipeline.Engine -> Bool
+isGenerating engine =
+    case engine of
+        Pipeline.Generating _ _ (Pipeline.Denoising _) ->
+            True
+
+        _ ->
+            False
 
 
 invitation : Session -> ExploreView.Invitation

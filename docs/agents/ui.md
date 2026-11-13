@@ -43,3 +43,10 @@ mv -n src/UI/* client/UI/ && ls src/UI
   the stroke and both change. `public/favicon.svg` copies the X's path: a change goes in
   both. The sidebar's animation is Elm frames driving `--sidebar-progress`, with no CSS
   transition or TypeScript.
+- The X is drawn apart from the other letters, as `glass`: while a picture is generating
+  it is an hourglass whose sand drains, then it turns 180° and runs again. Elm
+  only counts the turns (`Time.every` in `Main`) and keys the sand by them, so each turn
+  restarts its CSS animation; the turn itself and the fade back are CSS transitions.
+  Elm frames would redraw the whole page for the minutes a picture takes. On `md` the
+  glass follows `--sidebar-progress` by the X's 68.5-unit move, and the letters, which
+  collapse onto the X's lines, fade out while it runs so they don't stay behind it.
