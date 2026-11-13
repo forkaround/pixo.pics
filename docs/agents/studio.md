@@ -18,12 +18,13 @@ no part.
   drops the device mid-picture rejects with the same name, and that one is shown: the
   model in memory is then unusable until released and loaded again.
 - `model.pipeline.device` says whether the browser has WebGPU: `Unchecked`, `Checking`,
-  `Unsupported` with a `Storage` or `Supported` with the `Engine`, so the model can only load, generate or
-  be released on a device that can run it. A browser without `navigator.gpu` starts
-  `Unsupported` and is never checked. A failure before the check answers (the worker
-  didn't start) makes it `Unsupported` too: a check sent to that worker would never come
-  back. Without WebGPU the worker still answers, so `Unsupported Kept` can remove the
-  downloaded models; `Unsupported Unreachable` (the worker failed) can't, and says to reload.
+  `Unsupported` with a `Storage` or `Supported` with the `Engine`, so the model can only
+  load, generate or be released on a device that can run it. A browser without
+  `navigator.gpu` starts `Unsupported` and is never checked. A failure before the check
+  answers (the worker didn't start) makes it `Unsupported Unreachable` too: a check sent
+  to that worker would never come back. Without WebGPU the worker still answers, so
+  `Unsupported Kept` can remove the downloaded models. A worker that fails while nothing
+  was asked of it makes it `Unsupported Unreachable`, which can't, and says to reload.
 - The library can't tell whether its cache holds a whole model, so
   `model.pipeline.downloaded` (in `localStorage`) lists the weights that finished
   loading. Models share one cache: "Remove downloaded models" removes them all, and

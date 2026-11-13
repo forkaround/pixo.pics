@@ -102,6 +102,13 @@ suite =
                         |> Pipeline.update ClearClicked
                         |> Tuple.mapFirst .device
                         |> Expect.equal ( Unsupported Unreachable, Nothing )
+            , test "are not removed through a worker that failed on a browser without WebGPU" <|
+                \() ->
+                    Pipeline.init 1 False [ Binary ]
+                        |> run [ Happened (Failed { name = "Error", message = "Worker unable to start" }) ]
+                        |> Pipeline.update ClearClicked
+                        |> Tuple.mapFirst (\model -> ( model.device, model.message ))
+                        |> Expect.equal ( ( Unsupported Unreachable, Just (Problem "Worker unable to start") ), Nothing )
             , test "stay when removing them fails without WebGPU" <|
                 \() ->
                     Pipeline.init 1 False [ Binary ]

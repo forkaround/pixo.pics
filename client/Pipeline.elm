@@ -618,7 +618,7 @@ rest device =
             Just (Unsupported Unreachable)
 
         Unsupported Kept ->
-            Nothing
+            Just (Unsupported Unreachable)
 
         Unsupported Emptying ->
             Just (Unsupported Kept)
