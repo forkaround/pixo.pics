@@ -37,6 +37,7 @@ import StudioView
 import Stylist
 import SupportView
 import Svg.Attributes
+import Tagger
 import Task
 import Time
 import UI.Avatar as Avatar
@@ -78,6 +79,7 @@ type alias Model =
     , pipeline : Pipeline.Model
     , stylist : Stylist.Model
     , library : Library.Model
+    , tagger : Tagger.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
     , generations : Int
@@ -121,6 +123,7 @@ init flags url =
         , pipeline = Pipeline.init entropy webGpu (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , stylist = Stylist.init stylist
         , library = Library.init canShare
+        , tagger = Tagger.init
         , sidebar = sidebar
         , sidebarProgress = sidebarTarget sidebar
         , generations = 0
@@ -260,6 +263,27 @@ runLibrary model ( library, commands ) =
     )
 
 
+runTagger : Model -> ( Tagger.Model, Maybe Tagger.Command, Maybe Tagger.Found ) -> ( Model, Effect Msg )
+runTagger model ( tagger, command, found ) =
+    let
+        ( tagged, effect ) =
+            case found of
+                Just { id, tags } ->
+                    runLibrary model (Library.update (Library.Tagged id tags) model.library)
+
+                Nothing ->
+                    ( model, NoEffect )
+    in
+    ( { tagged | tagger = tagger }
+    , Batch (List.filterMap identity [ Just effect, Maybe.map (Interop.RunTagger >> SendToJs) command ])
+    )
+
+
+canTag : Model -> Bool
+canTag model =
+    Pipeline.canPrompt model.pipeline.device && model.stylist.downloaded
+
+
 isDark : Model -> Bool
 isDark model =
     case model.theme of
@@ -352,10 +376,23 @@ update msg model =
             runPipeline model (Pipeline.update (Pipeline.Happened event) model.pipeline)
 
         GotInterop (Ok (Interop.LibraryEvent event)) ->
-            runLibrary model (Library.update (Library.Happened event) model.library)
+            let
+                ( stored, effect ) =
+                    runLibrary model (Library.update (Library.Happened event) model.library)
+            in
+            case ( Library.saved event, canTag stored ) of
+                ( Just job, True ) ->
+                    runTagger stored (Tagger.update (Tagger.Asked [ job ]) stored.tagger)
+                        |> Tuple.mapSecond (\asked -> Batch [ effect, asked ])
+
+                _ ->
+                    ( stored, effect )
 
         GotInterop (Ok (Interop.StylistEvent event)) ->
             runStylist model (Stylist.update (Stylist.Happened event) model.stylist)
+
+        GotInterop (Ok (Interop.TaggerEvent event)) ->
+            runTagger model (Tagger.update (Tagger.Happened event) model.tagger)
 
         GotInterop (Err _) ->
             ( model, NoEffect )
@@ -368,6 +405,9 @@ update msg model =
 
         GotStylist stylistMsg ->
             if Stylist.needsWebGpu stylistMsg && not (Pipeline.canPrompt model.pipeline.device) then
+                ( model, NoEffect )
+
+            else if stylistMsg == Stylist.RemoveClicked && not (Tagger.isAsleep model.tagger) then
                 ( model, NoEffect )
 
             else

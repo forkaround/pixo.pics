@@ -1,5 +1,6 @@
 module LibraryTest exposing (suite)
 
+import Data.Tag as Tag exposing (Tag)
 import Expect
 import Idb
 import Json.Decode as Decode
@@ -150,6 +151,56 @@ suite =
                         |> Tuple.second
                         |> Expect.equal [ getAll ]
             ]
+        , describe "tags"
+            [ test "are Nothing on a row that has none" <|
+                \() ->
+                    Library.visible loaded
+                        |> List.map .tags
+                        |> Expect.equal [ Nothing, Nothing, Nothing ]
+            , test "are read from a row, keeping the usable ones" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Rows { label = "", rows = [ withTags [ "Fox", "snow", "?" ] fox ] })) ] opening
+                        |> Library.visible
+                        |> List.map (.tags >> Maybe.map (List.map Tag.toString))
+                        |> Expect.equal [ Just [ "fox", "snow" ] ]
+            , test "are set on the picture and written to its row" <|
+                \() ->
+                    let
+                        ( model, commands ) =
+                            Library.update (Tagged 2 (tags [ "fox", "snow" ])) loaded
+                    in
+                    Expect.all
+                        [ \_ ->
+                            Library.find 2 model
+                                |> Maybe.andThen .tags
+                                |> Maybe.map (List.map Tag.toString)
+                                |> Expect.equal (Just [ "fox", "snow" ])
+                        , \_ -> Expect.equal [ "pictures:2:tags:{\"tags\":[\"fox\",\"snow\"]}" ] (List.map patched commands)
+                        ]
+                        ()
+            , test "are written even when the library is not loaded" <|
+                \() ->
+                    Library.update (Tagged 2 (tags [ "fox", "snow" ])) opening
+                        |> Tuple.second
+                        |> List.map patched
+                        |> Expect.equal [ "pictures:2:tags:{\"tags\":[\"fox\",\"snow\"]}" ]
+            , test "failing to be written shows nothing" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Failed { label = "tags", message = "There is no row with that key." })) ] loaded
+                        |> .notice
+                        |> Expect.equal Nothing
+            , test "are asked for once a save is stored" <|
+                \() ->
+                    Expect.all
+                        [ \_ ->
+                            Library.saved (Answered (Idb.Added { label = "blob:1", row = row fox }))
+                                |> Expect.equal (Just { id = 1, prompt = "a red fox in the snow" })
+                        , \_ ->
+                            Library.saved (Answered (Idb.Rows { label = "", rows = [ row fox ] }))
+                                |> Expect.equal Nothing
+                        ]
+                        ()
+            ]
         , describe "deleting"
             [ test "asks first" <|
                 \() ->
@@ -295,6 +346,42 @@ getAll =
             , label = ""
             }
         )
+
+
+tags : List String -> List Tag
+tags names =
+    List.filterMap Tag.fromString names
+
+
+patched : Library.Command -> String
+patched command =
+    case command of
+        Database (Idb.Patch { store, key, fields, label }) ->
+            store
+                ++ ":"
+                ++ Encode.encode 0 key
+                ++ ":"
+                ++ label
+                ++ ":"
+                ++ Encode.encode 0 (Encode.object fields)
+
+        _ ->
+            "other"
+
+
+withTags : List String -> Row -> Value
+withTags names stored =
+    Encode.object
+        [ ( "id", Encode.int stored.id )
+        , ( "blob", Encode.string stored.blob )
+        , ( "prompt", Encode.string stored.prompt )
+        , ( "width", Encode.int stored.width )
+        , ( "height", Encode.int stored.height )
+        , ( "steps", Encode.int stored.steps )
+        , ( "seed", Encode.int stored.seed )
+        , ( "model", Encode.string stored.model )
+        , ( "tags", Encode.list Encode.string names )
+        ]
 
 
 rows : List Row -> Msg

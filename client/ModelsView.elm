@@ -261,7 +261,7 @@ stylist device model =
                 device
                 [ text
                     (if model.downloaded then
-                        "Writes the AI Style prompts in the studio."
+                        "Writes the AI Style prompts in the studio and tags the pictures you save."
 
                      else
                         "Downloads the first time you use AI Style in the studio."

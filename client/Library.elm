@@ -13,6 +13,7 @@ module Library exposing
     , init
     , modelName
     , saveOf
+    , saved
     , update
     , visible
     )
@@ -22,6 +23,7 @@ import Data.Dimension as Dimension
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
+import Data.Tag as Tag exposing (Tag)
 import Idb
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode exposing (Value)
@@ -59,6 +61,7 @@ type alias Picture =
     , url : String
     , job : Pipeline.Job
     , model : String
+    , tags : Maybe (List Tag)
     }
 
 
@@ -113,6 +116,11 @@ store =
     "pictures"
 
 
+tagging : String
+tagging =
+    "tags"
+
+
 load : Command
 load =
     Database (Idb.GetAll { database = database, store = store, label = "" })
@@ -147,20 +155,38 @@ read : Value -> Maybe Picture
 read row =
     Decode.decodeValue decoder row
         |> Result.toMaybe
-        |> Maybe.andThen fromStored
+        |> Maybe.andThen
+            (\( stored, tags ) ->
+                fromStored stored
+                    |> Maybe.map (\picture -> { picture | tags = Maybe.map (List.filterMap Tag.fromString) tags })
+            )
 
 
-decoder : Decoder Stored
+saved : Event -> Maybe { id : Int, prompt : String }
+saved event =
+    case event of
+        Answered (Idb.Added { row }) ->
+            read row
+                |> Maybe.map (\picture -> { id = picture.id, prompt = Prompt.toString picture.job.prompt })
+
+        _ ->
+            Nothing
+
+
+decoder : Decoder ( Stored, Maybe (List String) )
 decoder =
-    Decode.map8 Stored
-        (Decode.field "id" Decode.int)
-        (Decode.field "blob" Decode.string)
-        (Decode.field "prompt" Decode.string)
-        (Decode.field "width" Decode.int)
-        (Decode.field "height" Decode.int)
-        (Decode.field "steps" Decode.int)
-        (Decode.field "seed" Decode.int)
-        (Decode.field "model" Decode.string)
+    Decode.map2 Tuple.pair
+        (Decode.map8 Stored
+            (Decode.field "id" Decode.int)
+            (Decode.field "blob" Decode.string)
+            (Decode.field "prompt" Decode.string)
+            (Decode.field "width" Decode.int)
+            (Decode.field "height" Decode.int)
+            (Decode.field "steps" Decode.int)
+            (Decode.field "seed" Decode.int)
+            (Decode.field "model" Decode.string)
+        )
+        (Decode.maybe (Decode.field "tags" (Decode.list Decode.string)))
 
 
 fromStored : Stored -> Maybe Picture
@@ -171,6 +197,7 @@ fromStored stored =
             , url = stored.url
             , job = { prompt = prompt, width = width, height = height, steps = steps, seed = seed }
             , model = stored.model
+            , tags = Nothing
             }
         )
         (Prompt.parse stored.prompt)
@@ -240,6 +267,7 @@ type Msg
     | DeleteCancelled
     | DeleteConfirmed Int
     | SaveClicked Pipeline.Picture
+    | Tagged Int (List Tag)
     | ShareClicked Int
     | CopyClicked Int
     | PostClicked Share.Network Int
@@ -316,6 +344,36 @@ update msg model =
             else
                 ( model, [] )
 
+        Tagged id tags ->
+            ( case model.pictures of
+                Loaded pictures ->
+                    shelve
+                        (List.map
+                            (\picture ->
+                                if picture.id == id then
+                                    { picture | tags = Just tags }
+
+                                else
+                                    picture
+                            )
+                            pictures
+                        )
+                        model
+
+                _ ->
+                    model
+            , [ Database
+                    (Idb.Patch
+                        { database = database
+                        , store = store
+                        , key = Encode.int id
+                        , fields = [ ( "tags", Encode.list (Tag.toString >> Encode.string) tags ) ]
+                        , label = tagging
+                        }
+                    )
+              ]
+            )
+
         ShareClicked id ->
             ( { model | notice = Nothing }, with id model Share )
 
@@ -366,18 +424,18 @@ happened event model =
 
         Answered (Idb.Added { label, row }) ->
             let
-                saved =
+                stored =
                     { model | saves = ( label, Saved ) :: List.filter (\( known, _ ) -> known /= label) model.saves }
             in
             case ( model.pictures, read row ) of
                 ( Loaded pictures, Just picture ) ->
-                    ( shelve (picture :: pictures) saved, [] )
+                    ( shelve (picture :: pictures) stored, [] )
 
                 ( Loading, _ ) ->
-                    ( saved, [ load ] )
+                    ( stored, [ load ] )
 
                 _ ->
-                    ( saved, [] )
+                    ( stored, [] )
 
         Answered (Idb.Deleted { key }) ->
             case ( model.pictures, Decode.decodeValue Decode.int key ) of
@@ -393,24 +451,31 @@ happened event model =
                 _ ->
                     ( model, [] )
 
-        Answered (Idb.Failed { message }) ->
-            ( { model
-                | pictures =
-                    if model.pictures == Loading then
-                        Unavailable message
+        Answered (Idb.Patched _) ->
+            ( model, [] )
 
-                    else
-                        model.pictures
-                , saves = List.filter (\( _, state ) -> state /= Saving) model.saves
-                , notice =
-                    if model.pictures == Loading then
-                        Nothing
+        Answered (Idb.Failed { label, message }) ->
+            if label == tagging then
+                ( model, [] )
 
-                    else
-                        Just (Problem message)
-              }
-            , []
-            )
+            else
+                ( { model
+                    | pictures =
+                        if model.pictures == Loading then
+                            Unavailable message
+
+                        else
+                            model.pictures
+                    , saves = List.filter (\( _, state ) -> state /= Saving) model.saves
+                    , notice =
+                        if model.pictures == Loading then
+                            Nothing
+
+                        else
+                            Just (Problem message)
+                  }
+                , []
+                )
 
         Copied ->
             ( { model | notice = Just (Info "Picture copied.") }, [] )

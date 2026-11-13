@@ -13,6 +13,7 @@ import Json.Encode as Encode
 import Library
 import Pipeline
 import Stylist
+import Tagger
 import TsJson.Decode as TsDecode exposing (Decoder)
 import TsJson.Encode as TsEncode exposing (Encoder)
 
@@ -42,6 +43,7 @@ type FromElm
     | RunPipeline Pipeline.Command
     | RunLibrary Library.Command
     | RunStylist Stylist.Command
+    | RunTagger Tagger.Command
 
 
 type ToElm
@@ -52,6 +54,7 @@ type ToElm
     | PipelineEvent Pipeline.Event
     | LibraryEvent Library.Event
     | StylistEvent Stylist.Event
+    | TaggerEvent Tagger.Event
 
 
 type alias Flags =
@@ -82,7 +85,7 @@ themeToString theme =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist value ->
+        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbPatch idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist loadTagger tagPicture releaseTagger value ->
             case value of
                 WriteToLocalStorage entry ->
                     writeToLocalStorage entry
@@ -120,6 +123,9 @@ fromElm =
                 RunLibrary (Library.Database (Idb.Delete request)) ->
                     idbDelete request
 
+                RunLibrary (Library.Database (Idb.Patch request)) ->
+                    idbPatch request
+
                 RunLibrary (Library.Database (Idb.Release urls)) ->
                     idbRelease urls
 
@@ -143,6 +149,15 @@ fromElm =
 
                 RunStylist Stylist.Remove ->
                     removeStylist Stylist.modelId
+
+                RunTagger Tagger.Load ->
+                    loadTagger Stylist.modelId
+
+                RunTagger (Tagger.Tag request) ->
+                    tagPicture request
+
+                RunTagger Tagger.Release ->
+                    releaseTagger
         )
         |> TsEncode.variantTagged "WriteToLocalStorage"
             (TsEncode.object
@@ -232,6 +247,15 @@ fromElm =
                 , TsEncode.required "label" .label TsEncode.string
                 ]
             )
+        |> TsEncode.variantTagged "IdbPatch"
+            (TsEncode.object
+                [ TsEncode.required "database" .database databaseEncoder
+                , TsEncode.required "store" .store TsEncode.string
+                , TsEncode.required "key" .key TsEncode.value
+                , TsEncode.required "fields" (.fields >> Dict.fromList) (TsEncode.dict identity TsEncode.value)
+                , TsEncode.required "label" .label TsEncode.string
+                ]
+            )
         |> TsEncode.variantTagged "IdbRelease"
             (TsEncode.object [ TsEncode.required "urls" identity (TsEncode.list TsEncode.string) ])
         |> TsEncode.variantTagged "SharePicture"
@@ -247,27 +271,14 @@ fromElm =
             (TsEncode.object [ TsEncode.required "url" identity TsEncode.string ])
         |> TsEncode.variantTagged "LoadStylist"
             (TsEncode.object [ TsEncode.required "model" identity TsEncode.string ])
-        |> TsEncode.variantTagged "WritePrompt"
-            (TsEncode.object
-                [ TsEncode.required "model" .model TsEncode.string
-                , TsEncode.required "messages"
-                    .messages
-                    (TsEncode.list
-                        (TsEncode.object
-                            [ TsEncode.required "role" .role roleEncoder
-                            , TsEncode.required "content" .content TsEncode.string
-                            ]
-                        )
-                    )
-                , TsEncode.required "temperature" .temperature TsEncode.float
-                , TsEncode.required "topP" .topP TsEncode.float
-                , TsEncode.required "maxTokens" .maxTokens TsEncode.int
-                , TsEncode.required "thinking" .thinking TsEncode.bool
-                ]
-            )
+        |> TsEncode.variantTagged "WritePrompt" requestEncoder
         |> TsEncode.variant0 "StopWriting"
         |> TsEncode.variantTagged "RemoveStylist"
             (TsEncode.object [ TsEncode.required "model" identity TsEncode.string ])
+        |> TsEncode.variantTagged "LoadTagger"
+            (TsEncode.object [ TsEncode.required "model" identity TsEncode.string ])
+        |> TsEncode.variantTagged "TagPicture" requestEncoder
+        |> TsEncode.variant0 "ReleaseTagger"
         |> TsEncode.buildUnion
 
 
@@ -337,6 +348,11 @@ toElm =
                 (TsDecode.field "label" TsDecode.string)
                 (TsDecode.field "key" TsDecode.value)
           )
+        , ( "IdbPatched"
+          , TsDecode.map2 (\label key -> answered (Idb.Patched { label = label, key = key }))
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "key" TsDecode.value)
+          )
         , ( "IdbFailed"
           , TsDecode.map2 (\label message -> answered (Idb.Failed { label = label, message = message }))
                 (TsDecode.field "label" TsDecode.string)
@@ -356,6 +372,16 @@ toElm =
         , ( "StylistFailed"
           , TsDecode.map (Stylist.Failed >> StylistEvent)
                 (TsDecode.map2 Stylist.Failure
+                    (TsDecode.field "name" TsDecode.string)
+                    (TsDecode.field "message" TsDecode.string)
+                )
+          )
+        , ( "TaggerLoaded", TsDecode.succeed (TaggerEvent Tagger.Loaded) )
+        , ( "TagsWritten", TsDecode.map (Tagger.Finished >> TaggerEvent) (TsDecode.field "text" TsDecode.string) )
+        , ( "TaggerReleased", TsDecode.succeed (TaggerEvent Tagger.Released) )
+        , ( "TaggerFailed"
+          , TsDecode.map (Tagger.Failed >> TaggerEvent)
+                (TsDecode.map2 Tagger.Failure
                     (TsDecode.field "name" TsDecode.string)
                     (TsDecode.field "message" TsDecode.string)
                 )
@@ -387,6 +413,26 @@ databaseEncoder =
                     ]
                 )
             )
+        ]
+
+
+requestEncoder : Encoder Stylist.Request
+requestEncoder =
+    TsEncode.object
+        [ TsEncode.required "model" .model TsEncode.string
+        , TsEncode.required "messages"
+            .messages
+            (TsEncode.list
+                (TsEncode.object
+                    [ TsEncode.required "role" .role roleEncoder
+                    , TsEncode.required "content" .content TsEncode.string
+                    ]
+                )
+            )
+        , TsEncode.required "temperature" .temperature TsEncode.float
+        , TsEncode.required "topP" .topP TsEncode.float
+        , TsEncode.required "maxTokens" .maxTokens TsEncode.int
+        , TsEncode.required "thinking" .thinking TsEncode.bool
         ]
 
 

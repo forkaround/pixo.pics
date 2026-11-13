@@ -7,6 +7,7 @@ import Data.Email as Email
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
+import Data.Tag as Tag
 import Data.Username as Username
 import Expect
 import Json.Decode as Decode
@@ -34,6 +35,48 @@ suite =
                     Email.parse "ada@example.com"
                         |> Result.map (Email.encode >> Encode.encode 0)
                         |> Expect.equal (Ok "\"ada@example.com\"")
+            ]
+        , describe "Tag"
+            [ test "trims and lower-cases" <|
+                \() ->
+                    Tag.fromString " Sunset "
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal (Just "sunset")
+            , test "drops marks around it" <|
+                \() ->
+                    Tag.fromString "#Mountain Lake."
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal (Just "mountain lake")
+            , test "collapses spaces" <|
+                \() ->
+                    Tag.fromString "old   man"
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal (Just "old man")
+            , test "keeps accented letters" <|
+                \() ->
+                    Tag.fromString "café"
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal (Just "café")
+            , test "refuses one letter" <|
+                \() ->
+                    Tag.fromString "a"
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal Nothing
+            , test "refuses more than three words" <|
+                \() ->
+                    Tag.fromString "one two three four"
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal Nothing
+            , test "refuses a colon inside" <|
+                \() ->
+                    Tag.fromString "fox: red"
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal Nothing
+            , test "refuses over 24 characters" <|
+                \() ->
+                    Tag.fromString "a very long tag that goes on"
+                        |> Maybe.map Tag.toString
+                        |> Expect.equal Nothing
             ]
         , describe "Username"
             [ test "decodes, trimmed and lower-cased" <|

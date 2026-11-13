@@ -3,6 +3,7 @@ import { Elm, type Flags, type FromElm, type ToElm } from "./Main.elm";
 import { idb, release } from "./idb";
 import type { Command, Reply } from "./pipeline.worker";
 import type { Command as StylistCommand, Reply as StylistReply } from "./stylist.worker";
+import type { Command as TaggerCommand, Reply as TaggerReply } from "./tagger.worker";
 import { canShare, copyPicture, sharePicture } from "./share";
 
 type PasskeyOptions = Extract<FromElm, { tag: "CreatePasskey" }>["data"];
@@ -152,6 +153,24 @@ const startStylist = () => {
 let stylistWorker: Worker | null = null;
 const stylist = (cmd: StylistCommand) => (stylistWorker ??= startStylist()).postMessage(cmd);
 
+//-- TAGGER PORTS
+
+const startTagger = () => {
+  const started = new Worker(new URL("./tagger.worker.ts", import.meta.url), { type: "module" });
+  started.addEventListener("error", (e) =>
+    send({
+      tag: "TaggerFailed",
+      name: "Error",
+      message: e.message || "Worker unable to start",
+    }),
+  );
+  started.addEventListener("message", ({ data: msg }: MessageEvent<TaggerReply>) => send(msg));
+  return started;
+};
+
+let taggerWorker: Worker | null = null;
+const tagger = (cmd: TaggerCommand) => (taggerWorker ??= startTagger()).postMessage(cmd);
+
 //-- THEME PORTS
 
 media.addEventListener("change", (event) =>
@@ -192,9 +211,15 @@ app.ports.interopFromElm.subscribe((msg) => {
     case "RemoveStylist":
       return void stylist(msg);
 
+    case "LoadTagger":
+    case "TagPicture":
+    case "ReleaseTagger":
+      return void tagger(msg);
+
     case "IdbGetAll":
     case "IdbAdd":
     case "IdbDelete":
+    case "IdbPatch":
       return void idb(msg).then(send);
 
     case "IdbRelease":

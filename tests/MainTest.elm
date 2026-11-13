@@ -1162,6 +1162,65 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "IdbGetAll" ])
+            , test "tags a saved picture with the prompt model" <|
+                \() ->
+                    readyToTag
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Save"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "GenerateImage", "IdbAdd" ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (pictureSaved "blob:https://pixo.pics/1" (stored 1 "blob:https://pixo.pics/2" "a bonsai" 512 512))
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            outgoing
+                            (Expect.equal [ ( "LoadTagger", Just "Qwen3-1.7B-q4f16_1-MLC" ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "TaggerLoaded")
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string |> Decode.andThen (\name -> Decode.map (Tuple.pair name) (Decode.maybe (Decode.at [ "data", "messages" ] (Decode.map lastTurn (Decode.list turn))))))
+                            (Expect.equal [ ( "TagPicture", Just (Just ( "user", "a bonsai" )) ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (Encode.object [ ( "tag", Encode.string "TagsWritten" ), ( "text", Encode.string "bonsai, tree, studio" ) ])
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            patchOrRelease
+                            (List.sort
+                                >> Expect.equal
+                                    [ "IdbPatch:1:tags:[\"bonsai\",\"tree\",\"studio\"]"
+                                    , "ReleaseTagger"
+                                    ]
+                            )
+            , test "saves without tags when the prompt model is not downloaded" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Save"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "GenerateImage", "IdbAdd" ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (pictureSaved "blob:https://pixo.pics/1" (stored 1 "blob:https://pixo.pics/2" "a bonsai" 512 512))
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
+            , test "keeps the prompt writer while it tags" <|
+                \() ->
+                    readyToTag
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Save"
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (pictureSaved "blob:https://pixo.pics/1" (stored 1 "blob:https://pixo.pics/2" "a bonsai" 512 512))
+                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.clickButton "Remove the prompt writer"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.member "RemoveStylist" >> Expect.equal False)
+                        |> ProgramTest.expectViewHasNot [ text "Prompt model removed." ]
             , test "opens a new picture bigger, with everything that made it" <|
                 \() ->
                     ready
@@ -1812,6 +1871,52 @@ ready =
         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
             (Decode.field "tag" Decode.string)
             (Expect.equal [ "CheckWebGpu", "LoadModel", "WriteToLocalStorage" ])
+
+
+readyToTag : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+readyToTag =
+    start { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
+        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+        |> ProgramTest.clickLink "Settings" "/settings/models"
+        |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
+        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+        |> ProgramTest.clickLink "Studio" "/studio"
+        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+            (Decode.field "tag" Decode.string)
+            (Expect.equal [ "CheckWebGpu", "LoadModel", "WriteToLocalStorage" ])
+
+
+outgoing : Decode.Decoder ( String, Maybe String )
+outgoing =
+    Decode.map2 Tuple.pair
+        (Decode.field "tag" Decode.string)
+        (Decode.maybe (Decode.at [ "data", "model" ] Decode.string))
+
+
+turn : Decode.Decoder ( String, String )
+turn =
+    Decode.map2 Tuple.pair (Decode.field "role" Decode.string) (Decode.field "content" Decode.string)
+
+
+lastTurn : List ( String, String ) -> Maybe ( String, String )
+lastTurn turns =
+    List.head (List.reverse turns)
+
+
+patchOrRelease : Decode.Decoder String
+patchOrRelease =
+    Decode.field "tag" Decode.string
+        |> Decode.andThen
+            (\name ->
+                if name == "IdbPatch" then
+                    Decode.map3 (\key label fields -> name ++ ":" ++ key ++ ":" ++ label ++ ":" ++ fields)
+                        (Decode.at [ "data", "key" ] (Decode.map String.fromInt Decode.int))
+                        (Decode.at [ "data", "label" ] Decode.string)
+                        (Decode.at [ "data", "fields", "tags" ] (Decode.value |> Decode.map (Encode.encode 0)))
+
+                else
+                    Decode.succeed name
+            )
 
 
 library : ProgramTest Main.Model Main.Msg (Effect Main.Msg)

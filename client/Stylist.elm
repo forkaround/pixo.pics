@@ -22,6 +22,7 @@ module Stylist exposing
     , styles
     , tidy
     , update
+    , withoutThinking
     )
 
 import Data.Prompt as Prompt

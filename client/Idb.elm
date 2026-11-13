@@ -32,6 +32,13 @@ type Command
         , label : String
         }
     | Delete { database : Database, store : String, key : Value, label : String }
+    | Patch
+        { database : Database
+        , store : String
+        , key : Value
+        , fields : List ( String, Value )
+        , label : String
+        }
     | Release (List String)
 
 
@@ -39,4 +46,5 @@ type Event
     = Rows { label : String, rows : List Value }
     | Added { label : String, row : Value }
     | Deleted { label : String, key : Value }
+    | Patched { label : String, key : Value }
     | Failed { label : String, message : String }

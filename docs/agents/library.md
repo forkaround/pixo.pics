@@ -22,3 +22,24 @@ IndexedDB for Elm and know nothing of pictures.
 - A picture has no address to share, so sharing hands over the file: a network copies
   the picture and opens its composer, to paste it there. An `AbortError` from the share
   sheet is a closed sheet, and shows nothing.
+
+## Tags
+
+- Saving a picture asks `client/Tagger.elm` for tags once the row is stored.
+  Tagging is best effort: a failure leaves the picture without tags and shows
+  nothing (`Idb.Patch` with label `tags`).
+- The tagger reads the prompt, not the pixels: the prompt is what the picture
+  was made from, and a WebLLM vision model needs about 4 GB beside the 3.4 GB
+  image model.
+- It runs the prompt writer's model (`Stylist.modelId`) in its own worker,
+  `client/tagger.worker.ts`, from the same Cache API copy, so it never
+  downloads: it runs only when the prompt writer is downloaded and the card
+  has `shader-f16`. It loads for a queue and unloads when the queue is empty,
+  so the model doesn't stay in memory beside the image model.
+- The prompt writer can't be removed while the tagger works: WebLLM would
+  download the weights again inside the tagger.
+- A row without `tags` was never tagged. An answer with no usable tag stores
+  nothing. `Tagger` keeps the ids it tried, so a failure is not retried in a
+  loop.
+- `Idb.Patch` reads a row and writes it back with new fields in one
+  transaction; a row deleted meanwhile fails it.

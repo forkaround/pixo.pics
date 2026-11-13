@@ -1,6 +1,6 @@
 import type { FromElm, ToElm } from "./Main.elm";
 
-export type Command = Extract<FromElm, { tag: "IdbGetAll" | "IdbAdd" | "IdbDelete" }>;
+export type Command = Extract<FromElm, { tag: "IdbGetAll" | "IdbAdd" | "IdbDelete" | "IdbPatch" }>;
 
 type Database = Command["data"]["database"];
 type Row = Extract<ToElm, { tag: "IdbAdded" }>["row"];
@@ -81,6 +81,29 @@ const answer = async (msg: Command): Promise<ToElm> => {
       const { database, store, key, label } = msg.data;
       await run(database, store, "readwrite", (objects) => objects.delete(key as IDBValidKey));
       return { tag: "IdbDeleted", label, key };
+    }
+
+    case "IdbPatch": {
+      const { database, store, key, fields, label } = msg.data;
+      const connection = await open(database);
+      await new Promise<void>((resolve, reject) => {
+        const transaction = connection.transaction(store, "readwrite");
+        const objects = transaction.objectStore(store);
+        const request = objects.get(key as IDBValidKey);
+        request.onsuccess = () => {
+          if (request.result === undefined) {
+            reject(new Error("There is no row with that key."));
+            transaction.abort();
+            return;
+          }
+          objects.put({ ...request.result, ...fields });
+        };
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () =>
+          reject(transaction.error ?? new Error("The change was abandoned."));
+      });
+      return { tag: "IdbPatched", label, key };
     }
 
     default:
