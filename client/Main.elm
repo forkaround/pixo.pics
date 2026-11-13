@@ -898,11 +898,19 @@ viewAside wide children =
 
 viewBar : Model -> String -> List (Html Msg) -> Html Msg
 viewBar model heading tools =
-    Html.header
-        [ class "sticky top-0 z-10 flex h-12 shrink-0 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur" ]
-        [ Sidebar.trigger [ class "-ms-1 text-muted-foreground" ] model.sidebar SidebarChanged
-        , Html.h1 [ class "text-sm font-medium" ] [ text heading ]
-        , div [ class "ms-auto flex min-w-0 flex-1 items-center justify-end gap-3" ] (tools ++ [ viewEntry model ])
+    div [ class "h-12 shrink-0" ]
+        [ div [ class "pointer-events-none absolute inset-y-0 start-0 z-10 w-1/2 will-change-transform" ]
+            [ div [ class "sticky top-0 h-12" ]
+                [ Html.header
+                    [ class "pointer-events-auto relative flex h-12 w-[200%] items-center gap-3 border-b px-4"
+                    , class "before:absolute before:inset-x-0 before:-top-24 before:-bottom-px before:-z-10 before:bg-background/85 before:backdrop-blur"
+                    ]
+                    [ Sidebar.trigger [ class "-ms-1 text-muted-foreground" ] model.sidebar SidebarChanged
+                    , Html.h1 [ class "text-sm font-medium" ] [ text heading ]
+                    , div [ class "ms-auto flex min-w-0 flex-1 items-center justify-end gap-3" ] (tools ++ [ viewEntry model ])
+                    ]
+                ]
+            ]
         ]
 
 
