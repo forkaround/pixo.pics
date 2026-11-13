@@ -104,6 +104,7 @@ const app = Elm.Main.init({
     models: stored("models"),
     stylist: stored("stylist"),
     canShare: canShare(),
+    sidebar: stored("sidebar") as Flags["sidebar"],
   },
 });
 

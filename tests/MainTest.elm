@@ -795,6 +795,25 @@ suite =
                         |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "style" "--sidebar-progress: 0.2") ]
                         |> ProgramTest.update (Main.SidebarAnimated 1000)
                         |> ProgramTest.expectModel (.sidebarProgress >> Expect.equal 0)
+            , test "saves whether it is collapsed" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.update (Main.SidebarChanged { open = False, openMobile = False })
+                        |> ProgramTest.update (Main.SidebarChanged { open = False, openMobile = True })
+                        |> ProgramTest.update (Main.SidebarChanged { open = True, openMobile = True })
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            localStorageWrite
+                            (Expect.equal
+                                [ { tag = "WriteToLocalStorage", key = "sidebar", value = "collapsed" }
+                                , { tag = "WriteToLocalStorage", key = "sidebar", value = "expanded" }
+                                ]
+                            )
+            , test "starts collapsed when it was left collapsed, without animating" <|
+                \() ->
+                    start { defaultFlags | sidebar = Just "collapsed" }
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "data-state" "collapsed") ]
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "style" "--sidebar-progress: 1") ]
+                        |> ProgramTest.expectModel (.sidebar >> Expect.equal { open = False, openMobile = False })
             , test "opening the mobile sheet keeps the wordmark expanded" <|
                 \() ->
                     start defaultFlags
@@ -1653,12 +1672,13 @@ type alias Flags =
     , models : Maybe String
     , stylist : Maybe String
     , canShare : Bool
+    , sidebar : Maybe String
     }
 
 
 defaultFlags : Flags
 defaultFlags =
-    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False }
+    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False, sidebar = Nothing }
 
 
 ready : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
@@ -1711,6 +1731,7 @@ startAt path flags =
                 , ( "models", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.models) )
                 , ( "stylist", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.stylist) )
                 , ( "canShare", Encode.bool flags.canShare )
+                , ( "sidebar", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.sidebar) )
                 ]
             )
 

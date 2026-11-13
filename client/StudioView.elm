@@ -43,7 +43,7 @@ controls toMsg stylist model =
                 :: List.map (Html.map toMsg.pipeline) (settingsFields settings)
             )
         , Html.map toMsg.pipeline
-            (div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background p-4" ]
+            (div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background px-4 py-5" ]
                 [ message model.message
                 , viewGenerate model
                 ]

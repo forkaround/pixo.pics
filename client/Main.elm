@@ -106,9 +106,12 @@ type Section
 init : Decode.Value -> Url -> ( Model, Effect Msg )
 init flags url =
     let
-        { theme, systemDark, entropy, models, stylist, canShare } =
+        { theme, systemDark, entropy, models, stylist, canShare, sidebarOpen } =
             InteropPorts.decodeFlags flags
-                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False }
+                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False, sidebarOpen = Nothing }
+
+        sidebar =
+            { open = Maybe.withDefault True sidebarOpen, openMobile = False }
     in
     open url
         { theme = Maybe.withDefault Interop.System theme
@@ -117,8 +120,8 @@ init flags url =
         , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , stylist = Stylist.init stylist
         , library = Library.init canShare
-        , sidebar = Sidebar.init
-        , sidebarProgress = 0
+        , sidebar = sidebar
+        , sidebarProgress = sidebarTarget sidebar
         , generations = 0
         , turns = 0
         , page = NotFound
@@ -366,7 +369,23 @@ update msg model =
             runStylist model (Stylist.update stylistMsg model.stylist)
 
         SidebarChanged sidebar ->
-            ( { model | sidebar = sidebar }, NoEffect )
+            ( { model | sidebar = sidebar }
+            , if sidebar.open == model.sidebar.open then
+                NoEffect
+
+              else
+                SendToJs
+                    (Interop.WriteToLocalStorage
+                        { key = "sidebar"
+                        , value =
+                            if sidebar.open then
+                                "expanded"
+
+                            else
+                                "collapsed"
+                        }
+                    )
+            )
 
         SidebarAnimated delta ->
             ( { model
@@ -911,7 +930,7 @@ viewSession model =
             shape Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
 
         guest detail actions =
-            Sidebar.menuItem []
+            Sidebar.menuItem [ class "flex h-12 items-center" ]
                 [ viewUserMenu model.theme
                     { avatar = [ icon Phosphor.user ]
                     , name = "Guest"
@@ -924,7 +943,7 @@ viewSession model =
     case model.session of
         Unknown ->
             Sidebar.menuItem [ attribute "aria-hidden" "true" ]
-                [ div [ class "flex h-12 items-center gap-2 p-2 md:group-data-[collapsible=icon]:p-0" ]
+                [ div [ class "flex h-12 items-center gap-2 p-2 transition-[padding] md:group-data-[collapsible=icon]:p-0" ]
                     [ Skeleton.view [ class "size-8 shrink-0 rounded-full!" ]
                     , div [ class "flex flex-1 flex-col gap-1.5 md:group-data-[collapsible=icon]:hidden" ]
                         [ Skeleton.view [ class "h-3.5 w-20" ]
@@ -944,7 +963,7 @@ viewSession model =
                 ]
 
         SignedIn account ->
-            Sidebar.menuItem []
+            Sidebar.menuItem [ class "flex h-12 items-center" ]
                 [ viewUserMenu model.theme
                     { avatar = [ span [ class "size-full *:size-full!" ] [ Minidenticons.identicon 75 50 (Username.toString account.username) ] ]
                     , name = Username.toString account.username
@@ -989,7 +1008,7 @@ viewUserMenu theme user =
     in
     DropdownMenu.new
         |> DropdownMenu.id "user"
-        |> DropdownMenu.trigger (Sidebar.menuButtonAttributes ++ [ Sidebar.large ])
+        |> DropdownMenu.trigger (Sidebar.menuButtonAttributes ++ [ Sidebar.large, class "transition-[width,height,padding]! md:group-data-[collapsible=icon]:rounded-full! md:group-data-[collapsible=icon]:bg-transparent! md:group-data-[collapsible=icon]:ring-offset-2 md:group-data-[collapsible=icon]:ring-offset-sidebar md:group-data-[collapsible=icon]:hover:ring-2 md:group-data-[collapsible=icon]:hover:ring-sidebar-accent md:group-data-[collapsible=icon]:[&:has(+:popover-open)]:ring-2 md:group-data-[collapsible=icon]:[&:has(+:popover-open)]:ring-sidebar-accent" ])
             [ avatar
             , details
             , Phosphor.caretUpDown Bold
