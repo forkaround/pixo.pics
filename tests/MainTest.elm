@@ -1068,7 +1068,10 @@ suite =
                             (Decode.maybe pictureSave)
                             (List.filterMap identity
                                 >> Expect.equal
-                                    [ { source = "blob:https://pixo.pics/1"
+                                    [ { tag = "IdbAdd"
+                                      , store = "pictures"
+                                      , blobs = [ ( "blob", "blob:https://pixo.pics/1" ) ]
+                                      , label = "blob:https://pixo.pics/1"
                                       , prompt = "a bonsai"
                                       , width = 512
                                       , height = 512
@@ -1083,7 +1086,7 @@ suite =
                         |> ProgramTest.clickLink "Saved" "/library"
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
-                            (Expect.equal [ "LoadLibrary" ])
+                            (Expect.equal [ "IdbGetAll" ])
             , test "keeps a picture's details over it once it is tapped, until the next tap" <|
                 \() ->
                     ready
@@ -1223,8 +1226,10 @@ suite =
                 \() ->
                     startAt "/library" defaultFlags
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
-                            (Decode.field "tag" Decode.string)
-                            (Expect.equal [ "LoadLibrary" ])
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (Expect.equal
+                                [ "{\"tag\":\"IdbGetAll\",\"data\":{\"database\":{\"name\":\"pixo\",\"version\":1,\"stores\":[{\"name\":\"pictures\",\"keyPath\":\"id\",\"autoIncrement\":true}]},\"store\":\"pictures\",\"label\":\"\"}}" ]
+                            )
             , test "shows every picture in its own shape" <|
                 \() ->
                     library
@@ -1302,8 +1307,7 @@ suite =
                         |> ProgramTest.within
                             (Query.find [ id "picture" ])
                             (ProgramTest.clickButton "Delete")
-                        |> ProgramTest.simulateIncomingPort "interopToElm"
-                            (Encode.object [ ( "tag", Encode.string "PictureDeleted" ), ( "id", Encode.int 3 ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pictureDeleted 3)
                         |> ProgramTest.ensureViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "open" "") ]
                         |> ProgramTest.expectViewHas [ text "2 pictures" ]
             , test "deletes a picture once that is confirmed" <|
@@ -1315,17 +1319,22 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Delete this picture?" ]
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
-                            (Expect.equal [ "LoadLibrary" ])
+                            (Expect.equal [ "IdbGetAll" ])
                         |> ProgramTest.clickButton "Delete"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
-                            (Decode.map3 (\name id url -> ( name, id, url ))
+                            (Decode.map3 (\name store key -> ( name, store, key ))
                                 (Decode.field "tag" Decode.string)
-                                (Decode.at [ "data", "id" ] Decode.int)
-                                (Decode.at [ "data", "url" ] Decode.string)
+                                (Decode.at [ "data", "store" ] Decode.string)
+                                (Decode.at [ "data", "key" ] Decode.int)
                             )
-                            (Expect.equal [ ( "DeletePicture", 1, "blob:https://pixo.pics/1" ) ])
-                        |> ProgramTest.simulateIncomingPort "interopToElm"
-                            (Encode.object [ ( "tag", Encode.string "PictureDeleted" ), ( "id", Encode.int 1 ) ])
+                            (Expect.equal [ ( "IdbDelete", "pictures", 1 ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pictureDeleted 1)
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map2 Tuple.pair
+                                (Decode.field "tag" Decode.string)
+                                (Decode.at [ "data", "urls" ] (Decode.list Decode.string))
+                            )
+                            (Expect.equal [ ( "IdbRelease", [ "blob:https://pixo.pics/1" ] ) ])
                         |> ProgramTest.expectViewHas [ text "No pictures yet" ]
             , test "keeps a picture when its deletion is cancelled" <|
                 \() ->
@@ -1337,7 +1346,7 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ text "Delete this picture?" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
-                            (Expect.equal [ "LoadLibrary" ])
+                            (Expect.equal [ "IdbGetAll" ])
             , test "copies a picture and opens the network to post it on" <|
                 \() ->
                     startAt "/library" defaultFlags
@@ -1350,7 +1359,7 @@ suite =
                                 (Decode.maybe (Decode.at [ "data", "url" ] Decode.string))
                             )
                             (Expect.equal
-                                [ ( "LoadLibrary", Nothing )
+                                [ ( "IdbGetAll", Nothing )
                                 , ( "CopyPicture", Just "blob:https://pixo.pics/1" )
                                 , ( "OpenTab", Just "https://bsky.app/intent/compose?text=a%20red%20fox%20in%20the%20snow" )
                                 ]
@@ -1629,7 +1638,10 @@ generation =
 
 
 type alias PictureSave =
-    { source : String
+    { tag : String
+    , store : String
+    , blobs : List ( String, String )
+    , label : String
     , prompt : String
     , width : Int
     , height : Int
@@ -1641,23 +1653,32 @@ type alias PictureSave =
 
 pictureSave : Decode.Decoder PictureSave
 pictureSave =
-    Decode.field "data"
-        (Decode.map7 PictureSave
-            (Decode.field "source" Decode.string)
-            (Decode.field "prompt" Decode.string)
-            (Decode.field "width" Decode.int)
-            (Decode.field "height" Decode.int)
-            (Decode.field "steps" Decode.int)
-            (Decode.field "seed" Decode.int)
-            (Decode.field "model" Decode.string)
+    Decode.map4 PictureSave
+        (Decode.field "tag" Decode.string)
+        (Decode.at [ "data", "store" ] Decode.string)
+        (Decode.at [ "data", "blobs" ]
+            (Decode.list (Decode.map2 Tuple.pair (Decode.field "field" Decode.string) (Decode.field "url" Decode.string)))
         )
+        (Decode.at [ "data", "label" ] Decode.string)
+        |> Decode.andThen
+            (\save ->
+                Decode.at [ "data", "row" ]
+                    (Decode.map6 save
+                        (Decode.field "prompt" Decode.string)
+                        (Decode.field "width" Decode.int)
+                        (Decode.field "height" Decode.int)
+                        (Decode.field "steps" Decode.int)
+                        (Decode.field "seed" Decode.int)
+                        (Decode.field "model" Decode.string)
+                    )
+            )
 
 
 stored : Int -> String -> String -> Int -> Int -> Encode.Value
 stored id url prompt width height =
     Encode.object
         [ ( "id", Encode.int id )
-        , ( "url", Encode.string url )
+        , ( "blob", Encode.string url )
         , ( "prompt", Encode.string prompt )
         , ( "width", Encode.int width )
         , ( "height", Encode.int height )
@@ -1670,24 +1691,35 @@ stored id url prompt width height =
 libraryLoaded : List Encode.Value -> Encode.Value
 libraryLoaded pictures =
     Encode.object
-        [ ( "tag", Encode.string "LibraryLoaded" )
-        , ( "pictures", Encode.list identity pictures )
+        [ ( "tag", Encode.string "IdbRows" )
+        , ( "label", Encode.string "" )
+        , ( "rows", Encode.list identity pictures )
         ]
 
 
 pictureSaved : String -> Encode.Value -> Encode.Value
 pictureSaved source picture =
     Encode.object
-        [ ( "tag", Encode.string "PictureSaved" )
-        , ( "source", Encode.string source )
-        , ( "picture", picture )
+        [ ( "tag", Encode.string "IdbAdded" )
+        , ( "label", Encode.string source )
+        , ( "row", picture )
+        ]
+
+
+pictureDeleted : Int -> Encode.Value
+pictureDeleted id =
+    Encode.object
+        [ ( "tag", Encode.string "IdbDeleted" )
+        , ( "label", Encode.string "" )
+        , ( "key", Encode.int id )
         ]
 
 
 libraryFailed : String -> Encode.Value
 libraryFailed message =
     Encode.object
-        [ ( "tag", Encode.string "LibraryFailed" )
+        [ ( "tag", Encode.string "IdbFailed" )
+        , ( "label", Encode.string "" )
         , ( "message", Encode.string message )
         ]
 

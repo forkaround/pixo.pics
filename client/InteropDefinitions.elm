@@ -7,6 +7,8 @@ import Data.Dimension as Dimension
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
+import Dict
+import Idb
 import Library
 import Pipeline
 import TsJson.Decode as TsDecode exposing (Decoder)
@@ -73,7 +75,7 @@ themeToString theme =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache loadLibrary savePicture deletePicture sharePicture copyPicture openTab value ->
+        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbRelease sharePicture copyPicture openTab value ->
             case value of
                 WriteToLocalStorage entry ->
                     writeToLocalStorage entry
@@ -102,14 +104,17 @@ fromElm =
                 RunPipeline Pipeline.ClearCache ->
                     clearModelCache
 
-                RunLibrary Library.Load ->
-                    loadLibrary
+                RunLibrary (Library.Database (Idb.GetAll request)) ->
+                    idbGetAll request
 
-                RunLibrary (Library.Save picture) ->
-                    savePicture picture
+                RunLibrary (Library.Database (Idb.Add request)) ->
+                    idbAdd request
 
-                RunLibrary (Library.Delete picture) ->
-                    deletePicture picture
+                RunLibrary (Library.Database (Idb.Delete request)) ->
+                    idbDelete request
+
+                RunLibrary (Library.Database (Idb.Release urls)) ->
+                    idbRelease urls
 
                 RunLibrary (Library.Share picture) ->
                     sharePicture picture
@@ -176,24 +181,40 @@ fromElm =
         |> TsEncode.variant0 "CancelPipeline"
         |> TsEncode.variant0 "ReleaseModel"
         |> TsEncode.variant0 "ClearModelCache"
-        |> TsEncode.variant0 "LoadLibrary"
-        |> TsEncode.variantTagged "SavePicture"
+        |> TsEncode.variantTagged "IdbGetAll"
             (TsEncode.object
-                [ TsEncode.required "source" .url TsEncode.string
-                , TsEncode.required "prompt" (.job >> .prompt >> Prompt.toString) TsEncode.string
-                , TsEncode.required "width" (.job >> .width >> Dimension.toInt) TsEncode.int
-                , TsEncode.required "height" (.job >> .height >> Dimension.toInt) TsEncode.int
-                , TsEncode.required "steps" (.job >> .steps >> Steps.toInt) TsEncode.int
-                , TsEncode.required "seed" (.job >> .seed >> Seed.toInt) TsEncode.int
-                , TsEncode.required "model" (.weights >> Pipeline.weightsId) TsEncode.string
+                [ TsEncode.required "database" .database databaseEncoder
+                , TsEncode.required "store" .store TsEncode.string
+                , TsEncode.required "label" .label TsEncode.string
                 ]
             )
-        |> TsEncode.variantTagged "DeletePicture"
+        |> TsEncode.variantTagged "IdbAdd"
             (TsEncode.object
-                [ TsEncode.required "id" .id TsEncode.int
-                , TsEncode.required "url" .url TsEncode.string
+                [ TsEncode.required "database" .database databaseEncoder
+                , TsEncode.required "store" .store TsEncode.string
+                , TsEncode.required "row" (.row >> Dict.fromList) (TsEncode.dict identity TsEncode.value)
+                , TsEncode.required "blobs"
+                    .blobs
+                    (TsEncode.list
+                        (TsEncode.object
+                            [ TsEncode.required "field" Tuple.first TsEncode.string
+                            , TsEncode.required "url" Tuple.second TsEncode.string
+                            ]
+                        )
+                    )
+                , TsEncode.required "label" .label TsEncode.string
                 ]
             )
+        |> TsEncode.variantTagged "IdbDelete"
+            (TsEncode.object
+                [ TsEncode.required "database" .database databaseEncoder
+                , TsEncode.required "store" .store TsEncode.string
+                , TsEncode.required "key" .key TsEncode.value
+                , TsEncode.required "label" .label TsEncode.string
+                ]
+            )
+        |> TsEncode.variantTagged "IdbRelease"
+            (TsEncode.object [ TsEncode.required "urls" identity (TsEncode.list TsEncode.string) ])
         |> TsEncode.variantTagged "SharePicture"
             (TsEncode.object
                 [ TsEncode.required "url" .url TsEncode.string
@@ -258,21 +279,25 @@ toElm =
                     (TsDecode.field "message" TsDecode.string)
                 )
           )
-        , ( "LibraryLoaded"
-          , TsDecode.map (Library.PicturesLoaded >> LibraryEvent) (TsDecode.field "pictures" (TsDecode.list storedDecoder))
+        , ( "IdbRows"
+          , TsDecode.map2 (\label rows -> answered (Idb.Rows { label = label, rows = rows }))
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "rows" (TsDecode.list TsDecode.value))
           )
-        , ( "PictureSaved"
-          , TsDecode.map LibraryEvent
-                (TsDecode.map2 Library.PictureSaved
-                    (TsDecode.field "source" TsDecode.string)
-                    (TsDecode.field "picture" storedDecoder)
-                )
+        , ( "IdbAdded"
+          , TsDecode.map2 (\label row -> answered (Idb.Added { label = label, row = row }))
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "row" TsDecode.value)
           )
-        , ( "PictureDeleted"
-          , TsDecode.map (Library.PictureDeleted >> LibraryEvent) (TsDecode.field "id" TsDecode.int)
+        , ( "IdbDeleted"
+          , TsDecode.map2 (\label key -> answered (Idb.Deleted { label = label, key = key }))
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "key" TsDecode.value)
           )
-        , ( "LibraryFailed"
-          , TsDecode.map (Library.Failed >> LibraryEvent) (TsDecode.field "message" TsDecode.string)
+        , ( "IdbFailed"
+          , TsDecode.map2 (\label message -> answered (Idb.Failed { label = label, message = message }))
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "message" TsDecode.string)
           )
         , ( "PictureCopied", TsDecode.succeed (LibraryEvent Library.Copied) )
         , ( "ShareFailed"
@@ -281,17 +306,27 @@ toElm =
         ]
 
 
-storedDecoder : Decoder Library.Stored
-storedDecoder =
-    TsDecode.map8 Library.Stored
-        (TsDecode.field "id" TsDecode.int)
-        (TsDecode.field "url" TsDecode.string)
-        (TsDecode.field "prompt" TsDecode.string)
-        (TsDecode.field "width" TsDecode.int)
-        (TsDecode.field "height" TsDecode.int)
-        (TsDecode.field "steps" TsDecode.int)
-        (TsDecode.field "seed" TsDecode.int)
-        (TsDecode.field "model" TsDecode.string)
+answered : Idb.Event -> ToElm
+answered =
+    Library.Answered >> LibraryEvent
+
+
+databaseEncoder : Encoder Idb.Database
+databaseEncoder =
+    TsEncode.object
+        [ TsEncode.required "name" .name TsEncode.string
+        , TsEncode.required "version" .version TsEncode.int
+        , TsEncode.required "stores"
+            .stores
+            (TsEncode.list
+                (TsEncode.object
+                    [ TsEncode.required "name" .name TsEncode.string
+                    , TsEncode.required "keyPath" .keyPath TsEncode.string
+                    , TsEncode.required "autoIncrement" .autoIncrement TsEncode.bool
+                    ]
+                )
+            )
+        ]
 
 
 componentDecoder : Decoder Pipeline.Component

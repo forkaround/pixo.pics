@@ -7,7 +7,6 @@ module Library exposing
     , Picture
     , Pictures(..)
     , Save(..)
-    , Stored
     , enter
     , fileName
     , find
@@ -23,6 +22,9 @@ import Data.Dimension as Dimension
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
+import Idb
+import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode exposing (Value)
 import Pipeline
 import Share
 
@@ -96,6 +98,69 @@ init canShare =
     , notice = Nothing
     , canShare = canShare
     }
+
+
+database : Idb.Database
+database =
+    { name = "pixo"
+    , version = 1
+    , stores = [ { name = store, keyPath = "id", autoIncrement = True } ]
+    }
+
+
+store : String
+store =
+    "pictures"
+
+
+load : Command
+load =
+    Database (Idb.GetAll { database = database, store = store, label = "" })
+
+
+save : Pipeline.Picture -> Command
+save picture =
+    Database
+        (Idb.Add
+            { database = database
+            , store = store
+            , row =
+                [ ( "prompt", Encode.string (Prompt.toString picture.job.prompt) )
+                , ( "width", Encode.int (Dimension.toInt picture.job.width) )
+                , ( "height", Encode.int (Dimension.toInt picture.job.height) )
+                , ( "steps", Encode.int (Steps.toInt picture.job.steps) )
+                , ( "seed", Encode.int (Seed.toInt picture.job.seed) )
+                , ( "model", Encode.string (Pipeline.weightsId picture.weights) )
+                ]
+            , blobs = [ ( "blob", picture.url ) ]
+            , label = picture.url
+            }
+        )
+
+
+delete : Picture -> Command
+delete picture =
+    Database (Idb.Delete { database = database, store = store, key = Encode.int picture.id, label = "" })
+
+
+read : Value -> Maybe Picture
+read row =
+    Decode.decodeValue decoder row
+        |> Result.toMaybe
+        |> Maybe.andThen fromStored
+
+
+decoder : Decoder Stored
+decoder =
+    Decode.map8 Stored
+        (Decode.field "id" Decode.int)
+        (Decode.field "blob" Decode.string)
+        (Decode.field "prompt" Decode.string)
+        (Decode.field "width" Decode.int)
+        (Decode.field "height" Decode.int)
+        (Decode.field "steps" Decode.int)
+        (Decode.field "seed" Decode.int)
+        (Decode.field "model" Decode.string)
 
 
 fromStored : Stored -> Maybe Picture
@@ -182,18 +247,13 @@ type Msg
 
 
 type Event
-    = PicturesLoaded (List Stored)
-    | PictureSaved String Stored
-    | PictureDeleted Int
-    | Failed String
+    = Answered Idb.Event
     | Copied
     | ShareFailed String
 
 
 type Command
-    = Load
-    | Save Pipeline.Picture
-    | Delete Picture
+    = Database Idb.Command
     | Share Picture
     | Copy Picture
     | Open String
@@ -203,10 +263,10 @@ enter : Model -> ( Model, List Command )
 enter model =
     case model.pictures of
         NotLoaded ->
-            ( { model | pictures = Loading }, [ Load ] )
+            ( { model | pictures = Loading }, [ load ] )
 
         Unavailable _ ->
-            ( { model | pictures = Loading }, [ Load ] )
+            ( { model | pictures = Loading }, [ load ] )
 
         _ ->
             ( model, [] )
@@ -234,11 +294,11 @@ update msg model =
             ( { model | confirming = Nothing }, [] )
 
         DeleteConfirmed id ->
-            ( { model | confirming = Nothing }, with id model Delete )
+            ( { model | confirming = Nothing }, with id model delete )
 
         SaveClicked picture ->
             if saveOf picture.url model == Unsaved then
-                ( { model | saves = ( picture.url, Saving ) :: model.saves, notice = Nothing }, [ Save picture ] )
+                ( { model | saves = ( picture.url, Saving ) :: model.saves, notice = Nothing }, [ save picture ] )
 
             else
                 ( model, [] )
@@ -271,50 +331,53 @@ with id model toCommand =
 happened : Event -> Model -> ( Model, List Command )
 happened event model =
     case event of
-        PicturesLoaded stored ->
-            ( shelve (List.filterMap fromStored stored) model, [] )
+        Answered (Idb.Rows { rows }) ->
+            ( shelve (List.filterMap read rows) model, [] )
 
-        PictureSaved source stored ->
+        Answered (Idb.Added { label, row }) ->
             let
                 saved =
-                    { model | saves = ( source, Saved ) :: List.filter (\( known, _ ) -> known /= source) model.saves }
+                    { model | saves = ( label, Saved ) :: List.filter (\( known, _ ) -> known /= label) model.saves }
             in
-            case ( model.pictures, fromStored stored ) of
+            case ( model.pictures, read row ) of
                 ( Loaded pictures, Just picture ) ->
                     ( shelve (picture :: pictures) saved, [] )
 
                 ( Loading, _ ) ->
-                    ( saved, [ Load ] )
+                    ( saved, [ load ] )
 
                 _ ->
                     ( saved, [] )
 
-        PictureDeleted id ->
-            case model.pictures of
-                Loaded pictures ->
-                    ( shelve (List.filter (\picture -> picture.id /= id) pictures)
-                        { model | zoomed = model.zoomed && model.viewing /= Just id }
-                    , []
+        Answered (Idb.Deleted { key }) ->
+            case ( model.pictures, Decode.decodeValue Decode.int key ) of
+                ( Loaded pictures, Ok id ) ->
+                    let
+                        ( gone, kept ) =
+                            List.partition (\picture -> picture.id == id) pictures
+                    in
+                    ( shelve kept { model | zoomed = model.zoomed && model.viewing /= Just id }
+                    , [ Database (Idb.Release (List.map .url gone)) ]
                     )
 
                 _ ->
                     ( model, [] )
 
-        Failed reason ->
+        Answered (Idb.Failed { message }) ->
             ( { model
                 | pictures =
                     if model.pictures == Loading then
-                        Unavailable reason
+                        Unavailable message
 
                     else
                         model.pictures
-                , saves = List.filter (\( _, save ) -> save /= Saving) model.saves
+                , saves = List.filter (\( _, state ) -> state /= Saving) model.saves
                 , notice =
                     if model.pictures == Loading then
                         Nothing
 
                     else
-                        Just (Problem reason)
+                        Just (Problem message)
               }
             , []
             )

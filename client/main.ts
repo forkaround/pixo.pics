@@ -1,6 +1,6 @@
 import "./UI/elmcn-dialog";
 import { Elm, type Flags, type FromElm, type ToElm } from "./Main.elm";
-import { library } from "./library";
+import { idb, release } from "./idb";
 import type { Command, Reply } from "./pipeline.worker";
 import { canShare, copyPicture, sharePicture } from "./share";
 
@@ -164,10 +164,13 @@ app.ports.interopFromElm.subscribe((msg) => {
     case "ClearModelCache":
       return void pipeline(msg);
 
-    case "LoadLibrary":
-    case "SavePicture":
-    case "DeletePicture":
-      return void library(msg).then(send);
+    case "IdbGetAll":
+    case "IdbAdd":
+    case "IdbDelete":
+      return void idb(msg).then(send);
+
+    case "IdbRelease":
+      return release(msg.data.urls);
 
     case "SharePicture":
       return void sharePicture(msg.data).then((reply) => reply && send(reply));

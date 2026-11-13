@@ -1,6 +1,9 @@
 module LibraryTest exposing (suite)
 
 import Expect
+import Idb
+import Json.Decode as Decode
+import Json.Encode as Encode exposing (Value)
 import Library exposing (Command(..), Event(..), Msg(..), Notice(..), Save(..))
 import Pipeline
 import Share
@@ -15,13 +18,13 @@ suite =
                 \() ->
                     Library.enter (Library.init False)
                         |> Tuple.mapFirst (Library.enter >> Tuple.second)
-                        |> Expect.equal ( [], [ Load ] )
+                        |> Expect.equal ( [], [ getAll ] )
             , test "are asked for again after they could not be read" <|
                 \() ->
-                    run [ Happened (Failed "The database is blocked.") ] opening
+                    run [ failed "The database is blocked." ] opening
                         |> Library.enter
                         |> Tuple.second
-                        |> Expect.equal [ Load ]
+                        |> Expect.equal [ getAll ]
             , test "come newest first" <|
                 \() ->
                     Library.visible loaded
@@ -29,13 +32,34 @@ suite =
                         |> Expect.equal [ 3, 2, 1 ]
             , test "leave out one whose settings no picture can have" <|
                 \() ->
-                    run [ Happened (PicturesLoaded [ fox, { lighthouse | width = 700 }, { skyline | prompt = " " } ]) ] opening
+                    run [ rows [ fox, { lighthouse | width = 700 }, { skyline | prompt = " " } ] ] opening
                         |> Library.visible
                         |> List.map .id
                         |> Expect.equal [ 1 ]
+            , test "leave out a row that is not a picture" <|
+                \() ->
+                    run
+                        [ Happened
+                            (Answered
+                                (Idb.Rows
+                                    { label = ""
+                                    , rows = [ Encode.object [ ( "id", Encode.int 9 ) ], Encode.string "fox", row lighthouse ]
+                                    }
+                                )
+                            )
+                        ]
+                        opening
+                        |> Library.visible
+                        |> List.map .id
+                        |> Expect.equal [ 2 ]
+            , test "show the picture a row holds at the address the browser gave it" <|
+                \() ->
+                    Library.visible loaded
+                        |> List.map .url
+                        |> Expect.equal [ "blob:3", "blob:2", "blob:1" ]
             , test "are named after the model that made them" <|
                 \() ->
-                    run [ Happened (PicturesLoaded [ fox, { lighthouse | model = "someone/else" } ]) ] opening
+                    run [ rows [ fox, { lighthouse | model = "someone/else" } ] ] opening
                         |> Library.visible
                         |> List.map Library.modelName
                         |> Expect.equal [ "someone/else", "Bonsai ternary, 2-bit" ]
@@ -55,13 +79,13 @@ suite =
                         |> Expect.equal 3
             , test "finds a picture saved since" <|
                 \() ->
-                    run [ Happened (PictureSaved "blob:new" { fox | id = 4, prompt = "a ramen bowl" }), QueryChanged "ramen" ] loaded
+                    run [ added "blob:new" { fox | id = 4, prompt = "a ramen bowl" }, QueryChanged "ramen" ] loaded
                         |> Library.visible
                         |> List.map .id
                         |> Expect.equal [ 4 ]
             , test "forgets a picture that was deleted" <|
                 \() ->
-                    run [ Happened (PictureDeleted 1), QueryChanged "fox" ] loaded
+                    run [ deleted 1, QueryChanged "fox" ] loaded
                         |> Library.visible
                         |> Expect.equal []
             ]
@@ -71,7 +95,7 @@ suite =
                     List.concatMap
                         (\picture ->
                             [ run [ SaveClicked picture ] loaded
-                            , run [ SaveClicked picture, Happened (PictureSaved picture.url fox) ] loaded
+                            , run [ SaveClicked picture, added picture.url fox ] loaded
                             ]
                                 |> List.map (Library.saveOf picture.url)
                         )
@@ -86,20 +110,45 @@ suite =
                         )
                         made
                         |> Expect.equal [ ( 0, 1 ) ]
+            , test "stores what made the picture, and the picture from its address" <|
+                \() ->
+                    List.concatMap (\picture -> Tuple.second (Library.update (SaveClicked picture) loaded)) made
+                        |> List.map
+                            (\command ->
+                                case command of
+                                    Database (Idb.Add request) ->
+                                        { database = request.database.name
+                                        , store = request.store
+                                        , row = Encode.encode 0 (Encode.object request.row)
+                                        , blobs = request.blobs
+                                        , label = request.label
+                                        }
+
+                                    _ ->
+                                        { database = "", store = "", row = "", blobs = [], label = "" }
+                            )
+                        |> Expect.equal
+                            [ { database = "pixo"
+                              , store = "pictures"
+                              , row = "{\"prompt\":\"a red fox in the snow\",\"width\":512,\"height\":512,\"steps\":4,\"seed\":578021833,\"model\":\"prism-ml/bonsai-image-ternary-4B-mlx-2bit\"}"
+                              , blobs = [ ( "blob", "blob:studio" ) ]
+                              , label = "blob:studio"
+                              }
+                            ]
             , test "lets a picture be saved again after it could not be stored" <|
                 \() ->
                     List.map
                         (\picture ->
-                            run [ SaveClicked picture, Happened (Failed "The disk is full.") ] loaded
+                            run [ SaveClicked picture, failed "The disk is full." ] loaded
                                 |> (\model -> ( Library.saveOf picture.url model, model.notice ))
                         )
                         made
                         |> Expect.equal [ ( Unsaved, Just (Problem "The disk is full.") ) ]
             , test "reads the pictures again when one is saved while they load" <|
                 \() ->
-                    Library.update (Happened (PictureSaved "blob:studio" fox)) opening
+                    Library.update (added "blob:studio" fox) opening
                         |> Tuple.second
-                        |> Expect.equal [ Load ]
+                        |> Expect.equal [ getAll ]
             ]
         , describe "deleting"
             [ test "asks first" <|
@@ -112,9 +161,33 @@ suite =
                     run [ DeleteRequested 1, DeleteCancelled ] loaded
                         |> .confirming
                         |> Expect.equal Nothing
+            , test "deletes the row with the picture's id once that is confirmed" <|
+                \() ->
+                    Library.update (DeleteConfirmed 2) loaded
+                        |> Tuple.second
+                        |> List.map
+                            (\command ->
+                                case command of
+                                    Database (Idb.Delete request) ->
+                                        ( request.store, Decode.decodeValue Decode.int request.key )
+
+                                    _ ->
+                                        ( "", Ok 0 )
+                            )
+                        |> Expect.equal [ ( "pictures", Ok 2 ) ]
+            , test "gives the picture's address back once its row is gone" <|
+                \() ->
+                    Library.update (deleted 2) loaded
+                        |> Tuple.second
+                        |> Expect.equal [ Database (Idb.Release [ "blob:2" ]) ]
+            , test "keeps a picture whose row could not be deleted" <|
+                \() ->
+                    run [ DeleteConfirmed 2, failed "The database is blocked." ] loaded
+                        |> (\model -> ( List.map .id (Library.visible model), model.notice ))
+                        |> Expect.equal ( [ 3, 2, 1 ], Just (Problem "The database is blocked.") )
             , test "closes the picture that is open once it is gone" <|
                 \() ->
-                    run [ Opened 1, Happened (PictureDeleted 1) ] loaded
+                    run [ Opened 1, deleted 1 ] loaded
                         |> .zoomed
                         |> Expect.equal False
             , test "opens the next picture without the details the last one had pinned" <|
@@ -124,7 +197,7 @@ suite =
                         |> Expect.equal False
             , test "leaves another picture open" <|
                 \() ->
-                    run [ Opened 2, Happened (PictureDeleted 1) ] loaded
+                    run [ Opened 2, deleted 1 ] loaded
                         |> .zoomed
                         |> Expect.equal True
             ]
@@ -173,7 +246,7 @@ opening =
 
 loaded : Library.Model
 loaded =
-    run [ Happened (PicturesLoaded [ fox, lighthouse, skyline ]) ] opening
+    run [ rows [ fox, lighthouse, skyline ] ] opening
 
 
 run : List Msg -> Library.Model -> Library.Model
@@ -194,10 +267,71 @@ made =
         |> .pictures
 
 
-fox : Library.Stored
+getAll : Command
+getAll =
+    Database
+        (Idb.GetAll
+            { database =
+                { name = "pixo"
+                , version = 1
+                , stores = [ { name = "pictures", keyPath = "id", autoIncrement = True } ]
+                }
+            , store = "pictures"
+            , label = ""
+            }
+        )
+
+
+rows : List Row -> Msg
+rows stored =
+    Happened (Answered (Idb.Rows { label = "", rows = List.map row stored }))
+
+
+added : String -> Row -> Msg
+added source stored =
+    Happened (Answered (Idb.Added { label = source, row = row stored }))
+
+
+deleted : Int -> Msg
+deleted id =
+    Happened (Answered (Idb.Deleted { label = "", key = Encode.int id }))
+
+
+failed : String -> Msg
+failed message =
+    Happened (Answered (Idb.Failed { label = "", message = message }))
+
+
+type alias Row =
+    { id : Int
+    , blob : String
+    , prompt : String
+    , width : Int
+    , height : Int
+    , steps : Int
+    , seed : Int
+    , model : String
+    }
+
+
+row : Row -> Value
+row stored =
+    Encode.object
+        [ ( "id", Encode.int stored.id )
+        , ( "blob", Encode.string stored.blob )
+        , ( "prompt", Encode.string stored.prompt )
+        , ( "width", Encode.int stored.width )
+        , ( "height", Encode.int stored.height )
+        , ( "steps", Encode.int stored.steps )
+        , ( "seed", Encode.int stored.seed )
+        , ( "model", Encode.string stored.model )
+        ]
+
+
+fox : Row
 fox =
     { id = 1
-    , url = "blob:1"
+    , blob = "blob:1"
     , prompt = "a red fox in the snow"
     , width = 512
     , height = 512
@@ -207,11 +341,11 @@ fox =
     }
 
 
-lighthouse : Library.Stored
+lighthouse : Row
 lighthouse =
-    { fox | id = 2, url = "blob:2", prompt = "a lighthouse on a cliff at sunset", width = 1024, height = 576 }
+    { fox | id = 2, blob = "blob:2", prompt = "a lighthouse on a cliff at sunset", width = 1024, height = 576 }
 
 
-skyline : Library.Stored
+skyline : Row
 skyline =
-    { fox | id = 3, url = "blob:3", prompt = "a city skyline at sunset", width = 576, height = 1024 }
+    { fox | id = 3, blob = "blob:3", prompt = "a city skyline at sunset", width = 576, height = 1024 }
