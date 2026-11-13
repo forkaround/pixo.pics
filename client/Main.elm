@@ -8,11 +8,10 @@ import Browser.Navigation as Navigation
 import Ceremony exposing (Ceremony(..))
 import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
-import Data.LinkToken exposing (LinkToken)
 import Data.Username as Username
 import Effect exposing (Effect(..))
 import ExploreView
-import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
+import Html exposing (Html, a, div, form, li, p, span, text, ul)
 import Html.Attributes exposing (attribute, class, disabled, href, type_)
 import Html.Events exposing (onClick, onSubmit)
 import InteropDefinitions as Interop exposing (Theme)
@@ -24,6 +23,7 @@ import LinkForm exposing (Attempt(..), State(..))
 import Logo
 import ModelsView
 import Page.SignUp
+import Page.Verify
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
@@ -110,7 +110,7 @@ type Page
     | Settings Section
     | SignUp Page.SignUp.Model
     | SignIn SignInForm
-    | Verify Verification
+    | Verify Page.Verify.Model
     | Passkey
     | NotFound
 
@@ -124,17 +124,6 @@ type alias SignInForm =
     { email : String
     , state : LinkForm.State
     }
-
-
-type Verification
-    = Looking LinkToken
-    | Found LinkToken Api.Verification Acceptance
-    | Refused String
-
-
-type Acceptance
-    = Asking
-    | Accepting
 
 
 init : Decode.Value -> Url -> ( Model, Effect Msg )
@@ -192,16 +181,9 @@ open url opened =
                 Request (ApiClient.request Api.passkeys () GotPasskeys)
             )
 
-        Path.Verify (Just token) ->
-            ( { model | page = Verify (Looking token) }
-            , Request
-                (ApiClient.request Api.verification () GotVerification
-                    |> ApiClient.withToken token
-                )
-            )
-
-        Path.Verify Nothing ->
-            ( { model | page = Verify (Refused missingToken) }, NoEffect )
+        Path.Verify link ->
+            Page.Verify.init link
+                |> Tuple.mapBoth (\page -> { model | page = Verify page }) (Effect.map GotVerify)
 
         Path.Passkey ->
             ( { model | page = Passkey }
@@ -214,11 +196,6 @@ open url opened =
 
         Path.NotFound ->
             ( { model | page = NotFound }, NoEffect )
-
-
-missingToken : String
-missingToken =
-    "This link is incomplete. Open the one from your email again."
 
 
 runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect Msg )
@@ -274,10 +251,7 @@ type Msg
     | UrlRequested Browser.UrlRequest
     | UrlChanged Url
     | GotSignUp Page.SignUp.Msg
-    | GotVerification (Result ApiClient.Error Api.Verification)
-    | VerificationAccepted
-    | GotAccount (Result ApiClient.Error Api.Account)
-    | GotPasskeyCheck (Result ApiClient.Error (List Api.Passkey))
+    | GotVerify Page.Verify.Msg
     | GotSession (Result ApiClient.Error Api.Account)
     | SessionRetried
     | SignInEmailChanged String
@@ -417,68 +391,23 @@ update msg model =
                 _ ->
                     ( model, NoEffect )
 
-        GotVerification result ->
+        GotVerify pageMsg ->
+            let
+                believed =
+                    case Page.Verify.outcome pageMsg of
+                        Page.Verify.SignedIn account ->
+                            { model | session = SignedIn account }
+
+                        Page.Verify.Unchanged ->
+                            model
+            in
             case model.page of
-                Verify (Looking token) ->
-                    ( { model
-                        | page =
-                            case result of
-                                Ok found ->
-                                    Verify (Found token found Asking)
-
-                                Err error ->
-                                    Verify (Refused (ApiClient.errorToString error))
-                      }
-                    , NoEffect
-                    )
+                Verify page ->
+                    Page.Verify.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { believed | page = Verify next }) (Effect.map GotVerify)
 
                 _ ->
-                    ( model, NoEffect )
-
-        VerificationAccepted ->
-            case model.page of
-                Verify (Found token found Asking) ->
-                    ( { model | page = Verify (Found token found Accepting) }
-                    , Request
-                        (ApiClient.request Api.verify () GotAccount
-                            |> ApiClient.withToken token
-                        )
-                    )
-
-                _ ->
-                    ( model, NoEffect )
-
-        GotAccount result ->
-            case ( model.page, result ) of
-                ( Verify (Found _ _ Accepting), Ok account ) ->
-                    ( { model | session = SignedIn account }
-                    , Request (ApiClient.request Api.passkeys () GotPasskeyCheck)
-                    )
-
-                ( Verify (Found _ _ Accepting), Err error ) ->
-                    ( { model | page = Verify (Refused (ApiClient.errorToString error)) }, NoEffect )
-
-                _ ->
-                    ( model, NoEffect )
-
-        GotPasskeyCheck result ->
-            case model.page of
-                Verify (Found _ _ Accepting) ->
-                    ( model
-                    , PushUrl
-                        (Path.toString
-                            (case result of
-                                Ok [] ->
-                                    Path.Passkey
-
-                                _ ->
-                                    Path.Explore
-                            )
-                        )
-                    )
-
-                _ ->
-                    ( model, NoEffect )
+                    ( believed, NoEffect )
 
         GotSession (Ok account) ->
             ( { model | session = SignedIn account }, NoEffect )
@@ -924,7 +853,7 @@ viewBody model =
             Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
 
         Verify verification ->
-            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewVerification verification)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (List.map (Html.map GotVerify) (Page.Verify.view verification))
 
         Passkey ->
             Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewEnrolment model.ceremony)
@@ -1573,94 +1502,3 @@ viewEnrolment ceremony =
             |> Button.toAnchor [ href (Path.toString Path.Explore), class "h-10" ]
         ]
     ]
-
-
-viewVerification : Verification -> List (Html Msg)
-viewVerification verification =
-    case verification of
-        Looking _ ->
-            [ Plain.lead "Checking your link" "This takes a moment."
-            , div [ class "flex flex-col gap-4", attribute "aria-hidden" "true" ]
-                [ viewIdentity
-                    (Skeleton.view [ class "size-10 shrink-0 rounded-full!" ])
-                    [ Skeleton.view [ class "h-3.5 w-16" ]
-                    , Skeleton.view [ class "mt-1.5 h-3.5 w-40" ]
-                    ]
-                , Skeleton.view [ class "h-10 w-full" ]
-                , Skeleton.view [ class "my-0.5 h-4 w-40" ]
-                ]
-            ]
-
-        Found _ found acceptance ->
-            viewFound found acceptance
-
-        Refused reason ->
-            [ Plain.lead "This link didn't work" reason
-            , div [ class "flex flex-col gap-4" ]
-                [ Button.new
-                    |> Button.text "Sign up again"
-                    |> Button.toAnchor [ href (Path.toString Path.SignUp), class "h-10" ]
-                , Button.new
-                    |> Button.text "Log in"
-                    |> Button.outline
-                    |> Button.toAnchor [ href (Path.toString Path.SignIn), class "h-10" ]
-                ]
-            ]
-
-
-viewFound : Api.Verification -> Acceptance -> List (Html Msg)
-viewFound found acceptance =
-    let
-        username =
-            Username.toString found.username
-
-        words =
-            if found.newAccount then
-                { heading = "Create this account?"
-                , body = "This creates your account and signs you in."
-                , accept = "Create my account"
-                , accepting = "Creating your account…"
-                }
-
-            else
-                { heading = "Log in to this account?"
-                , body = "This signs you in on this device."
-                , accept = "Log in"
-                , accepting = "Logging in…"
-                }
-    in
-    [ Plain.lead words.heading words.body
-    , div [ class "flex flex-col gap-4" ]
-        [ viewIdentity
-            (Avatar.new
-                |> Avatar.fallback [ text (String.toUpper (String.left 2 username)) ]
-                |> Avatar.large
-                |> Avatar.toHtml [ attribute "aria-hidden" "true" ]
-            )
-            [ dl [ class "grid text-sm leading-tight" ]
-                [ dt [ class "sr-only" ] [ text "Username" ]
-                , dd [ class "truncate font-medium" ] [ text username ]
-                , dt [ class "sr-only" ] [ text "Email" ]
-                , dd [ class "break-all text-muted-foreground" ] [ text (Email.toString found.email) ]
-                ]
-            ]
-        , Button.new
-            |> Button.text
-                (if acceptance == Accepting then
-                    words.accepting
-
-                 else
-                    words.accept
-                )
-            |> Button.toHtml [ onClick VerificationAccepted, disabled (acceptance == Accepting), class "h-10" ]
-        , p [ class "text-sm text-muted-foreground" ] [ text "Not you? Close this page." ]
-        ]
-    ]
-
-
-viewIdentity : Html Msg -> List (Html Msg) -> Html Msg
-viewIdentity avatar details =
-    div [ class "flex items-center gap-3 rounded-xl border p-3" ]
-        [ avatar
-        , div [ class "min-w-0 flex-1" ] details
-        ]

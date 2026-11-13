@@ -572,6 +572,16 @@ suite =
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
                         |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
+            , test "believes a link's sign-in that is answered once the page is left" <|
+                \() ->
+                    startAt "/verify#Zm9vYmFy" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/verify" oldAccount
+                        |> ProgramTest.clickButton "Log in"
+                        |> ProgramTest.clickLink "pixo" "/"
+                        |> ProgramTest.ensureViewHas [ text "Guest" ]
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/verify" account
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
             , test "asks an account that still has no passkey for one each time it signs in by link" <|
                 \() ->
                     startAt "/verify#Zm9vYmFy" defaultFlags
