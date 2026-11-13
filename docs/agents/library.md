@@ -50,3 +50,8 @@ IndexedDB for Elm and know nothing of pictures.
   update (`Main.backfill`), newest first, unless a picture is generating. The
   graphics card is checked on `/studio` and `/settings/models`, not
   `/library`, so older pictures are tagged after a visit to one of those.
+- The instructions and three examples were measured on 2026-11-13 against 19
+  prompts. Examples leak into answers ("corgi" on a robot, "peaceful"
+  everywhere with the first version), so a tag from an example's answer is
+  kept only when the prompt contains it (`Tagger.tags`). Change the examples
+  together with that list, and measure again.

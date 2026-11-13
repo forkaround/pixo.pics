@@ -101,19 +101,34 @@ suite =
         , describe "tags"
             [ test "keeps at most 8" <|
                 \() ->
-                    Tagger.tags "aa, bb, cc, dd, ee, ff, gg, hh, ii, jj"
+                    Tagger.tags "" "aa, bb, cc, dd, ee, ff, gg, hh, ii, jj"
                         |> List.length
                         |> Expect.equal 8
             , test "drops duplicates" <|
                 \() ->
-                    Tagger.tags "fox, Fox, snow"
+                    Tagger.tags "" "fox, Fox, snow"
                         |> List.map Tag.toString
                         |> Expect.equal [ "fox", "snow" ]
             , test "reads one tag per line too" <|
                 \() ->
-                    Tagger.tags "fox\nsnow"
+                    Tagger.tags "" "fox\nsnow"
                         |> List.map Tag.toString
                         |> Expect.equal [ "fox", "snow" ]
+            , test "drops a tag borrowed from an example" <|
+                \() ->
+                    Tagger.tags "close-up of a hummingbird drinking from a red flower" "hummingbird, flower, sea, watercolor"
+                        |> List.map Tag.toString
+                        |> Expect.equal [ "hummingbird", "flower" ]
+            , test "keeps an example's tag the prompt names" <|
+                \() ->
+                    Tagger.tags "a lighthouse by the sea, watercolor" "lighthouse, sea, watercolor"
+                        |> List.map Tag.toString
+                        |> Expect.equal [ "lighthouse", "sea", "watercolor" ]
+            , test "keeps a translated tag" <|
+                \() ->
+                    Tagger.tags "un perro corriendo en la playa" "dog, beach"
+                        |> List.map Tag.toString
+                        |> Expect.equal [ "dog", "beach" ]
             ]
         ]
 

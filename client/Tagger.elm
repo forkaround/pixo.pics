@@ -129,7 +129,7 @@ update msg model =
         Happened (Finished text) ->
             case model.state of
                 Tagging job ->
-                    case tags text of
+                    case tags job.prompt text of
                         [] ->
                             next model Nothing
 
@@ -208,9 +208,10 @@ conversation job =
 instructions : String
 instructions =
     String.join "\n"
-        [ "You sort pictures in a personal library by tags."
-        , "You are given the prompt a picture was made from. Answer with 4 to 8 tags on one line, separated by commas: the main subject first, then other things in the picture, the place, the art style and the mood."
-        , "Each tag is one or two lowercase English words, a noun or an adjective."
+        [ "You tag pictures in a personal library so they can be found later."
+        , "You are given the prompt a picture was made from. Answer with 3 to 6 tags on one line, separated by commas: the main subject first, then the most important things the prompt names, the place and the art style."
+        , "Take every tag from the prompt: never add a thing, a place or a mood it doesn't name. Leave out cameras, lenses, film stocks and lighting."
+        , "Each tag is one or two lowercase English words. Translate a prompt in another language."
         , "Answer with the tags and nothing else."
         ]
 
@@ -225,20 +226,34 @@ examples =
             , "Camera: shot on Fujifilm X-T5 with a 35mm f/1.4 lens, eye level, shallow depth of field"
             , "Mood: quiet, patient, peaceful"
             ]
-      , "fisherman, old man, rowboat, mountain lake, forest, dawn, photo, peaceful"
+      , "fisherman, rowboat, mountain lake, forest, dawn, photo"
       )
-    , ( "a corgi in a red cape flying over the city at night, comic book style"
-      , "dog, corgi, superhero, cape, city, night, comic, funny"
+    , ( "a glass teapot of green tea on a wooden table, watercolor"
+      , "teapot, green tea, table, watercolor"
+      )
+    , ( "una casa roja junto al mar al atardecer"
+      , "house, sea, sunset"
       )
     ]
 
 
-tags : String -> List Tag
-tags answer =
+borrowed : String -> Tag -> Bool
+borrowed prompt tag =
+    List.member tag shown && not (String.contains (Tag.toString tag) (String.toLower prompt))
+
+
+shown : List Tag
+shown =
+    List.concatMap (Tuple.second >> String.split "," >> List.filterMap Tag.fromString) examples
+
+
+tags : String -> String -> List Tag
+tags prompt answer =
     Stylist.withoutThinking answer
         |> String.replace "\n" ","
         |> String.split ","
         |> List.filterMap Tag.fromString
+        |> List.filter (not << borrowed prompt)
         |> List.foldl
             (\tag kept ->
                 if List.member tag kept then
