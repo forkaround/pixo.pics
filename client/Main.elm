@@ -694,11 +694,11 @@ viewShell model page =
         |> Sidebar.content
             [ Sidebar.group []
                 [ Sidebar.menu []
-                    (viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
-                        :: viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
-                        :: viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
-                        :: [ viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings" ]
-                    )
+                    [ viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
+                    , viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
+                    , viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
+                    , viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings"
+                    ]
                 ]
             ]
         |> Sidebar.footer
