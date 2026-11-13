@@ -7,9 +7,11 @@ import Phosphor exposing (IconWeight(..))
 import Pipeline exposing (Device(..), Engine(..), Model, Msg(..), Weights)
 import StudioView
 import Stylist
+import SupportView
 import UI.Badge as Badge
 import UI.Button as Button
 import UI.Card as Card
+import UI.Skeleton as Skeleton
 
 
 type Row
@@ -23,7 +25,7 @@ view : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model 
 view toMsg writer model =
     div [ class "flex flex-col gap-6" ]
         (List.map (viewWeights model >> Html.map toMsg.pipeline) Pipeline.weights
-            ++ [ Html.map toMsg.stylist (stylist writer)
+            ++ [ Html.map toMsg.stylist (stylist model.device writer)
                , Html.map toMsg.pipeline (storage model)
                ]
         )
@@ -163,14 +165,18 @@ viewWeights model weights =
                     ]
 
                 Downloaded ->
-                    [ p [ class "flex items-center gap-2 text-xs text-muted-foreground" ]
-                        [ Phosphor.checkCircle Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
-                        , text "Saved in this browser. Ready to use in the studio."
-                        ]
+                    let
+                        checkCircle =
+                            Phosphor.checkCircle Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+                    in
+                    [ hint []
+                        model.device
+                        [ checkCircle, text "Saved in this browser. Ready to use in the studio." ]
+                        [ checkCircle, text ("Saved in this browser. " ++ SupportView.needsWebGpu) ]
                     ]
 
                 NotDownloaded ->
-                    [ p [ class "flex-1 text-xs text-muted-foreground" ] [ text "Download once, use in the studio." ]
+                    [ hint [ class "flex-1" ] model.device [ text "Download once, use in the studio." ] [ text SupportView.needsWebGpu ]
                     , Button.new
                         |> Button.text "Download"
                         |> Button.outline
@@ -187,8 +193,8 @@ viewWeights model weights =
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
 
 
-stylist : Stylist.Model -> Html Stylist.Msg
-stylist model =
+stylist : Pipeline.Device -> Stylist.Model -> Html Stylist.Msg
+stylist device model =
     let
         idle =
             model.state == Stylist.Asleep || model.state == Stylist.Awake
@@ -227,7 +233,8 @@ stylist model =
                 ]
             ]
         |> Card.footer [ class "min-h-16 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
-            [ p [ class "text-xs text-muted-foreground" ]
+            [ hint []
+                device
                 [ text
                     (if model.downloaded then
                         "Writes the AI Style prompts in the studio."
@@ -236,6 +243,7 @@ stylist model =
                         "Downloads the first time you use AI Style in the studio."
                     )
                 ]
+                [ text SupportView.needsWebGpu ]
             , if model.downloaded then
                 Button.new
                     |> Button.text
@@ -260,6 +268,16 @@ stylist model =
             , StudioView.message model.message
             ]
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
+
+
+hint : List (Html.Attribute msg) -> Pipeline.Device -> List (Html msg) -> List (Html msg) -> Html msg
+hint attributes device supported unsupported =
+    SupportView.layers attributes
+        device
+        { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-0.5 h-3 w-48 max-w-full" ] ]
+        , supported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] supported
+        , unsupported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] unsupported
+        }
 
 
 isGenerating : Device -> Bool

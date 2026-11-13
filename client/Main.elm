@@ -35,6 +35,7 @@ import Plain
 import Session exposing (Session(..))
 import StudioView
 import Stylist
+import SupportView
 import Svg.Attributes
 import Task
 import Time
@@ -366,7 +367,11 @@ update msg model =
             runLibrary model (Library.update libraryMsg model.library)
 
         GotStylist stylistMsg ->
-            runStylist model (Stylist.update stylistMsg model.stylist)
+            if Stylist.needsWebGpu stylistMsg && not (Pipeline.isSupported model.pipeline.device) then
+                ( model, NoEffect )
+
+            else
+                runStylist model (Stylist.update stylistMsg model.stylist)
 
         SidebarChanged sidebar ->
             ( { model | sidebar = sidebar }
@@ -722,13 +727,14 @@ viewBody model =
 
                         Models ->
                             viewSettingsPage "Models"
-                                (text
-                                    (if model.pipeline.device == Pipeline.Unsupported then
-                                        "They need WebGPU. Try a recent Chrome, Edge or Safari."
-
-                                     else
-                                        "Manage the models that run in your browser. Your prompts stay on this device."
-                                    )
+                                (SupportView.layers []
+                                    model.pipeline.device
+                                    { checking =
+                                        div [ attribute "aria-hidden" "true" ]
+                                            [ Skeleton.view [ class "my-1 h-3.5 w-80 max-w-full" ] ]
+                                    , supported = text "Manage the models that run in your browser. Your prompts stay on this device."
+                                    , unsupported = text (SupportView.unsupportedTitle ++ ". " ++ SupportView.unsupportedReason ++ ".")
+                                    }
                                 )
                                 [ ModelsView.view { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline ]
 

@@ -16,6 +16,7 @@ module Stylist exposing
     , isBusy
     , modelId
     , modelSize
+    , needsWebGpu
     , request
     , styleName
     , styles
@@ -766,3 +767,22 @@ example idea lines =
         List.map2 (\label line -> label ++ ": " ++ line) labels lines
             |> String.join "\n"
     }
+
+
+needsWebGpu : Msg -> Bool
+needsWebGpu msg =
+    case msg of
+        StyleChosen _ _ ->
+            True
+
+        StopClicked ->
+            False
+
+        UndoClicked ->
+            False
+
+        RemoveClicked ->
+            False
+
+        Happened _ ->
+            False

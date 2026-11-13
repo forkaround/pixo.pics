@@ -15,6 +15,7 @@ import SimulatedEffect.Navigation
 import SimulatedEffect.Ports
 import SimulatedEffect.Task
 import SimulatedEffect.Time
+import Stylist
 import Test exposing (Test, describe, test)
 import Test.Html.Query as Query
 import Test.Html.Selector exposing (attribute, class, containing, id, tag, text)
@@ -1206,7 +1207,15 @@ suite =
                         |> ProgramTest.expectViewHas [ text "Saving…" ]
             ]
         , describe "AI Style"
-            [ test "says what the first rewrite downloads" <|
+            [ test "loads no prompt model on a browser that can't run it" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
+                        |> ProgramTest.update (Main.GotStylist (Stylist.StyleChosen Stylist.Photo "a fox in the snow"))
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu" ])
+            , test "says what the first rewrite downloads" <|
                 \() ->
                     start defaultFlags
                         |> ProgramTest.expectViewHas [ text "Downloads 984 MB once" ]
@@ -1495,8 +1504,28 @@ suite =
             , test "says so when the browser can't run them" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Manage the models that run in your browser. Your prompts stay on this device." ] ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
-                        |> ProgramTest.expectViewHas [ text "They need WebGPU. Try a recent Chrome, Edge or Safari." ]
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Manage the models that run in your browser. Your prompts stay on this device." ] ]
+                        |> ProgramTest.expectViewHasNot [ class "invisible", containing [ text "Cannot generate images on this device. Pixo needs a WebGPU device." ] ]
+            , test "says what the models are for once it knows the browser runs them" <|
+                \() ->
+                    startAt "/settings/models" defaultFlags
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Cannot generate images on this device. Pixo needs a WebGPU device." ] ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.expectViewHasNot [ class "invisible", containing [ text "Manage the models that run in your browser. Your prompts stay on this device." ] ]
+            , test "says the models can't run here instead of offering them" <|
+                \() ->
+                    startAt "/settings/models" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Download once, use in the studio." ] ]
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Downloads the first time you use AI Style in the studio." ] ]
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Needs a WebGPU device to run." ] ]
+                        |> ProgramTest.expectViewHas
+                            [ tag "button"
+                            , attribute (Html.Attributes.disabled True)
+                            , attribute (Html.Attributes.attribute "aria-label" "Download Bonsai ternary, 2-bit")
+                            ]
             ]
         , describe "Library"
             [ test "asks the browser for the saved pictures" <|

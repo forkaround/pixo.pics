@@ -14,6 +14,7 @@ import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline exposing (Component(..), Device(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
 import Stylist
+import SupportView
 import UI.Button as Button
 import UI.DropdownMenu as DropdownMenu
 import UI.Empty as Empty
@@ -487,62 +488,41 @@ canvas toMsg library model =
     in
     div [ class "mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-10 p-4 md:p-8" ]
         (case ( model.device, pictures ) of
-            ( Unsupported, _ ) ->
-                [ viewEmpty CannotGenerate ]
-
-            ( Unchecked, _ ) ->
-                [ viewEmpty Unknown ]
-
-            ( Checking, _ ) ->
-                [ viewEmpty Unknown ]
-
             ( Supported (Generating _ job stage), _ ) ->
                 viewPending job stage :: pictures
 
-            ( _, [] ) ->
-                [ viewEmpty CanGenerate ]
+            ( Supported _, _ :: _ ) ->
+                pictures
 
             _ ->
-                pictures
+                [ viewEmpty model.device ]
         )
 
 
-type Capability
-    = Unknown
-    | CanGenerate
-    | CannotGenerate
-
-
-viewEmpty : Capability -> Html msg
-viewEmpty capability =
-    let
-        layer shown =
-            class
-                (if shown == capability then
-                    "col-start-1 row-start-1 self-start"
-
-                 else
-                    "invisible col-start-1 row-start-1 self-start"
-                )
-    in
-    div [ class "grid w-full flex-1 content-center" ]
-        [ Empty.new
-            |> Empty.icon (Skeleton.view [ class "size-full rounded-lg" ])
-            |> Empty.title [ Skeleton.view [ class "my-0.5 h-4 w-40" ] ]
-            |> Empty.description [ Skeleton.view [ class "my-1 h-4 w-64" ] ]
-            |> Empty.toHtml [ layer Unknown, attribute "aria-hidden" "true" ]
-        , Empty.new
-            |> Empty.icon (Phosphor.paintBrush Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-            |> Empty.title [ text "Nothing here yet" ]
-            |> Empty.description
-                [ text "Describe a picture and press Generate. Save the ones you want to keep." ]
-            |> Empty.toHtml [ layer CanGenerate ]
-        , Empty.new
-            |> Empty.icon (Phosphor.warning Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-            |> Empty.title [ text "Cannot generate images on this device" ]
-            |> Empty.description [ text "Pixo needs a WebGPU device" ]
-            |> Empty.toHtml [ layer CannotGenerate ]
-        ]
+viewEmpty : Pipeline.Device -> Html msg
+viewEmpty device =
+    SupportView.layers [ class "w-full flex-1 content-center" ]
+        device
+        { checking =
+            Empty.new
+                |> Empty.icon (Skeleton.view [ class "size-full rounded-lg" ])
+                |> Empty.title [ Skeleton.view [ class "my-0.5 h-4 w-40" ] ]
+                |> Empty.description [ Skeleton.view [ class "my-1 h-4 w-64" ] ]
+                |> Empty.toHtml [ attribute "aria-hidden" "true" ]
+        , supported =
+            Empty.new
+                |> Empty.icon (Phosphor.paintBrush Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Empty.title [ text "Nothing here yet" ]
+                |> Empty.description
+                    [ text "Describe a picture and press Generate. Save the ones you want to keep." ]
+                |> Empty.toHtml []
+        , unsupported =
+            Empty.new
+                |> Empty.icon (Phosphor.warning Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Empty.title [ text SupportView.unsupportedTitle ]
+                |> Empty.description [ text SupportView.unsupportedReason ]
+                |> Empty.toHtml []
+        }
 
 
 viewPending : Pipeline.Job -> Stage -> Html msg

@@ -52,6 +52,10 @@ A page with state of its own is a module in `client/Page/`. A new one is:
   shift. Update the skeleton whenever the final element changes. The same holds for what
   depends on the session: while it is `Unknown`, draw it `invisible` or as a skeleton of
   the same size.
+- **What depends on WebGPU goes through `SupportView.layers`**: it draws the checking,
+  supported and unsupported versions in one grid cell and hides all but one, so the
+  answer to the check moves nothing. Unsupported copy comes from `SupportView`. In tests
+  every version is in the view: tell them apart with `class "invisible"`.
 - Text over a picture is white on a dark gradient whatever the theme, and never sits
   where the picture fades into the page (white on white in the light theme). Buttons
   over a picture take their looks from `client/Overlay.elm`.

@@ -9,7 +9,11 @@ import Test exposing (Test, describe, test)
 suite : Test
 suite =
     describe "Stylist"
-        [ describe "tidy"
+        [ test "needs WebGPU only to write a prompt" <|
+            \() ->
+                List.map Stylist.needsWebGpu [ StyleChosen Photo "a fox", StopClicked, UndoClicked, RemoveClicked ]
+                    |> Expect.equal [ True, False, False, False ]
+        , describe "tidy"
             [ test "drops the empty thinking the model starts with" <|
                 \() ->
                     Stylist.tidy "<think>\n\n</think>\n\nSubject: a fox\nMood: calm"
