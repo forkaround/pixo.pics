@@ -45,6 +45,7 @@ type alias Model =
     , index : Bm25.Index
     , query : String
     , tag : Maybe Tag
+    , allTags : Bool
     , viewing : Maybe Int
     , zoomed : Bool
     , detailed : Bool
@@ -100,6 +101,7 @@ init canShare =
     , index = Bm25.empty
     , query = ""
     , tag = Nothing
+    , allTags = False
     , viewing = Nothing
     , zoomed = False
     , detailed = False
@@ -359,6 +361,7 @@ chosen model =
 type Msg
     = QueryChanged String
     | TagChosen (Maybe Tag)
+    | TagsToggled
     | Opened Int
     | Closed
     | Stepped Int
@@ -409,6 +412,9 @@ update msg model =
 
         TagChosen tag ->
             ( { model | tag = tag, confirming = Nothing }, [] )
+
+        TagsToggled ->
+            ( { model | allTags = not model.allTags }, [] )
 
         Opened id ->
             ( { model | viewing = Just id, zoomed = True, detailed = False, confirming = Nothing, notice = Nothing }, [] )

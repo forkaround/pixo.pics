@@ -49,6 +49,10 @@ IndexedDB for Elm and know nothing of pictures.
 - Each entry in the side column shows its newest picture (`Library.cover`), the
   way a photo site shows a collection's cover; "All pictures" shows the newest of
   all. The cover follows the loaded pictures, not the search.
+- Past ten tags, the side column shows the eight most used and folds the rest
+  behind "Show N more" from `md` up; a chosen tag stays in view. A narrow screen
+  scrolls through every tag in one row. A folded tag is the same button hidden
+  with `md:hidden`, so each tag is in the page once.
 - Pictures without tags in the loaded library are asked for after every
   update (`Main.backfill`), newest first, unless a picture is generating. The
   graphics card is checked on `/studio` and `/settings/models`, not

@@ -221,6 +221,10 @@ suite =
                     Library.tags tagged
                         |> List.map (Tuple.mapFirst Tag.toString)
                         |> Expect.equal [ ( "sunset", 2 ), ( "fox", 1 ), ( "lighthouse", 1 ) ]
+            , test "unfolds every tag, then folds them again" <|
+                \() ->
+                    ( run [ TagsToggled ] tagged |> .allTags, run [ TagsToggled, TagsToggled ] tagged |> .allTags )
+                        |> Expect.equal ( True, False )
             , test "shows the newest picture with the tag as its cover" <|
                 \() ->
                     List.map (\name -> Library.cover (List.head (tags [ name ])) tagged |> Maybe.map .id)

@@ -48,25 +48,57 @@ filters model =
         , Sidebar.menu [ class "max-md:flex-row max-md:overflow-x-auto max-md:pb-1" ]
             (case model.pictures of
                 Loaded pictures ->
-                    viewFilter (chosen == Nothing) Nothing (Library.cover Nothing model) "All pictures" (Just (List.length pictures))
-                        :: List.map
-                            (\( tag, n ) -> viewFilter (chosen == Just tag) (Just tag) (Library.cover (Just tag) model) (Tag.toString tag) (Just n))
-                            (Library.tags model)
+                    let
+                        counted =
+                            Library.tags model
+
+                        folds =
+                            List.length counted > 10 && not model.allTags
+
+                        folded i tag =
+                            folds && i >= 8 && chosen /= Just tag
+
+                        hidden =
+                            List.length (List.filter identity (List.indexedMap (\i ( tag, _ ) -> folded i tag) counted))
+                    in
+                    viewFilter [] (chosen == Nothing) Nothing (Library.cover Nothing model) "All pictures" (Just (List.length pictures))
+                        :: List.indexedMap
+                            (\i ( tag, n ) ->
+                                viewFilter
+                                    (if folded i tag then
+                                        [ class "md:hidden" ]
+
+                                     else
+                                        []
+                                    )
+                                    (chosen == Just tag)
+                                    (Just tag)
+                                    (Library.cover (Just tag) model)
+                                    (Tag.toString tag)
+                                    (Just n)
+                            )
+                            counted
+                        ++ (if List.length counted > 10 then
+                                [ viewToggle model.allTags hidden ]
+
+                            else
+                                []
+                           )
 
                 Unavailable _ ->
-                    [ viewFilter (chosen == Nothing) Nothing Nothing "All pictures" Nothing ]
+                    [ viewFilter [] (chosen == Nothing) Nothing Nothing "All pictures" Nothing ]
 
                 _ ->
-                    viewFilter True Nothing Nothing "All pictures" Nothing
+                    viewFilter [] True Nothing Nothing "All pictures" Nothing
                         :: List.repeat 4 viewFilterSkeleton
             )
         , viewHint model
         ]
 
 
-viewFilter : Bool -> Maybe Tag -> Maybe Picture -> String -> Maybe Int -> Html Msg
-viewFilter current tag cover label total =
-    Sidebar.menuItem [ class "max-md:shrink-0" ]
+viewFilter : List (Attribute Msg) -> Bool -> Maybe Tag -> Maybe Picture -> String -> Maybe Int -> Html Msg
+viewFilter attrs current tag cover label total =
+    Sidebar.menuItem (class "max-md:shrink-0" :: attrs)
         (Sidebar.menuButton
             ([ onClick (TagChosen tag)
              , attribute "aria-pressed"
@@ -99,6 +131,43 @@ viewFilter current tag cover label total =
                         []
                )
         )
+
+
+viewToggle : Bool -> Int -> Html Msg
+viewToggle open hidden =
+    Sidebar.menuItem [ class "max-md:hidden" ]
+        [ Sidebar.menuButton
+            [ onClick TagsToggled
+            , attribute "aria-expanded"
+                (if open then
+                    "true"
+
+                 else
+                    "false"
+                )
+            , class "h-10! gap-2.5! ps-1.5!"
+            ]
+            [ span [ class "flex size-7 shrink-0 items-center justify-center" ]
+                [ (if open then
+                    Phosphor.caretUp
+
+                   else
+                    Phosphor.caretDown
+                  )
+                    Bold
+                    |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+                ]
+            , span []
+                [ text
+                    (if open then
+                        "Show fewer"
+
+                     else
+                        "Show " ++ String.fromInt hidden ++ " more"
+                    )
+                ]
+            ]
+        ]
 
 
 viewCover : Maybe Picture -> Html Msg

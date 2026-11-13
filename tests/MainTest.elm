@@ -1763,6 +1763,29 @@ suite =
                                 >> Query.find [ tag "img" ]
                                 >> Query.has [ attribute (Html.Attributes.src "blob:https://pixo.pics/3") ]
                             )
+            , test "folds the least used tags past the first eight" <|
+                \() ->
+                    manyTagsLibrary
+                        |> ProgramTest.ensureView (Query.find [ tag "li", containing [ text "valley" ] ] >> Query.has [ class "md:hidden" ])
+                        |> ProgramTest.ensureView (Query.find [ tag "li", containing [ text "lake" ] ] >> Query.hasNot [ class "md:hidden" ])
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "Show 3 more" ] ]
+            , test "shows every tag once asked" <|
+                \() ->
+                    manyTagsLibrary
+                        |> ProgramTest.clickButton "Show 3 more"
+                        |> ProgramTest.ensureView (Query.find [ tag "li", containing [ text "valley" ] ] >> Query.hasNot [ class "md:hidden" ])
+                        |> ProgramTest.clickButton "Show fewer"
+                        |> ProgramTest.expectView (Query.find [ tag "li", containing [ text "valley" ] ] >> Query.has [ class "md:hidden" ])
+            , test "keeps the chosen tag in view while the rest is folded" <|
+                \() ->
+                    manyTagsLibrary
+                        |> ProgramTest.clickButton "valley"
+                        |> ProgramTest.ensureView (Query.find [ tag "li", containing [ text "valley" ] ] >> Query.hasNot [ class "md:hidden" ])
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "Show 2 more" ] ]
+            , test "folds nothing with ten tags or fewer" <|
+                \() ->
+                    taggedLibrary
+                        |> ProgramTest.expectViewHasNot [ tag "button", containing [ text "Show " ] ]
             , test "shows only the pictures with the tag chosen" <|
                 \() ->
                     taggedLibrary
@@ -2025,6 +2048,16 @@ olderPictures =
         , stored 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576
         , stored 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
         ]
+
+
+manyTagsLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+manyTagsLibrary =
+    startAt "/library" defaultFlags
+        |> ProgramTest.simulateIncomingPort "interopToElm"
+            (libraryLoaded
+                [ storedWithTags [ "autumn", "beach", "cabin", "desert", "forest", "harbor", "island", "lake", "meadow", "river", "valley" ] 1 "blob:https://pixo.pics/1" "a valley in autumn" 512 512
+                ]
+            )
 
 
 taggedLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
