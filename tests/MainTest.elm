@@ -1115,8 +1115,137 @@ suite =
                         |> ProgramTest.clickButton "Save"
                         |> ProgramTest.expectViewHas [ text "Saving…" ]
             ]
+        , describe "AI Style"
+            [ test "says what the first rewrite downloads" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.expectViewHas [ text "Downloads 984 MB once" ]
+            , test "says nothing of a download it already has" <|
+                \() ->
+                    start { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
+                        |> ProgramTest.expectViewHasNot [ text "Downloads 984 MB once" ]
+            , test "asks for an idea first" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.ensureViewHas [ text "Describe the picture first." ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu" ])
+            , test "loads the prompt model, then rewrites the idea as it streams in" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.fillIn "prompt" "Prompt" " a fox in the snow "
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string |> Decode.andThen (\name -> Decode.map (Tuple.pair name) (Decode.maybe (Decode.at [ "data", "model" ] Decode.string))))
+                            (Expect.equal [ ( "CheckWebGpu", Nothing ), ( "LoadStylist", Just "Qwen3-1.7B-q4f16_1-MLC" ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (stylistProgress 0.25)
+                        |> ProgramTest.ensureViewHas [ text "Loading the prompt model" ]
+                        |> ProgramTest.ensureViewHas [ text "25%" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            writing
+                            (List.filterMap identity
+                                >> Expect.equal
+                                    [ { model = "Qwen3-1.7B-q4f16_1-MLC"
+                                      , roles = [ "system", "user", "assistant", "user", "assistant", "user" ]
+                                      , idea = "a fox in the snow"
+                                      , thinking = False
+                                      }
+                                    ]
+                            )
+                        |> ProgramTest.ensureViewHas [ text "Writing a Photo prompt…" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "<think>\n\n</think>\n\nSubject: a red fox curled up in fresh snow\nSty")
+                        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.value "Subject: a red fox curled up in fresh snow"), attribute (Html.Attributes.readonly True) ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten ("<think>\n\n</think>\n\n" ++ foxPrompt))
+                        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.value foxPrompt) ]
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "Undo" ] ]
+            , test "remembers the prompt model it downloaded" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.ensureViewHasNot [ text "Downloads 984 MB once" ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.maybe localStorageWrite)
+                            (List.filterMap identity
+                                >> Expect.equal
+                                    [ { tag = "WriteToLocalStorage", key = "stylist", value = "Qwen3-1.7B-q4f16_1-MLC" } ]
+                            )
+            , test "gives the idea back on Undo" <|
+                \() ->
+                    styled
+                        |> ProgramTest.clickButton "Undo"
+                        |> ProgramTest.ensureViewHasNot [ text "Undo" ]
+                        |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
+            , test "rewrites the first idea, not the last prompt, in another style" <|
+                \() ->
+                    styled
+                        |> ProgramTest.clickButton "Anime"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            writing
+                            (List.filterMap (Maybe.map .idea) >> Expect.equal [ "a fox in the snow" ])
+            , test "rewrites an edited prompt as it is" <|
+                \() ->
+                    styled
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the rain"
+                        |> ProgramTest.ensureViewHasNot [ text "Undo" ]
+                        |> ProgramTest.clickButton "Anime"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            writing
+                            (List.filterMap (Maybe.map .idea) >> Expect.equal [ "a fox in the rain" ])
+            , test "stops writing and gives the idea back" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "Subject: a red fox")
+                        |> ProgramTest.clickButton "Stop"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.reverse >> List.head >> Expect.equal (Just "StopWriting"))
+                        |> ProgramTest.ensureViewHas [ text "Stopping…" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten "Subject: a red fox")
+                        |> ProgramTest.ensureViewHasNot [ text "Undo" ]
+                        |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
+            , test "keeps the idea when the answer is not a prompt" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten "\"Cozy\"")
+                        |> ProgramTest.ensureViewHas [ text "That didn't come out right. Try again." ]
+                        |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
+            , test "shows why the prompt model failed, and keeps the idea" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (stylistFailed "Error" "Out of memory.")
+                        |> ProgramTest.ensureViewHas [ text "Out of memory." ]
+                        |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
+            ]
         , describe "Models"
-            [ test "lists every model with what a download takes" <|
+            [ test "removes the prompt model it downloaded" <|
+                \() ->
+                    startAt "/settings/models" { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
+                        |> ProgramTest.clickButton "Remove the prompt writer"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map2 Tuple.pair (Decode.field "tag" Decode.string) (Decode.maybe (Decode.at [ "data", "model" ] Decode.string)))
+                            (List.reverse >> List.head >> Expect.equal (Just ( "RemoveStylist", Just "Qwen3-1.7B-q4f16_1-MLC" )))
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistRemoved")
+                        |> ProgramTest.ensureViewHas [ text "Prompt model removed." ]
+                        |> ProgramTest.ensureViewHas [ text "Qwen3 1.7B, 984 MB download" ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.maybe localStorageWrite)
+                            (List.filterMap identity
+                                >> Expect.equal [ { tag = "WriteToLocalStorage", key = "stylist", value = "" } ]
+                            )
+            , test "lists every model with what a download takes" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
@@ -1416,13 +1545,14 @@ type alias Flags =
     , systemDark : Bool
     , entropy : Int
     , models : Maybe String
+    , stylist : Maybe String
     , canShare : Bool
     }
 
 
 defaultFlags : Flags
 defaultFlags =
-    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, canShare = False }
+    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False }
 
 
 ready : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
@@ -1473,6 +1603,7 @@ startAt path flags =
                 , ( "systemDark", Encode.bool flags.systemDark )
                 , ( "entropy", Encode.int flags.entropy )
                 , ( "models", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.models) )
+                , ( "stylist", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.stylist) )
                 , ( "canShare", Encode.bool flags.canShare )
                 ]
             )
@@ -1838,3 +1969,92 @@ oldAccount =
 newAccount : String
 newAccount =
     """{"email":"ada@example.com","username":"ada","newAccount":true}"""
+
+
+styled : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+styled =
+    start defaultFlags
+        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+        |> ProgramTest.clickButton "Photo"
+        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+        |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten foxPrompt)
+        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.value foxPrompt) ]
+        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+            (Decode.field "tag" Decode.string)
+            (Expect.equal [ "CheckWebGpu", "LoadStylist", "WritePrompt", "WriteToLocalStorage" ])
+
+
+foxPrompt : String
+foxPrompt =
+    String.join "\n"
+        [ "Subject: a red fox curled up in fresh snow"
+        , "Style: realistic photograph, natural colors, fine detail"
+        , "Setting: a quiet birch forest"
+        , "Lighting: soft blue-hour light"
+        , "Camera: shot on Canon EOS R5 with a 400mm f/2.8 lens"
+        , "Mood: calm, hushed"
+        ]
+
+
+type alias Writing =
+    { model : String
+    , roles : List String
+    , idea : String
+    , thinking : Bool
+    }
+
+
+writing : Decode.Decoder (Maybe Writing)
+writing =
+    Decode.field "tag" Decode.string
+        |> Decode.andThen
+            (\name ->
+                if name == "WritePrompt" then
+                    Decode.map Just
+                        (Decode.field "data"
+                            (Decode.map4 Writing
+                                (Decode.field "model" Decode.string)
+                                (Decode.field "messages" (Decode.list (Decode.field "role" Decode.string)))
+                                (Decode.field "messages" (Decode.list (Decode.field "content" Decode.string))
+                                    |> Decode.map (List.reverse >> List.head >> Maybe.withDefault "")
+                                )
+                                (Decode.field "thinking" Decode.bool)
+                            )
+                        )
+
+                else
+                    Decode.succeed Nothing
+            )
+
+
+stylistProgress : Float -> Encode.Value
+stylistProgress progress =
+    Encode.object
+        [ ( "tag", Encode.string "StylistProgress" )
+        , ( "progress", Encode.float progress )
+        ]
+
+
+promptStreamed : String -> Encode.Value
+promptStreamed text =
+    Encode.object
+        [ ( "tag", Encode.string "PromptStreamed" )
+        , ( "text", Encode.string text )
+        ]
+
+
+promptWritten : String -> Encode.Value
+promptWritten text =
+    Encode.object
+        [ ( "tag", Encode.string "PromptWritten" )
+        , ( "text", Encode.string text )
+        ]
+
+
+stylistFailed : String -> String -> Encode.Value
+stylistFailed name message =
+    Encode.object
+        [ ( "tag", Encode.string "StylistFailed" )
+        , ( "name", Encode.string name )
+        , ( "message", Encode.string message )
+        ]

@@ -378,6 +378,40 @@ no part.
 - `client/bonsai.d.ts` types the library, which ships no types: keep it to what the
   worker calls. The worker imports `Main.elm` for its types only: Elm never runs there.
 
+### Prompt writer
+
+AI Style, under the studio's prompt, rewrites a short idea as a FLUX.2 prompt with
+[WebLLM](https://github.com/mlc-ai/web-llm) in a web worker (`client/stylist.worker.ts`),
+which `main.ts` starts on the first command. `client/Stylist.elm` decides everything: the
+model, the styles, their examples, the instructions, the sampling and what is kept of the
+answer.
+
+- The model is `Qwen3-1.7B-q4f16_1-MLC` (984 MB, about 3 s a prompt on an M2 Max). On
+  2026-11-13 it was measured against Qwen3.5 0.8B, 2B and 4B, Gemma 3 1B and Llama 3.2
+  1B and 3B, on 24 ideas in every style. Smaller ones changed the idea (red sneakers came
+  back black), Llama broke the format, Qwen3.5 2B looped and took twice as long, and 4B
+  is 2.4 GB beside a 3.4 GB image model. Change `modelId` and `modelSize` together, and
+  measure again.
+- The answer is six labelled lines, subject first, as FLUX.2 weighs earlier words more:
+  a person changes one line. Bonsai reads only 512 tokens; the answers are about 90 words.
+- The examples steer it more than the instructions. Without them the format breaks.
+  Two per style, as earlier chat turns with different subjects, so only the style words
+  carry over: with one, its props turn up in every answer. A rule that forbids something
+  changes nothing; an example that shows it does. A dressed person in an example dresses
+  animals (a fisherman's sweater put a coat on the fox), so the Photo examples are a
+  person described by face and an animal outdoors.
+- Qwen3 answers with an empty `<think></think>` even with thinking off. `Stylist.tidy`
+  drops it and keeps the first line of each label, also while the answer streams in.
+- Another style rewrites the first idea while the prompt is still the last answer, so
+  styles don't pile up. Undo gives the idea back.
+- WebLLM keeps the model in the Cache API (`webllm/*`), apart from Bonsai's IndexedDB:
+  "Remove downloaded models" leaves it, and the Prompt writer card removes it.
+  `stylist` in `localStorage` holds the id of the model that finished loading.
+- Writing leaves the page's thread free (no long task) and stalls the graphics card under
+  8 ms: the readPixels probe above.
+- The first time the dev server sees the worker, Vite optimizes `@mlc-ai/web-llm` and
+  reloads the page.
+
 ### Library
 
 Saved pictures live in the browser's IndexedDB; `client/Library.elm` decides everything,
@@ -434,7 +468,7 @@ IndexedDB for Elm and know nothing of pictures.
 - A new email template gets a test that its values reach the HTML and the text.
 - `api/tests/WebAuthnTest.elm` uses fixtures written by another encoder, byte by byte,
   for `https://pixo.pics`: one per flag or fault.
-- No test runs the library, the worker, IndexedDB, the clipboard, the share sheet or a
+- No test runs the library, the workers, IndexedDB, the clipboard, the share sheet or a
   real signature: they need a browser.
 
 ## Vercel

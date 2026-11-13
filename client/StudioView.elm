@@ -5,14 +5,16 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Html exposing (Html, button, div, figcaption, figure, form, img, p, span, text)
-import Html.Attributes exposing (alt, attribute, checked, class, disabled, download, for, height, href, id, name, placeholder, src, style, title, type_, value, width)
+import Html.Attributes exposing (alt, attribute, checked, class, disabled, download, for, height, href, id, name, placeholder, readonly, src, style, title, type_, value, width)
 import Html.Events exposing (onCheck, onClick, onInput, onSubmit)
 import Library
 import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline exposing (Component(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
+import Stylist
 import UI.Button as Button
+import UI.DropdownMenu as DropdownMenu
 import UI.Empty as Empty
 import UI.Field as Field
 import UI.Input as Input
@@ -27,69 +29,172 @@ import UI.Textarea as Textarea
 -- CONTROLS
 
 
-controls : Model -> Html Msg
-controls model =
+controls : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> Html msg
+controls toMsg stylist model =
     let
         settings =
             model.settings
     in
-    form [ onSubmit GenerateClicked, class "flex min-h-full flex-col" ]
+    form [ onSubmit (toMsg.pipeline GenerateClicked), class "flex min-h-full flex-col" ]
         [ Field.group [ class "flex-1 p-4" ]
-            ([ viewWeights model
-             , Field.view []
-                [ Field.label [ for "prompt" ] [ text "Prompt" ]
-                , Textarea.view
-                    [ id "prompt"
-                    , name "prompt"
-                    , placeholder "A bonsai tree on a misty mountain top"
-                    , value settings.prompt
-                    , onInput PromptChanged
-                    , class "min-h-28"
-                    ]
-                ]
-             , viewPresets settings
-             , viewSlider "Width"
-                (String.fromInt (Dimension.toInt settings.width) ++ " px")
-                { value = Dimension.toInt settings.width
-                , min = Dimension.smallest
-                , max = Dimension.largest
-                , step = Dimension.step
-                }
-                WidthChanged
-             , viewSlider "Height"
-                (String.fromInt (Dimension.toInt settings.height) ++ " px")
-                { value = Dimension.toInt settings.height
-                , min = Dimension.smallest
-                , max = Dimension.largest
-                , step = Dimension.step
-                }
-                HeightChanged
-             , viewSlider "Steps"
-                (String.fromInt (Steps.toInt settings.steps))
-                { value = Steps.toInt settings.steps
-                , min = Steps.fewest
-                , max = Steps.most
-                , step = 1
-                }
-                StepsChanged
-             , Field.horizontal []
-                [ Field.label [ for "random-seed" ] [ text "Random seed" ]
-                , Switch.new
-                    |> Switch.toHtml
-                        [ id "random-seed"
-                        , name "random-seed"
-                        , checked (settings.seeding == RandomSeed)
-                        , onCheck RandomSeedToggled
-                        ]
-                ]
-             ]
-                ++ viewSeed settings.seeding
+            (Html.map toMsg.pipeline (viewWeights model)
+                :: viewPrompt toMsg stylist settings.prompt
+                :: List.map (Html.map toMsg.pipeline) (settingsFields settings)
             )
-        , div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background p-4" ]
-            [ message model.message
-            , viewGenerate model
-            ]
+        , Html.map toMsg.pipeline
+            (div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background p-4" ]
+                [ message model.message
+                , viewGenerate model
+                ]
+            )
         ]
+
+
+settingsFields : Pipeline.Settings -> List (Html Msg)
+settingsFields settings =
+    [ viewPresets settings
+    , viewSlider "Width"
+        (String.fromInt (Dimension.toInt settings.width) ++ " px")
+        { value = Dimension.toInt settings.width
+        , min = Dimension.smallest
+        , max = Dimension.largest
+        , step = Dimension.step
+        }
+        WidthChanged
+    , viewSlider "Height"
+        (String.fromInt (Dimension.toInt settings.height) ++ " px")
+        { value = Dimension.toInt settings.height
+        , min = Dimension.smallest
+        , max = Dimension.largest
+        , step = Dimension.step
+        }
+        HeightChanged
+    , viewSlider "Steps"
+        (String.fromInt (Steps.toInt settings.steps))
+        { value = Steps.toInt settings.steps
+        , min = Steps.fewest
+        , max = Steps.most
+        , step = 1
+        }
+        StepsChanged
+    , Field.horizontal []
+        [ Field.label [ for "random-seed" ] [ text "Random seed" ]
+        , Switch.new
+            |> Switch.toHtml
+                [ id "random-seed"
+                , name "random-seed"
+                , checked (settings.seeding == RandomSeed)
+                , onCheck RandomSeedToggled
+                ]
+        ]
+    ]
+        ++ viewSeed settings.seeding
+
+
+viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> String -> Html msg
+viewPrompt toMsg stylist prompt =
+    let
+        busy =
+            Stylist.isBusy stylist
+    in
+    Field.view []
+        [ Field.label [ for "prompt" ] [ text "Prompt" ]
+        , Textarea.view
+            [ id "prompt"
+            , name "prompt"
+            , placeholder "A bonsai tree on a misty mountain top"
+            , value prompt
+            , onInput (PromptChanged >> toMsg.pipeline)
+            , readonly busy
+            , attribute "aria-busy"
+                (if busy then
+                    "true"
+
+                 else
+                    "false"
+                )
+            , class "min-h-28"
+            ]
+        , Html.map toMsg.stylist (viewStyle stylist prompt)
+        , message stylist.message
+        ]
+
+
+viewStyle : Stylist.Model -> String -> Html Stylist.Msg
+viewStyle stylist prompt =
+    case stylist.state of
+        Stylist.Loading progress (Just _) ->
+            viewWriting
+                [ Progress.new (100 * progress)
+                    |> Progress.label [ text "Loading the prompt model" ]
+                    |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
+                    |> Progress.toHtml [ class "min-w-0 flex-1" ]
+                ]
+
+        Stylist.Writing job _ ->
+            viewWriting [ p [ class "flex-1 text-sm text-muted-foreground", attribute "role" "status" ] [ text ("Writing a " ++ Stylist.styleName job.style ++ " prompt…") ] ]
+
+        Stylist.Stopping _ ->
+            viewWriting [ p [ class "flex-1 text-sm text-muted-foreground", attribute "role" "status" ] [ text "Stopping…" ] ]
+
+        state ->
+            div [ class "flex flex-wrap items-center gap-2" ]
+                (viewStyleMenu (state == Stylist.Removing) prompt stylist
+                    :: (if Stylist.canUndo prompt stylist then
+                            [ Button.new
+                                |> Button.text "Undo"
+                                |> Button.ghost
+                                |> Button.small
+                                |> Button.startIcon (Phosphor.arrowCounterClockwise Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                                |> Button.toHtml [ onClick Stylist.UndoClicked ]
+                            ]
+
+                        else
+                            []
+                       )
+                )
+
+
+viewWriting : List (Html Stylist.Msg) -> Html Stylist.Msg
+viewWriting shown =
+    div [ class "flex min-h-8 items-center gap-3" ]
+        (shown
+            ++ [ Button.new
+                    |> Button.text "Stop"
+                    |> Button.outline
+                    |> Button.small
+                    |> Button.toHtml [ onClick Stylist.StopClicked, class "shrink-0" ]
+               ]
+        )
+
+
+viewStyleMenu : Bool -> String -> Stylist.Model -> Html Stylist.Msg
+viewStyleMenu removing prompt stylist =
+    DropdownMenu.new
+        |> DropdownMenu.id "ai-style"
+        |> DropdownMenu.trigger
+            ((Button.new |> Button.text "AI Style" |> Button.outline |> Button.small |> Button.toAttributes)
+                ++ [ disabled removing ]
+            )
+            [ Phosphor.magicWand Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            , text "AI Style"
+            , Phosphor.caretDown Regular |> Phosphor.withClass "opacity-60" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            ]
+        |> DropdownMenu.content
+            (DropdownMenu.label [ text "Rewrite the prompt as" ]
+                :: List.map
+                    (\style -> DropdownMenu.item [ onClick (Stylist.StyleChosen style prompt) ] [ text (Stylist.styleName style) ])
+                    Stylist.styles
+                ++ (if stylist.downloaded then
+                        []
+
+                    else
+                        [ DropdownMenu.separator
+                        , DropdownMenu.label [ text ("Downloads " ++ Stylist.modelSize ++ " once") ]
+                        ]
+                   )
+            )
+        |> DropdownMenu.toHtml [ class "w-56" ]
 
 
 viewWeights : Model -> Html Msg

@@ -32,6 +32,7 @@ import Pipeline
 import Plain
 import Session exposing (Session(..))
 import StudioView
+import Stylist
 import Svg.Attributes
 import Task
 import Time
@@ -72,6 +73,7 @@ type alias Model =
     , systemDark : Bool
     , session : Session
     , pipeline : Pipeline.Model
+    , stylist : Stylist.Model
     , library : Library.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
@@ -99,15 +101,16 @@ type Section
 init : Decode.Value -> Url -> ( Model, Effect Msg )
 init flags url =
     let
-        { theme, systemDark, entropy, models, canShare } =
+        { theme, systemDark, entropy, models, stylist, canShare } =
             InteropPorts.decodeFlags flags
-                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, canShare = False }
+                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False }
     in
     open url
         { theme = Maybe.withDefault Interop.System theme
         , systemDark = systemDark
         , session = Unknown
         , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
+        , stylist = Stylist.init stylist
         , library = Library.init canShare
         , sidebar = Sidebar.init
         , sidebarProgress = 0
@@ -189,6 +192,44 @@ runPipeline model ( pipeline, command ) =
     )
 
 
+runStylist : Model -> ( Stylist.Model, Maybe Stylist.Command, Maybe String ) -> ( Model, Effect Msg )
+runStylist model ( stylist, command, prompt ) =
+    let
+        ( written, effect ) =
+            case prompt of
+                Just text ->
+                    runPipeline model (Pipeline.update (Pipeline.PromptChanged text) model.pipeline)
+
+                Nothing ->
+                    ( model, NoEffect )
+    in
+    ( { written | stylist = stylist }
+    , Batch
+        (List.filterMap identity
+            [ Just effect
+            , Maybe.map (Interop.RunStylist >> SendToJs) command
+            , if stylist.downloaded == model.stylist.downloaded then
+                Nothing
+
+              else
+                Just
+                    (SendToJs
+                        (Interop.WriteToLocalStorage
+                            { key = "stylist"
+                            , value =
+                                if stylist.downloaded then
+                                    Stylist.modelId
+
+                                else
+                                    ""
+                            }
+                        )
+                    )
+            ]
+        )
+    )
+
+
 runLibrary : Model -> ( Library.Model, List Library.Command ) -> ( Model, Effect Msg )
 runLibrary model ( library, commands ) =
     ( { model | library = library }
@@ -230,6 +271,7 @@ type Msg
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
+    | GotStylist Stylist.Msg
     | SidebarChanged Sidebar.State
     | SidebarAnimated Float
 
@@ -281,6 +323,9 @@ update msg model =
         GotInterop (Ok (Interop.LibraryEvent event)) ->
             runLibrary model (Library.update (Library.Happened event) model.library)
 
+        GotInterop (Ok (Interop.StylistEvent event)) ->
+            runStylist model (Stylist.update (Stylist.Happened event) model.stylist)
+
         GotInterop (Err _) ->
             ( model, NoEffect )
 
@@ -289,6 +334,9 @@ update msg model =
 
         GotLibrary libraryMsg ->
             runLibrary model (Library.update libraryMsg model.library)
+
+        GotStylist stylistMsg ->
+            runStylist model (Stylist.update stylistMsg model.stylist)
 
         SidebarChanged sidebar ->
             ( { model | sidebar = sidebar }, NoEffect )
@@ -556,7 +604,7 @@ viewBody model =
             viewFrame model
                 "Studio"
                 []
-                [ viewAside "border-b md:w-80 md:border-e md:border-b-0" [ Html.map GotPipeline (StudioView.controls model.pipeline) ]
+                [ viewAside "border-b md:w-80 md:border-e md:border-b-0" [ StudioView.controls { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline ]
                 , viewContent
                     [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline ]
                 ]
@@ -599,7 +647,7 @@ viewBody model =
                                         "Manage the models that run in your browser. Your prompts stay on this device."
                                     )
                                 )
-                                [ Html.map GotPipeline (ModelsView.view model.pipeline) ]
+                                [ ModelsView.view { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline ]
 
                         Account account ->
                             viewSettingsPage "Account"

@@ -2,6 +2,7 @@ import "./UI/elmcn-dialog";
 import { Elm, type Flags, type FromElm, type ToElm } from "./Main.elm";
 import { idb, release } from "./idb";
 import type { Command, Reply } from "./pipeline.worker";
+import type { Command as StylistCommand, Reply as StylistReply } from "./stylist.worker";
 import { canShare, copyPicture, sharePicture } from "./share";
 
 type PasskeyOptions = Extract<FromElm, { tag: "CreatePasskey" }>["data"];
@@ -101,6 +102,7 @@ const app = Elm.Main.init({
     systemDark: media.matches,
     entropy: crypto.getRandomValues(new Uint32Array(1))[0] ?? 0,
     models: stored("models"),
+    stylist: stored("stylist"),
     canShare: canShare(),
   },
 });
@@ -129,6 +131,24 @@ worker.addEventListener("message", ({ data: msg }: MessageEvent<Reply>) => {
       return send(msg);
   }
 });
+
+//-- PROMPT WRITER PORTS
+
+const startStylist = () => {
+  const started = new Worker(new URL("./stylist.worker.ts", import.meta.url), { type: "module" });
+  started.addEventListener("error", (e) =>
+    send({
+      tag: "StylistFailed",
+      name: "Error",
+      message: e.message || "Worker unable to start",
+    }),
+  );
+  started.addEventListener("message", ({ data: msg }: MessageEvent<StylistReply>) => send(msg));
+  return started;
+};
+
+let stylistWorker: Worker | null = null;
+const stylist = (cmd: StylistCommand) => (stylistWorker ??= startStylist()).postMessage(cmd);
 
 //-- THEME PORTS
 
@@ -163,6 +183,12 @@ app.ports.interopFromElm.subscribe((msg) => {
     case "ReleaseModel":
     case "ClearModelCache":
       return void pipeline(msg);
+
+    case "LoadStylist":
+    case "WritePrompt":
+    case "StopWriting":
+    case "RemoveStylist":
+      return void stylist(msg);
 
     case "IdbGetAll":
     case "IdbAdd":

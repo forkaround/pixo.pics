@@ -9,8 +9,10 @@ import Data.Seed as Seed
 import Data.Steps as Steps
 import Dict
 import Idb
+import Json.Encode as Encode
 import Library
 import Pipeline
+import Stylist
 import TsJson.Decode as TsDecode exposing (Decoder)
 import TsJson.Encode as TsEncode exposing (Encoder)
 
@@ -39,6 +41,7 @@ type FromElm
     | GetPasskey Api.SignInOptions
     | RunPipeline Pipeline.Command
     | RunLibrary Library.Command
+    | RunStylist Stylist.Command
 
 
 type ToElm
@@ -48,6 +51,7 @@ type ToElm
     | PasskeyFailed String
     | PipelineEvent Pipeline.Event
     | LibraryEvent Library.Event
+    | StylistEvent Stylist.Event
 
 
 type alias Flags =
@@ -55,6 +59,7 @@ type alias Flags =
     , systemDark : Bool
     , entropy : Int
     , models : Maybe String
+    , stylist : Maybe String
     , canShare : Bool
     }
 
@@ -75,7 +80,7 @@ themeToString theme =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbRelease sharePicture copyPicture openTab value ->
+        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist value ->
             case value of
                 WriteToLocalStorage entry ->
                     writeToLocalStorage entry
@@ -124,6 +129,18 @@ fromElm =
 
                 RunLibrary (Library.Open url) ->
                     openTab url
+
+                RunStylist Stylist.Load ->
+                    loadStylist Stylist.modelId
+
+                RunStylist (Stylist.Write request) ->
+                    writePrompt request
+
+                RunStylist Stylist.Stop ->
+                    stopWriting
+
+                RunStylist Stylist.Remove ->
+                    removeStylist Stylist.modelId
         )
         |> TsEncode.variantTagged "WriteToLocalStorage"
             (TsEncode.object
@@ -226,6 +243,29 @@ fromElm =
             (TsEncode.object [ TsEncode.required "url" .url TsEncode.string ])
         |> TsEncode.variantTagged "OpenTab"
             (TsEncode.object [ TsEncode.required "url" identity TsEncode.string ])
+        |> TsEncode.variantTagged "LoadStylist"
+            (TsEncode.object [ TsEncode.required "model" identity TsEncode.string ])
+        |> TsEncode.variantTagged "WritePrompt"
+            (TsEncode.object
+                [ TsEncode.required "model" .model TsEncode.string
+                , TsEncode.required "messages"
+                    .messages
+                    (TsEncode.list
+                        (TsEncode.object
+                            [ TsEncode.required "role" .role roleEncoder
+                            , TsEncode.required "content" .content TsEncode.string
+                            ]
+                        )
+                    )
+                , TsEncode.required "temperature" .temperature TsEncode.float
+                , TsEncode.required "topP" .topP TsEncode.float
+                , TsEncode.required "maxTokens" .maxTokens TsEncode.int
+                , TsEncode.required "thinking" .thinking TsEncode.bool
+                ]
+            )
+        |> TsEncode.variant0 "StopWriting"
+        |> TsEncode.variantTagged "RemoveStylist"
+            (TsEncode.object [ TsEncode.required "model" identity TsEncode.string ])
         |> TsEncode.buildUnion
 
 
@@ -299,6 +339,24 @@ toElm =
                 (TsDecode.field "label" TsDecode.string)
                 (TsDecode.field "message" TsDecode.string)
           )
+        , ( "StylistProgress"
+          , TsDecode.map (Stylist.Progressed >> StylistEvent) (TsDecode.field "progress" TsDecode.float)
+          )
+        , ( "StylistLoaded", TsDecode.succeed (StylistEvent Stylist.Loaded) )
+        , ( "PromptStreamed"
+          , TsDecode.map (Stylist.Streamed >> StylistEvent) (TsDecode.field "text" TsDecode.string)
+          )
+        , ( "PromptWritten"
+          , TsDecode.map (Stylist.Finished >> StylistEvent) (TsDecode.field "text" TsDecode.string)
+          )
+        , ( "StylistRemoved", TsDecode.succeed (StylistEvent Stylist.Removed) )
+        , ( "StylistFailed"
+          , TsDecode.map (Stylist.Failed >> StylistEvent)
+                (TsDecode.map2 Stylist.Failure
+                    (TsDecode.field "name" TsDecode.string)
+                    (TsDecode.field "message" TsDecode.string)
+                )
+          )
         , ( "PictureCopied", TsDecode.succeed (LibraryEvent Library.Copied) )
         , ( "ShareFailed"
           , TsDecode.map (Library.ShareFailed >> LibraryEvent) (TsDecode.field "name" TsDecode.string)
@@ -329,6 +387,26 @@ databaseEncoder =
         ]
 
 
+roleEncoder : Encoder Stylist.Role
+roleEncoder =
+    TsEncode.union
+        (\system user assistant value ->
+            case value of
+                Stylist.System ->
+                    system
+
+                Stylist.User ->
+                    user
+
+                Stylist.Assistant ->
+                    assistant
+        )
+        |> TsEncode.variantLiteral (Encode.string "system")
+        |> TsEncode.variantLiteral (Encode.string "user")
+        |> TsEncode.variantLiteral (Encode.string "assistant")
+        |> TsEncode.buildUnion
+
+
 componentDecoder : Decoder Pipeline.Component
 componentDecoder =
     TsDecode.stringUnion
@@ -345,9 +423,10 @@ themeDecoder =
 
 flags : Decoder Flags
 flags =
-    TsDecode.map5 Flags
+    TsDecode.map6 Flags
         (TsDecode.field "theme" (TsDecode.nullable themeDecoder))
         (TsDecode.field "systemDark" TsDecode.bool)
         (TsDecode.field "entropy" TsDecode.int)
         (TsDecode.field "models" (TsDecode.nullable TsDecode.string))
+        (TsDecode.field "stylist" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "canShare" TsDecode.bool)
