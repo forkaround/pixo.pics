@@ -8,6 +8,7 @@ module Library exposing
     , Pictures(..)
     , Save(..)
     , chosen
+    , cover
     , enter
     , fileName
     , find
@@ -271,6 +272,21 @@ visible model =
 carries : Tag -> Picture -> Bool
 carries tag picture =
     List.member tag (Maybe.withDefault [] picture.tags)
+
+
+cover : Maybe Tag -> Model -> Maybe Picture
+cover tag model =
+    case model.pictures of
+        Loaded pictures ->
+            case tag of
+                Just wanted ->
+                    List.head (List.filter (carries wanted) pictures)
+
+                Nothing ->
+                    List.head pictures
+
+        _ ->
+            Nothing
 
 
 tags : Model -> List ( Tag, Int )

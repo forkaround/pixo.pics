@@ -1755,6 +1755,14 @@ suite =
                             [ attribute (Html.Attributes.attribute "data-sidebar" "menu-badge")
                             , text "2"
                             ]
+            , test "shows each tag with its newest picture" <|
+                \() ->
+                    taggedLibrary
+                        |> ProgramTest.expectView
+                            (Query.find [ tag "button", containing [ text "sunset" ] ]
+                                >> Query.find [ tag "img" ]
+                                >> Query.has [ attribute (Html.Attributes.src "blob:https://pixo.pics/3") ]
+                            )
             , test "shows only the pictures with the tag chosen" <|
                 \() ->
                     taggedLibrary

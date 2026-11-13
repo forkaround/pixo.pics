@@ -221,6 +221,20 @@ suite =
                     Library.tags tagged
                         |> List.map (Tuple.mapFirst Tag.toString)
                         |> Expect.equal [ ( "sunset", 2 ), ( "fox", 1 ), ( "lighthouse", 1 ) ]
+            , test "shows the newest picture with the tag as its cover" <|
+                \() ->
+                    List.map (\name -> Library.cover (List.head (tags [ name ])) tagged |> Maybe.map .id)
+                        [ "sunset", "lighthouse", "fox" ]
+                        |> Expect.equal [ Just 3, Just 2, Just 1 ]
+            , test "shows the newest picture of all as the cover of every picture" <|
+                \() ->
+                    Library.cover Nothing tagged
+                        |> Maybe.map .id
+                        |> Expect.equal (Just 3)
+            , test "shows no cover before the library is loaded" <|
+                \() ->
+                    Library.cover Nothing opening
+                        |> Expect.equal Nothing
             , test "counts nothing for a picture without tags" <|
                 \() ->
                     Library.tags loaded

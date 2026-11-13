@@ -48,24 +48,24 @@ filters model =
         , Sidebar.menu [ class "max-md:flex-row max-md:overflow-x-auto max-md:pb-1" ]
             (case model.pictures of
                 Loaded pictures ->
-                    viewFilter (chosen == Nothing) Nothing Phosphor.images "All pictures" (Just (List.length pictures))
+                    viewFilter (chosen == Nothing) Nothing (Library.cover Nothing model) "All pictures" (Just (List.length pictures))
                         :: List.map
-                            (\( tag, n ) -> viewFilter (chosen == Just tag) (Just tag) Phosphor.tag (Tag.toString tag) (Just n))
+                            (\( tag, n ) -> viewFilter (chosen == Just tag) (Just tag) (Library.cover (Just tag) model) (Tag.toString tag) (Just n))
                             (Library.tags model)
 
                 Unavailable _ ->
-                    [ viewFilter (chosen == Nothing) Nothing Phosphor.images "All pictures" Nothing ]
+                    [ viewFilter (chosen == Nothing) Nothing Nothing "All pictures" Nothing ]
 
                 _ ->
-                    viewFilter True Nothing Phosphor.images "All pictures" Nothing
-                        :: List.repeat 4 (Sidebar.menuItem [] [ Sidebar.menuSkeleton [] ])
+                    viewFilter True Nothing Nothing "All pictures" Nothing
+                        :: List.repeat 4 viewFilterSkeleton
             )
         , viewHint model
         ]
 
 
-viewFilter : Bool -> Maybe Tag -> Phosphor.Icon -> String -> Maybe Int -> Html Msg
-viewFilter current tag shape label total =
+viewFilter : Bool -> Maybe Tag -> Maybe Picture -> String -> Maybe Int -> Html Msg
+viewFilter current tag cover label total =
     Sidebar.menuItem [ class "max-md:shrink-0" ]
         (Sidebar.menuButton
             ([ onClick (TagChosen tag)
@@ -76,7 +76,7 @@ viewFilter current tag shape label total =
                  else
                     "false"
                 )
-             , class "pe-8"
+             , class "h-10! gap-2.5! ps-1.5! pe-8"
              ]
                 ++ (if current then
                         [ Sidebar.active ]
@@ -85,17 +85,49 @@ viewFilter current tag shape label total =
                         []
                    )
             )
-            [ shape Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            [ viewCover cover
             , span [] [ text label ]
             ]
             :: (case total of
                     Just n ->
-                        [ Sidebar.menuBadge [] [ text (String.fromInt n) ] ]
+                        [ Sidebar.menuBadge
+                            [ class "top-2.5! font-normal! text-muted-foreground! peer-hover/menu-button:text-sidebar-accent-foreground! peer-data-active/menu-button:text-sidebar-accent-foreground!" ]
+                            [ text (String.fromInt n) ]
+                        ]
 
                     Nothing ->
                         []
                )
         )
+
+
+viewCover : Maybe Picture -> Html Msg
+viewCover cover =
+    span [ class "flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted ring-1 ring-foreground/10" ]
+        [ case cover of
+            Just picture ->
+                img
+                    [ src picture.url
+                    , alt ""
+                    , attribute "loading" "lazy"
+                    , attribute "decoding" "async"
+                    , class "size-full object-cover"
+                    ]
+                    []
+
+            Nothing ->
+                Phosphor.images Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+        ]
+
+
+viewFilterSkeleton : Html Msg
+viewFilterSkeleton =
+    Sidebar.menuItem [ class "max-md:shrink-0" ]
+        [ div [ class "flex h-10 items-center gap-2.5 rounded-lg ps-1.5 pe-8 max-md:w-32", attribute "aria-hidden" "true" ]
+            [ Skeleton.view [ class "size-7 shrink-0" ]
+            , Skeleton.view [ class "h-4 flex-1" ]
+            ]
+        ]
 
 
 viewHint : Model -> Html Msg
