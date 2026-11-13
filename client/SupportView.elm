@@ -34,7 +34,7 @@ layers attributes device shown =
                 Pipeline.Unsupported _ ->
                     UnsupportedLayer
 
-                Pipeline.Supported _ ->
+                Pipeline.Supported _ _ ->
                     SupportedLayer
 
         layer which content =

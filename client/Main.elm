@@ -853,7 +853,7 @@ viewShell model page =
 isGenerating : Pipeline.Device -> Bool
 isGenerating device =
     case device of
-        Pipeline.Supported (Pipeline.Generating _ _ (Pipeline.Denoising _)) ->
+        Pipeline.Supported _ (Pipeline.Generating _ _ (Pipeline.Denoising _)) ->
             True
 
         _ ->

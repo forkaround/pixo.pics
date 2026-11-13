@@ -58,9 +58,10 @@ const pace = ({ runtime: { host } }: BonsaiImagePipeline) => {
 
 const checkWebGpu = async (): Promise<Reply> => {
   try {
-    return { tag: "WebGpuChecked", supported: await BonsaiImagePipeline.isSupported() };
+    const adapter = await navigator.gpu?.requestAdapter();
+    return { tag: "WebGpuChecked", features: adapter ? [...adapter.features] : null };
   } catch {
-    return { tag: "WebGpuChecked", supported: false };
+    return { tag: "WebGpuChecked", features: null };
   }
 };
 

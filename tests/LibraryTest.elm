@@ -273,7 +273,7 @@ made : List Pipeline.Picture
 made =
     List.foldl (\msg -> Pipeline.update msg >> Tuple.first)
         (Tuple.first (Pipeline.enter (Pipeline.init 1 True [])))
-        [ Pipeline.Happened (Pipeline.SupportChecked True)
+        [ Pipeline.Happened (Pipeline.SupportChecked (Just [ "shader-f16" ]))
         , Pipeline.PromptChanged "a red fox in the snow"
         , Pipeline.GenerateClicked
         , Pipeline.Happened Pipeline.ModelLoaded

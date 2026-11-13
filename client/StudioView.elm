@@ -328,8 +328,8 @@ viewGenerate model =
         Unsupported _ ->
             generateButton "Generate" [ disabled True ]
 
-        Supported engine ->
-            viewEngine model engine
+        Supported _ running ->
+            viewEngine model running
 
 
 viewEngine : Model -> Engine -> Html Msg
@@ -488,10 +488,10 @@ canvas toMsg library model =
     in
     div [ class "mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-10 p-4 md:p-8" ]
         (case ( model.device, pictures ) of
-            ( Supported (Generating _ job stage), _ ) ->
+            ( Supported _ (Generating _ job stage), _ ) ->
                 viewPending job stage :: pictures
 
-            ( Supported _, _ :: _ ) ->
+            ( Supported _ _, _ :: _ ) ->
                 pictures
 
             _ ->

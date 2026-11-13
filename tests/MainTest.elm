@@ -2080,9 +2080,21 @@ tagged name =
 
 webGpuChecked : Bool -> Encode.Value
 webGpuChecked supported =
+    if supported then
+        adapterFound [ "shader-f16" ]
+
+    else
+        Encode.object
+            [ ( "tag", Encode.string "WebGpuChecked" )
+            , ( "features", Encode.null )
+            ]
+
+
+adapterFound : List String -> Encode.Value
+adapterFound features =
     Encode.object
         [ ( "tag", Encode.string "WebGpuChecked" )
-        , ( "supported", Encode.bool supported )
+        , ( "features", Encode.list Encode.string features )
         ]
 
 

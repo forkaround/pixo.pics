@@ -294,7 +294,8 @@ toElm =
           )
         , ( "PasskeyFailed", TsDecode.map PasskeyFailed (TsDecode.field "error" TsDecode.string) )
         , ( "WebGpuChecked"
-          , TsDecode.map (Pipeline.SupportChecked >> PipelineEvent) (TsDecode.field "supported" TsDecode.bool)
+          , TsDecode.map (Pipeline.SupportChecked >> PipelineEvent)
+                (TsDecode.field "features" (TsDecode.nullable (TsDecode.list TsDecode.string)))
           )
         , ( "ModelProgress"
           , TsDecode.map (Pipeline.Downloaded >> PipelineEvent)

@@ -4,7 +4,7 @@ import Data.Dimension as Dimension
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Component(..), Device(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Storage(..), Weights(..))
+import Pipeline exposing (Command(..), Component(..), Device(..), Engine(..), Event(..), Message(..), Msg(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -119,7 +119,7 @@ suite =
                 \() ->
                     run [ DownloadClicked Binary, CancelClicked, Happened (Failed { name = "AbortError", message = "" }) ] supported
                         |> (\model -> ( model.device, model.downloaded ))
-                        |> Expect.equal ( Supported Empty, [] )
+                        |> Expect.equal ( Supported CanPrompt Empty, [] )
             , test "load one part at a time, the last one heard of" <|
                 \() ->
                     run
@@ -132,7 +132,7 @@ suite =
                         |> .device
                         |> (\device ->
                                 case device of
-                                    Supported (Loading _ parts _) ->
+                                    Supported _ (Loading _ parts _) ->
                                         Maybe.map (\part -> ( part.component, part.loaded )) (Pipeline.current parts)
 
                                     _ ->
@@ -221,7 +221,7 @@ suite =
                                 |> .device
                         )
                         [ "", "-1", "1.5", "4294967296", "seven" ]
-                        |> Expect.equal (List.repeat 5 (Supported (Ready Ternary)))
+                        |> Expect.equal (List.repeat 5 (Supported CanPrompt (Ready Ternary)))
             , test "takes the largest seed" <|
                 \() ->
                     Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", SeedChanged "4294967295" ] ready)
@@ -242,7 +242,7 @@ suite =
                         ]
                         ready
                         |> (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( Supported (Ready Ternary), Just (Problem "Out of memory") )
+                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Just (Problem "Out of memory") )
             , test "says so when a picture is aborted and nobody asked" <|
                 \() ->
                     run
@@ -252,7 +252,7 @@ suite =
                         ]
                         ready
                         |> (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( Supported (Ready Ternary), Just (Problem "Device was lost before MapAsync completed.") )
+                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Just (Problem "Device was lost before MapAsync completed.") )
             , test "says nothing when a picture is aborted on request" <|
                 \() ->
                     run
@@ -263,7 +263,7 @@ suite =
                         ]
                         ready
                         |> (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( Supported (Ready Ternary), Nothing )
+                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Nothing )
             , test "names a failure that says nothing" <|
                 \() ->
                     run [ DownloadClicked Ternary, Happened (Failed { name = "OperationError", message = "" }) ] supported
@@ -279,7 +279,7 @@ suite =
                         ]
                         ready
                         |> (\model -> ( model.device, List.map .url model.pictures ))
-                        |> Expect.equal ( Supported (Ready Ternary), [ "blob:1" ] )
+                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), [ "blob:1" ] )
             , test "opens a picture with its details hidden, and closes it" <|
                 \() ->
                     [ [ Opened "blob:1" ]
@@ -314,7 +314,7 @@ suite =
                 \() ->
                     run [ Happened ModelLoaded, Happened (PictureMade "blob:1"), Happened (StepFinished 2) ] supported
                         |> (\model -> ( model.device, model.pictures ))
-                        |> Expect.equal ( Supported Empty, [] )
+                        |> Expect.equal ( Supported CanPrompt Empty, [] )
             , test "counts the steps that are done" <|
                 \() ->
                     run [ PromptChanged "a bonsai", GenerateClicked, Happened (StepFinished 0), Happened (StepFinished 1) ] ready
@@ -329,7 +329,7 @@ supported : Pipeline.Model
 supported =
     Pipeline.enter (Pipeline.init 1 True [])
         |> Tuple.first
-        |> run [ Happened (SupportChecked True) ]
+        |> run [ Happened (SupportChecked (Just [ "shader-f16" ])) ]
 
 
 ready : Pipeline.Model
@@ -355,7 +355,7 @@ seedOf command =
 stage : Device -> Maybe Stage
 stage device =
     case device of
-        Supported (Generating _ _ found) ->
+        Supported _ (Generating _ _ found) ->
             Just found
 
         _ ->

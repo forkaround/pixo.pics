@@ -13,12 +13,15 @@ module Pipeline exposing
     , Pending
     , Picture
     , Preset
+    , Prompting(..)
     , Seeding(..)
     , Settings
     , Stage(..)
     , Storage(..)
     , Weights(..)
+    , canPrompt
     , current
+    , engineOf
     , enter
     , frameBudget
     , guidance
@@ -27,6 +30,7 @@ module Pipeline exposing
     , isDownloaded
     , isSupported
     , presets
+    , prompting
     , remember
     , remembered
     , update
@@ -67,7 +71,12 @@ type Device
     = Unchecked
     | Checking
     | Unsupported Storage
-    | Supported Engine
+    | Supported Prompting Engine
+
+
+type Prompting
+    = CanPrompt
+    | NoShaderF16
 
 
 type Storage
@@ -259,7 +268,7 @@ isDownloaded chosen model =
 isSupported : Device -> Bool
 isSupported device =
     case device of
-        Supported _ ->
+        Supported _ _ ->
             True
 
         Unchecked ->
@@ -272,13 +281,75 @@ isSupported device =
             False
 
 
+promptingFrom : List String -> Prompting
+promptingFrom features =
+    if List.member "shader-f16" features then
+        CanPrompt
+
+    else
+        NoShaderF16
+
+
+engineOf : Device -> Maybe Engine
+engineOf device =
+    case device of
+        Supported _ running ->
+            Just running
+
+        Unchecked ->
+            Nothing
+
+        Checking ->
+            Nothing
+
+        Unsupported _ ->
+            Nothing
+
+
+prompting : Device -> Maybe Prompting
+prompting device =
+    case device of
+        Supported can _ ->
+            Just can
+
+        Unchecked ->
+            Nothing
+
+        Checking ->
+            Nothing
+
+        Unsupported _ ->
+            Nothing
+
+
+canPrompt : Device -> Bool
+canPrompt device =
+    prompting device == Just CanPrompt
+
+
+setEngine : Engine -> Model -> Model
+setEngine running model =
+    case model.device of
+        Supported can _ ->
+            { model | device = Supported can running }
+
+        Unchecked ->
+            model
+
+        Checking ->
+            model
+
+        Unsupported _ ->
+            model
+
+
 inMemory : Device -> Maybe Weights
 inMemory device =
     case device of
-        Supported (Ready loaded) ->
+        Supported _ (Ready loaded) ->
             Just loaded
 
-        Supported (Generating loaded _ _) ->
+        Supported _ (Generating loaded _ _) ->
             Just loaded
 
         _ ->
@@ -339,7 +410,7 @@ type Msg
 
 
 type Event
-    = SupportChecked Bool
+    = SupportChecked (Maybe (List String))
     | Downloaded Download
     | ModelLoaded
     | StepFinished Int
@@ -427,27 +498,27 @@ update msg model =
 
         CancelClicked ->
             case model.device of
-                Supported (Loading _ _ _) ->
+                Supported _ (Loading _ _ _) ->
                     ( model, Just Cancel )
 
-                Supported (Generating loaded job (Denoising _)) ->
-                    ( { model | device = Supported (Generating loaded job Stopping) }, Just Cancel )
+                Supported _ (Generating loaded job (Denoising _)) ->
+                    ( setEngine (Generating loaded job Stopping) model, Just Cancel )
 
                 _ ->
                     ( model, Nothing )
 
         ReleaseClicked ->
             case model.device of
-                Supported (Ready _) ->
-                    ( { model | device = Supported (Releasing Nothing), message = Nothing }, Just Release )
+                Supported _ (Ready _) ->
+                    ( setEngine (Releasing Nothing) { model | message = Nothing }, Just Release )
 
                 _ ->
                     ( model, Nothing )
 
         ClearClicked ->
             case model.device of
-                Supported Empty ->
-                    ( { model | device = Supported Clearing, message = Nothing }, Just ClearCache )
+                Supported _ Empty ->
+                    ( setEngine Clearing { model | message = Nothing }, Just ClearCache )
 
                 Unsupported Kept ->
                     ( { model | device = Unsupported Emptying, message = Nothing }, Just ClearCache )
@@ -456,7 +527,7 @@ update msg model =
                     ( model, Nothing )
 
         GenerateClicked ->
-            if inMemory model.device == Nothing && model.device /= Supported Empty then
+            if inMemory model.device == Nothing && engineOf model.device /= Just Empty then
                 ( model, Nothing )
 
             else
@@ -474,12 +545,12 @@ update msg model =
 start : Pending -> Model -> ( Model, Maybe Command )
 start pending model =
     case model.device of
-        Supported Empty ->
+        Supported _ Empty ->
             load pending model
 
-        Supported (Ready loaded) ->
+        Supported _ (Ready loaded) ->
             if loaded /= pending.weights then
-                ( { model | device = Supported (Releasing (Just pending)), message = Nothing }, Just Release )
+                ( setEngine (Releasing (Just pending)) { model | message = Nothing }, Just Release )
 
             else
                 case pending.job of
@@ -495,21 +566,21 @@ start pending model =
 
 load : Pending -> Model -> ( Model, Maybe Command )
 load pending model =
-    ( { model | device = Supported (Loading pending.weights [] pending.job), message = Nothing }
+    ( setEngine (Loading pending.weights [] pending.job) { model | message = Nothing }
     , Just (Load pending.weights)
     )
 
 
 generate : Weights -> Job -> Model -> ( Model, Maybe Command )
 generate loaded job model =
-    ( { model | device = Supported (Generating loaded job (Denoising 0)), message = Nothing }, Just (Generate job) )
+    ( setEngine (Generating loaded job (Denoising 0)) { model | message = Nothing }, Just (Generate job) )
 
 
 happened : Event -> Model -> ( Model, Maybe Command )
 happened event model =
     case ( event, model.device ) of
-        ( SupportChecked True, Checking ) ->
-            ( { model | device = Supported Empty }, Nothing )
+        ( SupportChecked (Just features), Checking ) ->
+            ( { model | device = Supported (promptingFrom features) Empty }, Nothing )
 
         ( CacheCleared, Unsupported Emptying ) ->
             ( { model
@@ -520,28 +591,26 @@ happened event model =
             , Nothing
             )
 
-        ( SupportChecked False, Checking ) ->
+        ( SupportChecked Nothing, Checking ) ->
             ( { model | device = Unsupported Kept }, Nothing )
 
-        ( Downloaded progress, Supported (Loading chosen downloads waiting) ) ->
-            ( { model
-                | device =
-                    Supported
-                        (Loading chosen
-                            (progress :: List.filter (\known -> known.component /= progress.component) downloads)
-                            waiting
-                        )
-              }
+        ( Downloaded progress, Supported _ (Loading chosen downloads waiting) ) ->
+            ( setEngine
+                (Loading chosen
+                    (progress :: List.filter (\known -> known.component /= progress.component) downloads)
+                    waiting
+                )
+                model
             , Nothing
             )
 
-        ( ModelLoaded, Supported (Loading chosen _ waiting) ) ->
+        ( ModelLoaded, Supported _ (Loading chosen _ waiting) ) ->
             let
                 loaded =
-                    { model
-                        | device = Supported (Ready chosen)
-                        , downloaded = chosen :: List.filter (\known -> known /= chosen) model.downloaded
-                    }
+                    setEngine (Ready chosen)
+                        { model
+                            | downloaded = chosen :: List.filter (\known -> known /= chosen) model.downloaded
+                        }
             in
             case waiting of
                 Just job ->
@@ -550,26 +619,26 @@ happened event model =
                 Nothing ->
                     ( loaded, Nothing )
 
-        ( StepFinished index, Supported (Generating loaded job (Denoising _)) ) ->
-            ( { model | device = Supported (Generating loaded job (Denoising (index + 1))) }, Nothing )
+        ( StepFinished index, Supported _ (Generating loaded job (Denoising _)) ) ->
+            ( setEngine (Generating loaded job (Denoising (index + 1))) model, Nothing )
 
-        ( PictureMade url, Supported (Generating loaded job _) ) ->
-            ( { model | device = Supported (Ready loaded), pictures = { url = url, job = job, weights = loaded } :: model.pictures }
+        ( PictureMade url, Supported _ (Generating loaded job _) ) ->
+            ( setEngine (Ready loaded) { model | pictures = { url = url, job = job, weights = loaded } :: model.pictures }
             , Nothing
             )
 
-        ( ModelReleased, Supported (Releasing (Just pending)) ) ->
-            load pending { model | device = Supported Empty }
+        ( ModelReleased, Supported _ (Releasing (Just pending)) ) ->
+            load pending (setEngine Empty model)
 
-        ( ModelReleased, Supported (Releasing Nothing) ) ->
-            ( { model | device = Supported Empty }, Nothing )
+        ( ModelReleased, Supported _ (Releasing Nothing) ) ->
+            ( setEngine Empty model, Nothing )
 
-        ( CacheCleared, Supported Clearing ) ->
-            ( { model
-                | device = Supported Empty
-                , downloaded = []
-                , message = Just (Info "Downloaded models removed.")
-              }
+        ( CacheCleared, Supported _ Clearing ) ->
+            ( setEngine Empty
+                { model
+                    | downloaded = []
+                    , message = Just (Info "Downloaded models removed.")
+                }
             , Nothing
             )
 
@@ -598,10 +667,10 @@ happened event model =
 isCancellable : Device -> Bool
 isCancellable device =
     case device of
-        Supported (Loading _ _ _) ->
+        Supported _ (Loading _ _ _) ->
             True
 
-        Supported (Generating _ _ Stopping) ->
+        Supported _ (Generating _ _ Stopping) ->
             True
 
         _ ->
@@ -626,8 +695,8 @@ rest device =
         Unsupported Unreachable ->
             Nothing
 
-        Supported engine ->
-            Maybe.map Supported (restEngine engine)
+        Supported can running ->
+            Maybe.map (Supported can) (restEngine running)
 
 
 restEngine : Engine -> Maybe Engine

@@ -49,7 +49,7 @@ storageHint device =
         Unsupported Unreachable ->
             "Reload the page to remove them."
 
-        Supported _ ->
+        Supported _ _ ->
             inMemoryHint device
 
 
@@ -74,7 +74,7 @@ storage model =
                     [ text (storageHint model.device) ]
                 , Button.new
                     |> Button.text
-                        (if model.device == Supported Clearing || model.device == Unsupported Emptying then
+                        (if Pipeline.engineOf model.device == Just Clearing || model.device == Unsupported Emptying then
                             "Removing…"
 
                          else
@@ -83,7 +83,7 @@ storage model =
                     |> Button.outline
                     |> Button.small
                     |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.toHtml [ onClick ClearClicked, disabled (model.device /= Supported Empty && model.device /= Unsupported Kept), class "max-sm:w-full" ]
+                    |> Button.toHtml [ onClick ClearClicked, disabled (Pipeline.engineOf model.device /= Just Empty && model.device /= Unsupported Kept), class "max-sm:w-full" ]
                 ]
             |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
         ]
@@ -92,7 +92,7 @@ storage model =
 row : Model -> Weights -> Row
 row model weights =
     case model.device of
-        Supported (Loading chosen parts _) ->
+        Supported _ (Loading chosen parts _) ->
             if chosen == weights then
                 Downloading parts
 
@@ -126,7 +126,7 @@ viewWeights model weights =
             row model weights
 
         idle =
-            model.device == Supported Empty || Pipeline.inMemory model.device /= Nothing && not (isGenerating model.device)
+            Pipeline.engineOf model.device == Just Empty || Pipeline.inMemory model.device /= Nothing && not (isGenerating model.device)
     in
     Card.new
         |> Card.content []
@@ -307,7 +307,7 @@ hint attributes device supported unsupported =
 isGenerating : Device -> Bool
 isGenerating device =
     case device of
-        Supported (Generating _ _ _) ->
+        Supported _ (Generating _ _ _) ->
             True
 
         _ ->
