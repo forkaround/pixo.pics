@@ -1,0 +1,45 @@
+# UI components and layout
+
+Read when touching `client/UI/`, an elmcn component, the sidebar, the bar, `client/Logo.elm` or
+`favicon.svg`.
+
+## elmcn components
+
+shadcn/ui for Elm, copied into `client/UI/` and ours to change. Read a module for its API.
+
+```sh
+npx shadcn@latest search ricardocasares/elmcn -q dialog
+npx shadcn@latest view ricardocasares/elmcn/dialog
+npx shadcn@latest add ricardocasares/elmcn/dialog
+mv -n src/UI/* client/UI/ && ls src/UI
+```
+
+- The registry installs into `src/UI/`. `mv -n` keeps existing (maybe edited) components;
+  whatever `ls` still lists, merge by hand, then delete `src/`. `--diff` can't see
+  `client/UI/`.
+- `UI.Sidebar`, `UI.Select` and `UI.DropdownMenu` are changed from the registry's: adding
+  them again would undo it, so merge by hand. `DropdownMenu.minHeight` adds up
+  `itemHeight`, `menuPadding` and `separatorHeight`: change them together.
+- Follow the CLI's notes: some items need an Elm package (`elm install` at the root) or
+  a script import in `client/main.ts`. Strip their comments, keeping the `-- SECTION`
+  headings.
+
+## The bar
+
+- The bar's sticky element is half the column wide and the `header` inside it twice
+  that. iOS Safari covers the status bar with a solid colour when a sticky or fixed
+  element at least 90% of the viewport wide sits at the top edge (WebKit's
+  `LocalFrameView::fixedContainerEdges`), and lets the page show through otherwise. The
+  bar's backdrop reaches 6rem above it, to blur what scrolls under the status bar.
+  Safari clips a sticky element to the viewport unless a composited layer holds it
+  (`RenderLayerCompositor::viewportConstrainedSublayers`): that is the rail around it,
+  as tall as the page, with `will-change-transform`. The rail takes no clicks.
+
+## Logo
+
+- `client/Logo.elm` is the one SVG drawn by hand. Elm interpolates between its expanded
+  and collapsed paths, which must have the same commands and coordinate count. Its paths
+  run along the middle of a 5-unit stroke and the view box leaves room for it: change
+  the stroke and both change. `public/favicon.svg` copies the X's path: a change goes in
+  both. The sidebar's animation is Elm frames driving `--sidebar-progress`, with no CSS
+  transition or TypeScript.

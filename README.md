@@ -66,7 +66,7 @@ Every table has row-level security. Migrations run as the owner; the server conn
 `api`, which owns nothing and sees only the signed-in user's rows: `authenticate(token)`
 sets the user for one transaction, and `Db.signedIn` starts that transaction. On Neon,
 create `api` in SQL and set `API_DATABASE_PASSWORD` on Vercel: see
-[AGENTS.md](AGENTS.md#row-level-security).
+[migrations/AGENTS.md](migrations/AGENTS.md#row-level-security).
 
 ## Health check
 
@@ -94,4 +94,5 @@ bun db commit --message "Create users"    # turns it into a committed migration
 
 ## More
 
-[AGENTS.md](AGENTS.md) has the conventions and the reasons behind them. License: [MIT](LICENSE).
+[AGENTS.md](AGENTS.md) and the guides it links to have the conventions and the reasons
+behind them. License: [MIT](LICENSE).
