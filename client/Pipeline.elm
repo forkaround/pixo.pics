@@ -52,7 +52,9 @@ type alias Model =
     , settings : Settings
     , message : Maybe Message
     , pictures : List Picture
-    , detailed : Maybe String
+    , viewing : Maybe String
+    , zoomed : Bool
+    , detailed : Bool
     , downloaded : List Weights
     , random : Random.Seed
     }
@@ -164,7 +166,9 @@ init entropy downloaded =
         }
     , message = Nothing
     , pictures = []
-    , detailed = Nothing
+    , viewing = Nothing
+    , zoomed = False
+    , detailed = False
     , downloaded = downloaded
     , random = Random.initialSeed entropy
     }
@@ -292,7 +296,10 @@ type Msg
     | RandomSeedToggled Bool
     | SeedChanged String
     | SeedReused Seed
-    | DetailsToggled String
+    | Opened String
+    | Closed
+    | Stepped Int
+    | DetailsToggled
     | GenerateClicked
     | Happened Event
 
@@ -357,20 +364,29 @@ update msg model =
         SeedChanged seed ->
             ( edit (\settings -> { settings | seeding = FixedSeed seed }) model, Nothing )
 
-        DetailsToggled url ->
-            ( { model
-                | detailed =
-                    if model.detailed == Just url then
-                        Nothing
+        Opened url ->
+            ( { model | viewing = Just url, zoomed = True, detailed = False }, Nothing )
+
+        Closed ->
+            ( { model | zoomed = False }, Nothing )
+
+        Stepped offset ->
+            case Maybe.andThen (\viewed -> neighbour offset viewed (List.map .url model.pictures)) model.viewing of
+                Just url ->
+                    if model.zoomed then
+                        ( { model | viewing = Just url }, Nothing )
 
                     else
-                        Just url
-              }
-            , Nothing
-            )
+                        ( model, Nothing )
+
+                Nothing ->
+                    ( model, Nothing )
+
+        DetailsToggled ->
+            ( { model | detailed = not model.detailed }, Nothing )
 
         SeedReused seed ->
-            ( edit (\settings -> { settings | seeding = FixedSeed (Seed.toString seed) }) model, Nothing )
+            ( edit (\settings -> { settings | seeding = FixedSeed (Seed.toString seed) }) { model | zoomed = False }, Nothing )
 
         DownloadClicked chosen ->
             start { weights = chosen, job = Nothing } model
@@ -626,3 +642,20 @@ lastSeed pictures =
 edit : (Settings -> Settings) -> Model -> Model
 edit change model =
     { model | settings = change model.settings }
+
+
+neighbour : Int -> a -> List a -> Maybe a
+neighbour offset key keys =
+    keys
+        |> List.indexedMap Tuple.pair
+        |> List.filter (\( _, known ) -> known == key)
+        |> List.head
+        |> Maybe.map (\( index, _ ) -> index + offset)
+        |> Maybe.andThen
+            (\index ->
+                if index < 0 then
+                    Nothing
+
+                else
+                    List.head (List.drop index keys)
+            )

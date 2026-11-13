@@ -606,7 +606,9 @@ viewBody model =
                 []
                 [ viewAside "border-b md:w-80 md:border-e md:border-b-0" [ StudioView.controls { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline ]
                 , viewContent
-                    [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline ]
+                    [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
+                    , StudioView.lightbox { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
+                    ]
                 ]
 
         Library ->

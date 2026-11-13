@@ -195,6 +195,21 @@ suite =
                     run [ Opened 1, DetailsToggled, Closed, Opened 2 ] loaded
                         |> .detailed
                         |> Expect.equal False
+            , test "steps to the picture beside the open one, and stops at either end" <|
+                \() ->
+                    [ [ Opened 2, Stepped 1 ]
+                    , [ Opened 2, Stepped -1 ]
+                    , [ Opened 1, Stepped 1 ]
+                    , [ Opened 3, Stepped -1 ]
+                    , [ Opened 2, Closed, Stepped 1 ]
+                    ]
+                        |> List.map (\msgs -> (run msgs loaded).viewing)
+                        |> Expect.equal [ Just 1, Just 3, Just 1, Just 3, Just 2 ]
+            , test "keeps the details pinned and drops the question while stepping" <|
+                \() ->
+                    run [ Opened 2, DetailsToggled, DeleteRequested 2, Stepped 1 ] loaded
+                        |> (\model -> ( model.detailed, model.confirming ))
+                        |> Expect.equal ( True, Nothing )
             , test "leaves another picture open" <|
                 \() ->
                     run [ Opened 2, deleted 1 ] loaded

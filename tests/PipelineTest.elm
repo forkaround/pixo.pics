@@ -226,14 +226,36 @@ suite =
                         ready
                         |> (\model -> ( model.engine, List.map .url model.pictures ))
                         |> Expect.equal ( Ready Ternary, [ "blob:1" ] )
-            , test "pins the details of one picture at a time" <|
+            , test "opens a picture with its details hidden, and closes it" <|
                 \() ->
-                    [ [ DetailsToggled "blob:1" ]
-                    , [ DetailsToggled "blob:1", DetailsToggled "blob:2" ]
-                    , [ DetailsToggled "blob:1", DetailsToggled "blob:1" ]
+                    [ [ Opened "blob:1" ]
+                    , [ Opened "blob:1", DetailsToggled ]
+                    , [ Opened "blob:1", DetailsToggled, Closed, Opened "blob:2" ]
+                    , [ Opened "blob:1", Closed ]
+                    , Opened "blob:1" :: List.filterMap (Seed.fromInt >> Maybe.map SeedReused) [ 7 ]
                     ]
-                        |> List.map (\msgs -> (run msgs ready).detailed)
-                        |> Expect.equal [ Just "blob:1", Just "blob:2", Nothing ]
+                        |> List.map (\msgs -> run msgs ready |> (\model -> ( model.viewing, model.zoomed, model.detailed )))
+                        |> Expect.equal
+                            [ ( Just "blob:1", True, False )
+                            , ( Just "blob:1", True, True )
+                            , ( Just "blob:2", True, False )
+                            , ( Just "blob:1", False, False )
+                            , ( Just "blob:1", False, False )
+                            ]
+            , test "steps to the picture beside the open one, and stops at either end" <|
+                \() ->
+                    let
+                        two =
+                            run [ PromptChanged "a bonsai", GenerateClicked, Happened (PictureMade "blob:1"), GenerateClicked, Happened (PictureMade "blob:2") ] ready
+                    in
+                    [ [ Opened "blob:2", Stepped 1 ]
+                    , [ Opened "blob:1", Stepped -1 ]
+                    , [ Opened "blob:1", Stepped 1 ]
+                    , [ Opened "blob:2", Stepped -1 ]
+                    , [ Opened "blob:2", Closed, Stepped 1 ]
+                    ]
+                        |> List.map (\msgs -> (run msgs two).viewing)
+                        |> Expect.equal [ Just "blob:1", Just "blob:2", Just "blob:1", Just "blob:2", Just "blob:2" ]
             , test "ignores what arrives for work it did not start" <|
                 \() ->
                     run [ Happened ModelLoaded, Happened (PictureMade "blob:1"), Happened (StepFinished 2) ] supported

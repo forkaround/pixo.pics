@@ -2,18 +2,16 @@ module LibraryView exposing (search, view)
 
 import Data.Dimension as Dimension
 import Data.Prompt as Prompt
-import Data.Seed as Seed
-import Data.Steps as Steps
 import Html exposing (Attribute, Html, button, div, img, p, span, text)
 import Html.Attributes exposing (alt, attribute, class, download, height, href, id, placeholder, src, style, type_, value, width)
 import Html.Events exposing (onClick, onInput)
 import Library exposing (Model, Msg(..), Picture, Pictures(..))
+import Lightbox
 import Overlay exposing (glass, red)
 import Path
 import Phosphor exposing (IconWeight(..))
 import Share
 import UI.Button as Button
-import UI.Dialog as Dialog
 import UI.DropdownMenu as DropdownMenu
 import UI.Empty as Empty
 import UI.Input as Input
@@ -251,135 +249,59 @@ logo network =
 
 viewDialog : Model -> Html Msg
 viewDialog model =
-    let
-        shown =
-            Maybe.andThen (\viewed -> Library.find viewed model) model.viewing
-    in
-    Dialog.new
-        |> Dialog.id "picture"
-        |> Dialog.open (model.zoomed && shown /= Nothing) Closed
-        |> Dialog.label "Picture"
-        |> Dialog.hideCloseButton
-        |> Dialog.content (Maybe.withDefault [] (Maybe.map (viewZoomed model) shown))
-        |> Dialog.toHtml [ class "w-fit! max-w-none! gap-0! overflow-hidden bg-black! p-0!" ]
+    Lightbox.view
+        { id = "picture"
+        , open = model.zoomed
+        , detailed = model.detailed
+        , onClose = Closed
+        , onToggle = DetailsToggled
+        , onStep = Stepped
+        }
+        (Maybe.map (viewZoomed model) (Maybe.andThen (\viewed -> Library.find viewed model) model.viewing))
 
 
-viewZoomed : Model -> Picture -> List (Html Msg)
+viewZoomed : Model -> Picture -> Lightbox.Shown Msg
 viewZoomed model picture =
     let
-        job =
-            picture.job
-
-        across =
-            Dimension.toInt job.width
-
-        down =
-            Dimension.toInt job.height
-
         confirming =
             model.confirming == Just picture.id
-
-        pinned =
-            model.detailed || confirming || model.notice /= Nothing
     in
-    [ div [ class "group/picture relative" ]
-        [ button
-            [ type_ "button"
-            , onClick DetailsToggled
-            , attribute "aria-label" "Show details"
-            , attribute "aria-pressed"
-                (if model.detailed then
-                    "true"
+    { url = picture.url
+    , job = picture.job
+    , model = Library.modelName picture
+    , pinned = confirming || model.notice /= Nothing
+    , notice = viewNotice model.notice
+    , actions =
+        if confirming then
+            [ span [ class "basis-full text-sm font-medium" ] [ text "Delete this picture?" ]
+            , Button.new
+                |> Button.text "Cancel"
+                |> Button.small
+                |> Button.toHtml [ onClick DeleteCancelled, glass ]
+            , Button.new
+                |> Button.text "Delete"
+                |> Button.small
+                |> Button.toHtml [ onClick (DeleteConfirmed picture.id), red ]
+            ]
 
-                 else
-                    "false"
-                )
-            , class "block outline-none"
+        else
+            [ Button.new
+                |> Button.text "Download"
+                |> Button.small
+                |> Button.startIcon (icon Phosphor.downloadSimple)
+                |> Button.toAnchor [ href picture.url, download (Library.fileName picture.job), glass ]
+            , viewShare "share-open-"
+                model
+                picture
+                ((Button.new |> Button.text "Share" |> Button.small |> Button.toAttributes) ++ [ glass ])
+                [ icon Phosphor.shareNetwork, text "Share" ]
+            , Button.new
+                |> Button.icon (icon Phosphor.trash)
+                |> Button.label "Delete"
+                |> Button.small
+                |> Button.toHtml [ onClick (DeleteRequested picture.id), red, class "ms-auto" ]
             ]
-            [ img
-                [ src picture.url
-                , alt (Prompt.toString job.prompt)
-                , width across
-                , height down
-                , class "block h-auto max-w-none"
-                , style "aspect-ratio" (ratio picture)
-                , style "width"
-                    ("min(100vw - 2rem, (100svh - 2rem) * "
-                        ++ String.fromInt across
-                        ++ " / "
-                        ++ String.fromInt down
-                        ++ ", "
-                        ++ String.fromInt (2 * across)
-                        ++ "px)"
-                    )
-                ]
-                []
-            ]
-        , div
-            [ class "pointer-events-none absolute inset-0 flex flex-col justify-between overflow-hidden text-white transition-opacity duration-200 group-hover/picture:opacity-100 group-has-[:focus-visible]/picture:opacity-100 group-has-[:popover-open]/picture:opacity-100"
-            , class
-                (if pinned then
-                    "opacity-100"
-
-                 else
-                    "opacity-0"
-                )
-            ]
-            [ div [ class "flex justify-end bg-linear-to-b from-black/60 to-transparent p-3 pb-8" ]
-                [ Button.new
-                    |> Button.icon (icon Phosphor.x)
-                    |> Button.label "Close"
-                    |> Button.small
-                    |> Button.toHtml [ onClick Closed, glass, class "pointer-events-auto" ]
-                ]
-            , div [ class "flex flex-col gap-2 bg-linear-to-t from-black/85 via-black/55 to-transparent p-4 pt-16" ]
-                [ p [ class "line-clamp-4 text-sm" ] [ text (Prompt.toString job.prompt) ]
-                , p [ class "text-xs text-white/70 tabular-nums" ]
-                    [ text
-                        (String.join " · "
-                            [ String.fromInt across ++ " × " ++ String.fromInt down
-                            , String.fromInt (Steps.toInt job.steps) ++ " steps"
-                            , "seed " ++ Seed.toString job.seed
-                            , Library.modelName picture
-                            ]
-                        )
-                    ]
-                , div [ class "pointer-events-auto empty:hidden" ] [ viewNotice model.notice ]
-                , div [ class "pointer-events-auto flex flex-wrap items-center gap-1.5" ]
-                    (if confirming then
-                        [ span [ class "basis-full text-sm font-medium" ] [ text "Delete this picture?" ]
-                        , Button.new
-                            |> Button.text "Cancel"
-                            |> Button.small
-                            |> Button.toHtml [ onClick DeleteCancelled, glass ]
-                        , Button.new
-                            |> Button.text "Delete"
-                            |> Button.small
-                            |> Button.toHtml [ onClick (DeleteConfirmed picture.id), red ]
-                        ]
-
-                     else
-                        [ Button.new
-                            |> Button.text "Download"
-                            |> Button.small
-                            |> Button.startIcon (icon Phosphor.downloadSimple)
-                            |> Button.toAnchor [ href picture.url, download (Library.fileName job), glass ]
-                        , viewShare "share-open-"
-                            model
-                            picture
-                            ((Button.new |> Button.text "Share" |> Button.small |> Button.toAttributes) ++ [ glass ])
-                            [ icon Phosphor.shareNetwork, text "Share" ]
-                        , Button.new
-                            |> Button.icon (icon Phosphor.trash)
-                            |> Button.label "Delete"
-                            |> Button.small
-                            |> Button.toHtml [ onClick (DeleteRequested picture.id), red, class "ms-auto" ]
-                        ]
-                    )
-                ]
-            ]
-        ]
-    ]
+    }
 
 
 viewNotice : Maybe Library.Notice -> Html Msg

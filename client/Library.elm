@@ -234,6 +234,7 @@ type Msg
     = QueryChanged String
     | Opened Int
     | Closed
+    | Stepped Int
     | DetailsToggled
     | DeleteRequested Int
     | DeleteCancelled
@@ -284,6 +285,18 @@ update msg model =
         Closed ->
             ( { model | zoomed = False, confirming = Nothing }, [] )
 
+        Stepped offset ->
+            case Maybe.andThen (\viewed -> neighbour offset viewed (List.map .id (visible model))) model.viewing of
+                Just id ->
+                    if model.zoomed then
+                        ( { model | viewing = Just id, confirming = Nothing, notice = Nothing }, [] )
+
+                    else
+                        ( model, [] )
+
+                Nothing ->
+                    ( model, [] )
+
         DetailsToggled ->
             ( { model | detailed = not model.detailed }, [] )
 
@@ -321,6 +334,23 @@ update msg model =
 
         Happened event ->
             happened event model
+
+
+neighbour : Int -> a -> List a -> Maybe a
+neighbour offset key keys =
+    keys
+        |> List.indexedMap Tuple.pair
+        |> List.filter (\( _, known ) -> known == key)
+        |> List.head
+        |> Maybe.map (\( index, _ ) -> index + offset)
+        |> Maybe.andThen
+            (\index ->
+                if index < 0 then
+                    Nothing
+
+                else
+                    List.head (List.drop index keys)
+            )
 
 
 with : Int -> Model -> (Picture -> Command) -> List Command

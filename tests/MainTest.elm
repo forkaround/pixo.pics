@@ -1087,7 +1087,7 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "IdbGetAll" ])
-            , test "keeps a picture's details over it once it is tapped, until the next tap" <|
+            , test "opens a new picture bigger, with everything that made it" <|
                 \() ->
                     ready
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
@@ -1095,6 +1095,39 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
                         |> ProgramTest.ensureViewHas
                             [ tag "figcaption", containing [ text "Bonsai ternary, 2-bit" ] ]
+                        |> ProgramTest.ensureViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "open" "") ]
+                        |> ProgramTest.clickButton "Open a bonsai"
+                        |> ProgramTest.ensureViewHas [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "open" "") ]
+                        |> ProgramTest.ensureViewHas
+                            [ id "studio-picture", containing [ text "512 × 512 · 4 steps · seed " ], containing [ text "Bonsai ternary, 2-bit" ] ]
+                        |> ProgramTest.within
+                            (Query.find [ id "studio-picture" ])
+                            (ProgramTest.clickButton "Save")
+                        |> ProgramTest.ensureViewHas [ text "Saving…" ]
+                        |> ProgramTest.clickButton "Close"
+                        |> ProgramTest.expectViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "open" "") ]
+            , test "shows the picture made before with the right arrow key" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a maple"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/2")
+                        |> ProgramTest.clickButton "Open a maple"
+                        |> ProgramTest.simulateDomEvent
+                            (Query.find [ attribute (Html.Attributes.attribute "data-slot" "lightbox") ])
+                            ( "keydown", Encode.object [ ( "key", Encode.string "ArrowRight" ) ] )
+                        |> ProgramTest.expectViewHas
+                            [ id "studio-picture", containing [ tag "img", attribute (Html.Attributes.alt "a bonsai") ] ]
+            , test "keeps a picture's details over it once it is tapped, until the next tap" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Open a bonsai"
                         |> ProgramTest.ensureViewHas
                             [ tag "button", attribute (Html.Attributes.attribute "aria-pressed" "false") ]
                         |> ProgramTest.clickButton "Show details"
@@ -1425,6 +1458,23 @@ suite =
                         |> ProgramTest.clickButton "Show details"
                         |> ProgramTest.expectViewHas
                             [ tag "button", attribute (Html.Attributes.attribute "aria-pressed" "false") ]
+            , test "shows the next or the last picture with the arrow keys" <|
+                \() ->
+                    library
+                        |> ProgramTest.clickButton "Open a lighthouse on a cliff at sunset"
+                        |> ProgramTest.simulateDomEvent
+                            (Query.find [ attribute (Html.Attributes.attribute "data-slot" "lightbox") ])
+                            ( "keydown", Encode.object [ ( "key", Encode.string "ArrowRight" ) ] )
+                        |> ProgramTest.ensureViewHas
+                            [ id "picture", containing [ tag "img", attribute (Html.Attributes.alt "a red fox in the snow") ] ]
+                        |> ProgramTest.simulateDomEvent
+                            (Query.find [ attribute (Html.Attributes.attribute "data-slot" "lightbox") ])
+                            ( "keydown", Encode.object [ ( "key", Encode.string "ArrowLeft" ) ] )
+                        |> ProgramTest.simulateDomEvent
+                            (Query.find [ attribute (Html.Attributes.attribute "data-slot" "lightbox") ])
+                            ( "keydown", Encode.object [ ( "key", Encode.string "ArrowLeft" ) ] )
+                        |> ProgramTest.expectViewHas
+                            [ id "picture", containing [ tag "img", attribute (Html.Attributes.alt "a city skyline at sunset") ] ]
             , test "deletes the picture that is open, and closes it" <|
                 \() ->
                     library

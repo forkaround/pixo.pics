@@ -1,4 +1,4 @@
-module StudioView exposing (canvas, controls, loading, message)
+module StudioView exposing (canvas, controls, lightbox, loading, message)
 
 import Data.Dimension as Dimension exposing (Dimension)
 import Data.Prompt as Prompt
@@ -8,6 +8,7 @@ import Html exposing (Html, button, div, figcaption, figure, form, img, p, span,
 import Html.Attributes exposing (alt, attribute, checked, class, disabled, download, for, height, href, id, name, placeholder, readonly, src, style, title, type_, value, width)
 import Html.Events exposing (onCheck, onClick, onInput, onSubmit)
 import Library
+import Lightbox
 import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
@@ -466,7 +467,7 @@ canvas : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Mode
 canvas toMsg library model =
     let
         pictures =
-            List.map (viewPicture toMsg library model) model.pictures
+            List.map (viewPicture toMsg library) model.pictures
     in
     div [ class "mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-10 p-4 md:p-8" ]
         (case ( model.engine, pictures ) of
@@ -527,31 +528,21 @@ frame job =
     ]
 
 
-viewPicture : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Model -> Pipeline.Picture -> Html msg
-viewPicture toMsg library model picture =
+viewPicture : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Pipeline.Picture -> Html msg
+viewPicture toMsg library picture =
     let
         job =
             picture.job
 
         prompt =
             Prompt.toString job.prompt
-
-        detailed =
-            model.detailed == Just picture.url
     in
     figure (class "group/picture relative overflow-hidden rounded-xl shadow-sm ring-1 ring-foreground/10" :: frame job)
         [ button
             [ type_ "button"
-            , onClick (toMsg.pipeline (DetailsToggled picture.url))
-            , attribute "aria-label" "Show details"
-            , attribute "aria-pressed"
-                (if detailed then
-                    "true"
-
-                 else
-                    "false"
-                )
-            , class "block size-full outline-none"
+            , onClick (toMsg.pipeline (Opened picture.url))
+            , attribute "aria-label" ("Open " ++ prompt)
+            , class "block size-full cursor-zoom-in outline-none"
             ]
             [ img
                 [ src picture.url
@@ -563,14 +554,7 @@ viewPicture toMsg library model picture =
                 []
             ]
         , figcaption
-            [ class "pointer-events-none absolute inset-0 flex flex-col justify-end gap-2 overflow-hidden bg-linear-to-t from-black/85 via-black/30 to-transparent p-4 text-white transition-opacity duration-200 group-hover/picture:opacity-100 group-has-[:focus-visible]/picture:opacity-100"
-            , class
-                (if detailed then
-                    "opacity-100"
-
-                 else
-                    "opacity-0"
-                )
+            [ class "pointer-events-none absolute inset-0 flex flex-col justify-end gap-2 overflow-hidden bg-linear-to-t from-black/85 via-black/30 to-transparent p-4 text-white opacity-0 transition-opacity duration-200 group-focus-within/picture:opacity-100 group-hover/picture:opacity-100"
             ]
             [ p [ class "line-clamp-3 text-sm" ] [ text prompt ]
             , p [ class "text-xs text-white/70 tabular-nums" ]
@@ -583,21 +567,50 @@ viewPicture toMsg library model picture =
                         ]
                     )
                 ]
-            , div [ class "pointer-events-auto flex flex-wrap items-center gap-1.5" ]
-                [ viewSave (toMsg.library (Library.SaveClicked picture)) (Library.saveOf picture.url library)
-                , Button.new
-                    |> Button.icon (Phosphor.downloadSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.label "Download"
-                    |> Button.small
-                    |> Button.toAnchor [ href picture.url, download (Library.fileName job), glass ]
-                , Button.new
-                    |> Button.icon (Phosphor.diceFive Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.label "Use this seed"
-                    |> Button.small
-                    |> Button.toHtml [ onClick (toMsg.pipeline (SeedReused job.seed)), glass ]
-                ]
+            , div [ class "pointer-events-auto flex flex-wrap items-center gap-1.5" ] (actions toMsg library picture)
             ]
         ]
+
+
+actions : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Pipeline.Picture -> List (Html msg)
+actions toMsg library picture =
+    [ viewSave (toMsg.library (Library.SaveClicked picture)) (Library.saveOf picture.url library)
+    , Button.new
+        |> Button.icon (Phosphor.downloadSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+        |> Button.label "Download"
+        |> Button.small
+        |> Button.toAnchor [ href picture.url, download (Library.fileName picture.job), glass ]
+    , Button.new
+        |> Button.icon (Phosphor.diceFive Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+        |> Button.label "Use this seed"
+        |> Button.small
+        |> Button.toHtml [ onClick (toMsg.pipeline (SeedReused picture.job.seed)), glass ]
+    ]
+
+
+lightbox : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Model -> Html msg
+lightbox toMsg library model =
+    Lightbox.view
+        { id = "studio-picture"
+        , open = model.zoomed
+        , detailed = model.detailed
+        , onClose = toMsg.pipeline Closed
+        , onToggle = toMsg.pipeline DetailsToggled
+        , onStep = toMsg.pipeline << Stepped
+        }
+        (model.viewing
+            |> Maybe.andThen (\url -> List.head (List.filter (\picture -> picture.url == url) model.pictures))
+            |> Maybe.map
+                (\picture ->
+                    { url = picture.url
+                    , job = picture.job
+                    , model = Pipeline.weightsName picture.weights
+                    , pinned = False
+                    , notice = text ""
+                    , actions = actions toMsg library picture
+                    }
+                )
+        )
 
 
 viewSave : msg -> Library.Save -> Html msg
