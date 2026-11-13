@@ -70,7 +70,7 @@ banner invitation =
 
                     Member ->
                         [ primary "Start creating" (Path.toString Path.Studio)
-                        , secondary "Explore creations" ("#" ++ gallery)
+                        , secondary "Get inspired" ("#" ++ gallery)
                         ]
                 )
             ]

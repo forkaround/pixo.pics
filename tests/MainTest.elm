@@ -856,7 +856,7 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ tag "a", attribute (Html.Attributes.href "/signup") ]
                         |> ProgramTest.ensureViewHas [ id "gallery", containing [ text "See what people are making" ] ]
                         |> ProgramTest.ensureViewHasNot [ tag "section", containing [ tag "a", attribute (Html.Attributes.href "/login") ] ]
-                        |> ProgramTest.clickLink "Explore creations" "#gallery"
+                        |> ProgramTest.clickLink "Get inspired" "#gallery"
                         |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/")
             , test "asks nothing of the browser" <|
                 \() ->
