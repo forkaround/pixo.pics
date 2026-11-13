@@ -45,7 +45,7 @@ filters model =
     in
     Sidebar.group []
         [ Sidebar.groupLabel [ class "max-md:sr-only" ] [ text "Tags" ]
-        , Sidebar.menu [ class "max-md:flex-row max-md:overflow-x-auto max-md:pb-1" ]
+        , Sidebar.menu [ class "max-md:-mx-3 max-md:w-auto max-md:flex-row max-md:overflow-x-auto max-md:ps-3 max-md:pe-8 max-md:pb-1 max-md:[scrollbar-width:none] max-md:[mask-image:linear-gradient(to_right,#000_calc(100%_-_2rem),transparent)]" ]
             (case model.pictures of
                 Loaded pictures ->
                     let
@@ -108,7 +108,7 @@ viewFilter attrs current tag cover label total =
                  else
                     "false"
                 )
-             , class "h-10! gap-2.5! ps-1.5! pe-8"
+             , class "h-10! gap-2.5! ps-1.5! pe-8 max-md:inset-ring max-md:inset-ring-sidebar-border"
              ]
                 ++ (if current then
                         [ Sidebar.active ]
@@ -192,7 +192,7 @@ viewCover cover =
 viewFilterSkeleton : Html Msg
 viewFilterSkeleton =
     Sidebar.menuItem [ class "max-md:shrink-0" ]
-        [ div [ class "flex h-10 items-center gap-2.5 rounded-lg ps-1.5 pe-8 max-md:w-32", attribute "aria-hidden" "true" ]
+        [ div [ class "flex h-10 items-center gap-2.5 rounded-lg ps-1.5 pe-8 max-md:w-32 max-md:inset-ring max-md:inset-ring-sidebar-border", attribute "aria-hidden" "true" ]
             [ Skeleton.view [ class "size-7 shrink-0" ]
             , Skeleton.view [ class "h-4 flex-1" ]
             ]
