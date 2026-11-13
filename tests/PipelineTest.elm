@@ -4,7 +4,7 @@ import Data.Dimension as Dimension
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Component(..), Device(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Weights(..))
+import Pipeline exposing (Command(..), Component(..), Device(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Storage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -89,6 +89,25 @@ suite =
                     run [ DownloadClicked Binary, Happened ModelLoaded ] supported
                         |> .downloaded
                         |> Expect.equal [ Binary ]
+            , test "are removed on a browser without WebGPU" <|
+                \() ->
+                    Pipeline.init 1 False [ Binary ]
+                        |> run [ ClearClicked, Happened CacheCleared ]
+                        |> (\model -> ( model.device, model.downloaded, model.message ))
+                        |> Expect.equal ( Unsupported Kept, [], Just (Info "Downloaded models removed.") )
+            , test "are not removed through a worker that failed" <|
+                \() ->
+                    Pipeline.init 1 True [ Binary ]
+                        |> run [ Happened (Failed { name = "Error", message = "Worker unable to start" }) ]
+                        |> Pipeline.update ClearClicked
+                        |> Tuple.mapFirst .device
+                        |> Expect.equal ( Unsupported Unreachable, Nothing )
+            , test "stay when removing them fails without WebGPU" <|
+                \() ->
+                    Pipeline.init 1 False [ Binary ]
+                        |> run [ ClearClicked, Happened (Failed { name = "Error", message = "Blocked" }) ]
+                        |> (\model -> ( model.device, model.downloaded ))
+                        |> Expect.equal ( Unsupported Kept, [ Binary ] )
             , test "are not remembered when the download stops halfway" <|
                 \() ->
                     run [ DownloadClicked Binary, CancelClicked, Happened (Failed { name = "AbortError", message = "" }) ] supported
@@ -139,19 +158,19 @@ suite =
                         |> Tuple.first
                         |> Pipeline.enter
                         |> Tuple.mapFirst (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( ( Unsupported, Just (Problem "Worker unable to start") ), Nothing )
+                        |> Expect.equal ( ( Unsupported Unreachable, Just (Problem "Worker unable to start") ), Nothing )
             , test "never checks a browser without the WebGPU API" <|
                 \() ->
                     Pipeline.enter (Pipeline.init 1 False [])
                         |> Tuple.mapFirst .device
-                        |> Expect.equal ( Unsupported, Nothing )
+                        |> Expect.equal ( Unsupported Kept, Nothing )
             , test "gives up on the browser when the check fails" <|
                 \() ->
                     Pipeline.enter (Pipeline.init 1 True [])
                         |> Tuple.first
                         |> run [ Happened (Failed { name = "Error", message = "Worker unable to start" }) ]
                         |> .device
-                        |> Expect.equal Unsupported
+                        |> Expect.equal (Unsupported Unreachable)
             , test "starts nothing while it checks the browser" <|
                 \() ->
                     Pipeline.enter (Pipeline.init 1 True [])

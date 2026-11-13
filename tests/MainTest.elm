@@ -1501,6 +1501,23 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             localStorageWrite
                             (Expect.equal [ { tag = "WriteToLocalStorage", key = "models", value = "[]" } ])
+            , test "removes the downloaded copies on a browser without WebGPU" <|
+                \() ->
+                    startAt "/settings/models" { defaultFlags | models = Just """["prism-ml/bonsai-image-ternary-4B-mlx-2bit"]""" }
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
+                        |> ProgramTest.clickButton "Remove downloaded models"
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Removing…" ] ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelCacheCleared")
+                        |> ProgramTest.ensureViewHas [ text "Downloaded models removed." ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "ClearModelCache", "WriteToLocalStorage" ])
+            , test "can't remove the downloaded copies once the worker has failed" <|
+                \() ->
+                    startAt "/settings/models" { defaultFlags | models = Just """["prism-ml/bonsai-image-ternary-4B-mlx-2bit"]""" }
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "Worker unable to start")
+                        |> ProgramTest.ensureViewHas [ text "Reload the page to remove them." ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Remove downloaded models" ] ]
             , test "says so when the browser can't run them" <|
                 \() ->
                     startAt "/settings/models" defaultFlags

@@ -4,7 +4,7 @@ import Html exposing (Html, div, p, text)
 import Html.Attributes exposing (attribute, class, disabled)
 import Html.Events exposing (onClick)
 import Phosphor exposing (IconWeight(..))
-import Pipeline exposing (Device(..), Engine(..), Model, Msg(..), Weights)
+import Pipeline exposing (Device(..), Engine(..), Model, Msg(..), Storage(..), Weights)
 import StudioView
 import Stylist
 import SupportView
@@ -31,6 +31,37 @@ view toMsg writer model =
         )
 
 
+storageHint : Device -> String
+storageHint device =
+    case device of
+        Unchecked ->
+            inMemoryHint device
+
+        Checking ->
+            inMemoryHint device
+
+        Unsupported Kept ->
+            inMemoryHint device
+
+        Unsupported Emptying ->
+            inMemoryHint device
+
+        Unsupported Unreachable ->
+            "Reload the page to remove them."
+
+        Supported _ ->
+            inMemoryHint device
+
+
+inMemoryHint : Device -> String
+inMemoryHint device =
+    if Pipeline.inMemory device == Nothing then
+        "Remove local copies to free up space."
+
+    else
+        "Release the model first."
+
+
 storage : Model -> Html Msg
 storage model =
     div [ class "flex flex-col gap-6" ]
@@ -40,17 +71,10 @@ storage model =
             |> Card.description [ text "Downloaded models are kept in this browser." ]
             |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
                 [ p [ class "text-xs text-muted-foreground" ]
-                    [ text
-                        (if Pipeline.inMemory model.device == Nothing then
-                            "Remove local copies to free up space."
-
-                         else
-                            "Release the model first."
-                        )
-                    ]
+                    [ text (storageHint model.device) ]
                 , Button.new
                     |> Button.text
-                        (if model.device == Supported Clearing then
+                        (if model.device == Supported Clearing || model.device == Unsupported Emptying then
                             "Removing…"
 
                          else
@@ -59,7 +83,7 @@ storage model =
                     |> Button.outline
                     |> Button.small
                     |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.toHtml [ onClick ClearClicked, disabled (model.device /= Supported Empty), class "max-sm:w-full" ]
+                    |> Button.toHtml [ onClick ClearClicked, disabled (model.device /= Supported Empty && model.device /= Unsupported Kept), class "max-sm:w-full" ]
                 ]
             |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
         ]

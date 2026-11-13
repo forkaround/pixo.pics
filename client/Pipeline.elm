@@ -16,6 +16,7 @@ module Pipeline exposing
     , Seeding(..)
     , Settings
     , Stage(..)
+    , Storage(..)
     , Weights(..)
     , current
     , enter
@@ -65,8 +66,14 @@ type alias Model =
 type Device
     = Unchecked
     | Checking
-    | Unsupported
+    | Unsupported Storage
     | Supported Engine
+
+
+type Storage
+    = Kept
+    | Emptying
+    | Unreachable
 
 
 type Engine
@@ -166,7 +173,7 @@ init entropy webGpu downloaded =
             Unchecked
 
         else
-            Unsupported
+            Unsupported Kept
     , settings =
         { weights = Maybe.withDefault Ternary (List.head downloaded)
         , prompt = ""
@@ -261,7 +268,7 @@ isSupported device =
         Checking ->
             False
 
-        Unsupported ->
+        Unsupported _ ->
             False
 
 
@@ -442,6 +449,9 @@ update msg model =
                 Supported Empty ->
                     ( { model | device = Supported Clearing, message = Nothing }, Just ClearCache )
 
+                Unsupported Kept ->
+                    ( { model | device = Unsupported Emptying, message = Nothing }, Just ClearCache )
+
                 _ ->
                     ( model, Nothing )
 
@@ -501,8 +511,17 @@ happened event model =
         ( SupportChecked True, Checking ) ->
             ( { model | device = Supported Empty }, Nothing )
 
+        ( CacheCleared, Unsupported Emptying ) ->
+            ( { model
+                | device = Unsupported Kept
+                , downloaded = []
+                , message = Just (Info "Downloaded models removed.")
+              }
+            , Nothing
+            )
+
         ( SupportChecked False, Checking ) ->
-            ( { model | device = Unsupported }, Nothing )
+            ( { model | device = Unsupported Kept }, Nothing )
 
         ( Downloaded progress, Supported (Loading chosen downloads waiting) ) ->
             ( { model
@@ -593,12 +612,18 @@ rest : Device -> Maybe Device
 rest device =
     case device of
         Unchecked ->
-            Just Unsupported
+            Just (Unsupported Unreachable)
 
         Checking ->
-            Just Unsupported
+            Just (Unsupported Unreachable)
 
-        Unsupported ->
+        Unsupported Kept ->
+            Nothing
+
+        Unsupported Emptying ->
+            Just (Unsupported Kept)
+
+        Unsupported Unreachable ->
             Nothing
 
         Supported engine ->

@@ -31,7 +31,7 @@ layers attributes device shown =
                 Pipeline.Checking ->
                     CheckingLayer
 
-                Pipeline.Unsupported ->
+                Pipeline.Unsupported _ ->
                     UnsupportedLayer
 
                 Pipeline.Supported _ ->

@@ -325,7 +325,7 @@ viewGenerate model =
         Checking ->
             generateButton "Generate" [ disabled True ]
 
-        Unsupported ->
+        Unsupported _ ->
             generateButton "Generate" [ disabled True ]
 
         Supported engine ->
