@@ -898,9 +898,12 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
+                        |> ProgramTest.ensureViewHas [ text "Checking GPU support" ]
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Checking GPU support" ] ]
                         |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Nothing here yet" ] ]
                         |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Cannot generate images on this device" ] ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Checking GPU support" ] ]
                         |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Nothing here yet" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ text "AI Style" ] ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]

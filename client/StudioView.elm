@@ -22,7 +22,6 @@ import UI.Field as Field
 import UI.Input as Input
 import UI.Progress as Progress
 import UI.Select as Select
-import UI.Skeleton as Skeleton
 import UI.Slider as Slider
 import UI.Switch as Switch
 import UI.Textarea as Textarea
@@ -513,10 +512,14 @@ viewEmpty device =
         device
         { checking =
             Empty.new
-                |> Empty.icon (Skeleton.view [ class "size-full rounded-lg" ])
-                |> Empty.title [ Skeleton.view [ class "my-0.5 h-4 w-40" ] ]
-                |> Empty.description [ Skeleton.view [ class "my-1 h-4 w-64" ] ]
-                |> Empty.toHtml [ attribute "aria-hidden" "true" ]
+                |> Empty.icon
+                    (Phosphor.circleNotch Bold
+                        |> Phosphor.withClass "animate-spin motion-reduce:animate-none"
+                        |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+                    )
+                |> Empty.title [ text "Checking GPU support" ]
+                |> Empty.description [ text "Making sure this device can generate images." ]
+                |> Empty.toHtml [ attribute "role" "status" ]
         , supported =
             Empty.new
                 |> Empty.icon (Phosphor.paintBrush Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
