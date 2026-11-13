@@ -13,8 +13,8 @@ import Data.Username as Username
 import Effect exposing (Effect(..))
 import ExploreView
 import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
-import Html.Attributes exposing (attribute, class, disabled, for, href, id, name, required, type_, value)
-import Html.Events exposing (onClick, onInput, onSubmit)
+import Html.Attributes exposing (attribute, class, disabled, href, type_)
+import Html.Events exposing (onClick, onSubmit)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
 import Json.Decode as Decode
@@ -23,6 +23,7 @@ import LibraryView
 import LinkForm exposing (Attempt(..), State(..))
 import Logo
 import ModelsView
+import Page.SignUp
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
@@ -39,7 +40,6 @@ import UI.Button as Button
 import UI.Card as Card
 import UI.DropdownMenu as DropdownMenu
 import UI.Field as Field
-import UI.InputGroup as InputGroup
 import UI.Item as Item
 import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
@@ -108,7 +108,7 @@ type Page
     | Studio
     | Library
     | Settings Section
-    | SignUp SignUpForm
+    | SignUp Page.SignUp.Model
     | SignIn SignInForm
     | Verify Verification
     | Passkey
@@ -118,13 +118,6 @@ type Page
 type Section
     = Models
     | Account AccountState
-
-
-type alias SignUpForm =
-    { email : String
-    , username : String
-    , state : LinkForm.State
-    }
 
 
 type alias SignInForm =
@@ -185,7 +178,7 @@ open url opened =
             runPipeline { model | page = Settings Models } (Pipeline.enter model.pipeline)
 
         Path.SignUp ->
-            ( { model | page = SignUp { email = "", username = "", state = Open (Editing Nothing) } }, NoEffect )
+            ( { model | page = SignUp Page.SignUp.init }, NoEffect )
 
         Path.SignIn ->
             ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
@@ -280,10 +273,7 @@ type Msg
     | ThemeSelected Theme
     | UrlRequested Browser.UrlRequest
     | UrlChanged Url
-    | EmailChanged String
-    | UsernameChanged String
-    | SignUpSubmitted
-    | GotSignUp (Result ApiClient.Error ())
+    | GotSignUp Page.SignUp.Msg
     | GotVerification (Result ApiClient.Error Api.Verification)
     | VerificationAccepted
     | GotAccount (Result ApiClient.Error Api.Account)
@@ -418,43 +408,14 @@ update msg model =
         UrlChanged url ->
             open url model
 
-        EmailChanged email ->
-            ( editSignUp (\signUp -> { signUp | email = email }) model, NoEffect )
-
-        UsernameChanged username ->
-            ( editSignUp (\signUp -> { signUp | username = username }) model, NoEffect )
-
-        SignUpSubmitted ->
+        GotSignUp pageMsg ->
             case model.page of
-                SignUp signUp ->
-                    if signUp.state == Open Submitting then
-                        ( model, NoEffect )
-
-                    else
-                        ( { model | page = SignUp { signUp | state = Open Submitting } }
-                        , Request
-                            (ApiClient.request Api.signUp
-                                { email = signUp.email, username = signUp.username }
-                                GotSignUp
-                            )
-                        )
+                SignUp page ->
+                    Page.SignUp.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { model | page = SignUp next }) (Effect.map GotSignUp)
 
                 _ ->
                     ( model, NoEffect )
-
-        GotSignUp result ->
-            ( editSignUp
-                (\signUp ->
-                    case result of
-                        Ok () ->
-                            { signUp | state = Sent }
-
-                        Err error ->
-                            { signUp | state = Open (Editing (Just (ApiClient.errorToString error))) }
-                )
-                model
-            , NoEffect
-            )
 
         GotVerification result ->
             case model.page of
@@ -784,16 +745,6 @@ editSignIn edit model =
             model
 
 
-editSignUp : (SignUpForm -> SignUpForm) -> Model -> Model
-editSignUp edit model =
-    case model.page of
-        SignUp signUp ->
-            { model | page = SignUp (edit signUp) }
-
-        _ ->
-            model
-
-
 editAccount : (AccountState -> AccountState) -> Model -> Model
 editAccount edit model =
     case model.page of
@@ -967,7 +918,7 @@ viewBody model =
                 ]
 
         SignUp signUp ->
-            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignUp :: viewSignUp signUp)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignUp :: List.map (Html.map GotSignUp) (Page.SignUp.view signUp))
 
         SignIn signIn ->
             Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
@@ -1338,42 +1289,6 @@ viewAuthTabs current =
         |> Tabs.toHtml
             [ attribute "aria-label" "Log in or create an account"
             , class "*:data-[slot=tabs-list]:w-full"
-            ]
-
-
-viewSignUp : SignUpForm -> List (Html Msg)
-viewSignUp signUp =
-    case signUp.state of
-        Sent ->
-            LinkForm.sent ("We sent a link to " ++ String.trim signUp.email ++ ". It expires in 15 minutes.")
-
-        Open attempt ->
-            [ Plain.lead "Create your account" "We'll email you a link. No password needed."
-            , form [ onSubmit SignUpSubmitted ]
-                [ Field.group []
-                    [ LinkForm.emailField signUp.email EmailChanged
-                    , Field.view []
-                        [ Field.label [ for "username", class "sr-only" ] [ text "Username" ]
-                        , InputGroup.view [ class "h-10" ]
-                            [ InputGroup.input
-                                [ id "username"
-                                , name "username"
-                                , Html.Attributes.placeholder "Username"
-                                , class "font-medium"
-                                , attribute "autocapitalize" "none"
-                                , attribute "spellcheck" "false"
-                                , required True
-                                , value signUp.username
-                                , onInput UsernameChanged
-                                ]
-                            , InputGroup.start [] [ Phosphor.at Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
-                            ]
-                        , Field.description [] [ text "3 to 20 letters, digits or underscores." ]
-                        ]
-                    , LinkForm.problem attempt
-                    , LinkForm.submit attempt
-                    ]
-                ]
             ]
 
 
