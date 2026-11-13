@@ -920,6 +920,16 @@ suite =
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "Random seed" ] ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
+            , test "says it can't generate when the worker failed on another page" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "Worker unable to start")
+                        |> ProgramTest.clickLink "Studio" "/studio"
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Cannot generate images on this device" ] ]
+                        |> ProgramTest.ensureViewHas [ text "Worker unable to start" ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
             , test "downloads the model, then makes a picture from the prompt, the size, the steps and the seed" <|
                 \() ->
                     start defaultFlags

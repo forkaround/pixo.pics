@@ -593,7 +593,7 @@ rest : Device -> Maybe Device
 rest device =
     case device of
         Unchecked ->
-            Nothing
+            Just Unsupported
 
         Checking ->
             Just Unsupported

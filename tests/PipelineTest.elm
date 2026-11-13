@@ -132,7 +132,35 @@ suite =
                         |> Expect.equal []
             ]
         , describe "update"
-            [ test "checks the browser on the first visit only" <|
+            [ test "gives up on the browser when the worker failed before the check" <|
+                \() ->
+                    Pipeline.init 1 True []
+                        |> Pipeline.update (Happened (Failed { name = "Error", message = "Worker unable to start" }))
+                        |> Tuple.first
+                        |> Pipeline.enter
+                        |> Tuple.mapFirst (\model -> ( model.device, model.message ))
+                        |> Expect.equal ( ( Unsupported, Just (Problem "Worker unable to start") ), Nothing )
+            , test "never checks a browser without the WebGPU API" <|
+                \() ->
+                    Pipeline.enter (Pipeline.init 1 False [])
+                        |> Tuple.mapFirst .device
+                        |> Expect.equal ( Unsupported, Nothing )
+            , test "gives up on the browser when the check fails" <|
+                \() ->
+                    Pipeline.enter (Pipeline.init 1 True [])
+                        |> Tuple.first
+                        |> run [ Happened (Failed { name = "Error", message = "Worker unable to start" }) ]
+                        |> .device
+                        |> Expect.equal Unsupported
+            , test "starts nothing while it checks the browser" <|
+                \() ->
+                    Pipeline.enter (Pipeline.init 1 True [])
+                        |> Tuple.first
+                        |> run [ PromptChanged "a bonsai" ]
+                        |> (\checking -> [ Pipeline.update GenerateClicked checking, Pipeline.update (DownloadClicked Ternary) checking ])
+                        |> List.map Tuple.second
+                        |> Expect.equal [ Nothing, Nothing ]
+            , test "checks the browser on the first visit only" <|
                 \() ->
                     Pipeline.enter (Pipeline.init 1 True [])
                         |> Tuple.mapFirst Pipeline.enter
