@@ -138,16 +138,20 @@ viewPicture config shown =
                     "opacity-0"
                 )
             ]
-            [ div [ class "flex justify-end bg-linear-to-b from-black/60 to-transparent p-3 pb-8" ]
+            [ div [ class "flex shrink-0 justify-end bg-linear-to-b from-black/60 to-transparent p-3 pb-8" ]
                 [ Button.new
                     |> Button.icon (Phosphor.x Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Button.label "Close"
                     |> Button.small
                     |> Button.toHtml [ onClick config.onClose, glass, class "pointer-events-auto" ]
                 ]
-            , div [ class "flex flex-col gap-2 bg-linear-to-t from-black/85 via-black/55 to-transparent p-4 pt-16" ]
-                [ p [ class "line-clamp-4 text-sm" ] [ text (Prompt.toString job.prompt) ]
-                , p [ class "text-xs text-white/70 tabular-nums" ]
+            , div [ class "flex min-h-0 flex-col gap-2 bg-linear-to-t from-black/85 via-black/55 to-transparent p-4 pt-16" ]
+                [ p
+                    [ onClick config.onToggle
+                    , class "pointer-events-auto min-h-[2lh] overflow-y-auto overscroll-contain text-sm"
+                    ]
+                    [ text (Prompt.toString job.prompt) ]
+                , p [ class "shrink-0 text-xs text-white/70 tabular-nums" ]
                     [ text
                         (String.join " · "
                             [ String.fromInt across ++ " × " ++ String.fromInt down
@@ -157,8 +161,8 @@ viewPicture config shown =
                             ]
                         )
                     ]
-                , div [ class "pointer-events-auto empty:hidden" ] [ shown.notice ]
-                , div [ class "pointer-events-auto flex flex-wrap items-center gap-1.5" ] shown.actions
+                , div [ class "pointer-events-auto shrink-0 empty:hidden" ] [ shown.notice ]
+                , div [ class "pointer-events-auto flex shrink-0 flex-wrap items-center gap-1.5" ] shown.actions
                 ]
             ]
         ]
