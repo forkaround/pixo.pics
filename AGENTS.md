@@ -9,6 +9,7 @@ on Postgres (Neon), deployed to Vercel.
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `client/`           | Browser app (root `elm.json`). `client/UI/`: elmcn components                                                                                     |
 | `client/Data/`      | Browser-only value types: `Dimension`, `Steps`, `Seed`, `Prompt` (see [Image pipeline](#image-pipeline))                                          |
+| `client/Page/`      | One module per page with state of its own: `SignUp`, `SignIn`, `Verify`, `Passkey`, `Account` (see [Browser app](#browser-app))                   |
 | `shared/`           | Elm both sides compile: `Api` (routes, endpoints, codecs), `Path` (pages), `Data`                                                                 |
 | `shared/Data/`      | Value types both sides compile: `Email`, `Username`, `LinkToken`, `CredentialId`, `Challenge`                                                     |
 | `tests/`            | elm-test suites for `client/` and `shared/` (see [Tests](#tests))                                                                                 |
@@ -376,8 +377,24 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   stylesheet, linked from `index.html`: don't import CSS from TypeScript. The font is
   Inter, served with the app: `main.css` imports `@fontsource-variable/inter` and names
   it in `--font-sans`, so no page asks another site for it.
-- `init` and `update` return a `Main.Effect`, never a `Cmd`: `perform` turns it into one
-  in `main`, and the tests simulate it (see [Tests](#tests)).
+- `init` and `update` return an `Effect Msg` (`client/Effect.elm`), never a `Cmd`:
+  `perform` turns it into one in `main`, and the tests simulate it (see [Tests](#tests)).
+  A page returns an `Effect` of its own `Msg`, and `Effect.map` wraps it.
+- `Main` is wiring, the shell and what every page shares: the session, the theme, the
+  pipeline and the library. A page with state of its own is a module in `client/Page/`
+  (`SignUp`, `SignIn`, `Verify`, `Passkey`, `Account`) with its own `Model`, `Msg`,
+  `init`, `update` and `view`. `Main.Page` holds its model and `Main.Msg` wraps its `Msg`
+  (`GotSignUp`, `GotSignIn`, `GotVerify`, `GotPasskey`, `GotAccount`); a message for a
+  page that is no longer open changes no page and runs no effect. Only `Main` writes
+  `model.session`: a page that changes who is signed in exposes `outcome`, which tells
+  it from the message alone (`SignedIn account` from `SignIn` and `Verify`, `SignedOut`
+  from `Account`), and `Main` applies it whether or not the page is still open, so an
+  answer that arrives late still signs in or out. Pages never import `Main` or each
+  other; what several share is a module beside `Main`: `Session`, `Ceremony`,
+  `Enrolment`, `LinkForm`, `Plain`. Explore, the studio, the library, the models and
+  the not-found page keep no state of their own and stay views.
+  A new page with state is a module there, a `Main.Msg` variant, and its branches in
+  `open`, `update`, `title` and `viewBody`.
 - Calls the server only through `ApiClient.request` with an `Api.Endpoint`, wrapped in the
   `Request` effect; `ApiClient.send` is its `Cmd`. On an error status it decodes
   `Api.errorDecoder`, then the endpoint's response (the health report comes with a 503).
@@ -392,8 +409,9 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   and `Path.NotFound` for the rest. It reads them with `Url.Parser`, so a trailing slash or a
   query string leads to the same page. Links, `PushUrl` and the server's emails write the
   same addresses with `Path.toString`. A new page needs a `Path` variant (`open` doesn't
-  compile until it handles it) and its line in `Path.parse`'s parser. `open` also ends a
-  passkey ceremony left unfinished. `NotFound` always links home and adds what fits the
+  compile until it handles it) and its line in `Path.parse`'s parser. `open` starts the
+  page's model anew, which also ends a passkey ceremony left unfinished. `NotFound`
+  always links home and adds what fits the
   session: the account, sign-in and sign-up, or "Try again", in a row
   that keeps its height while the session is `Unknown`.
 - `init` asks `Api.session` on every page: `model.session` is `Unknown`, then `SignedOut`
@@ -403,18 +421,18 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   signed-in visitor, shows "Signed in as <username> (<email>)" with a "Sign out" link
   in its subtitle, followed by the Passkeys card
   (`Api.passkeys`, "Add a passkey", and a bin on each row that asks "Remove ...?"
-  before `Api.deletePasskey`: the `Account` section holds the list, the id being
-  confirmed and why a removal failed, and a removal never touches `model.ceremony`),
+  before `Api.deletePasskey`: `Page.Account` holds the list, the id being
+  confirmed and why a removal failed, and a removal never touches its `ceremony`),
   and sends a signed-out visitor to `/login`. The Delete account card opens a
   `UI.AlertDialog` for confirmation; deletion errors stay in the dialog and its
   buttons are disabled while the request is pending. There is no dashboard: a sign-in leads
   home, or to `/passkey` when it was by link and the account has no passkey.
 - `/signup`, `/login`, `/verify`, `/passkey` and the not-found page fill the window,
-  outside the shell, in one frame, `viewPlain`: the logo, which leads home, over a narrow column in the middle
+  outside the shell, in one frame, `Plain.frame`: the logo, which leads home, over a narrow column in the middle
   of what is left, its text aligned left, over the theme toggle; and beside all that,
   from `lg` up, `ExploreView.mosaic`, Explore's tiles in three columns that fade out
   towards the bottom (`mask-b-from-55%`): decoration only. The column starts with a
-  heading and one line of text (`viewLead`, the page's `h1`), and its inputs and
+  heading and one line of text (`Plain.lead`, the page's `h1`), and its inputs and
   buttons are `h-10`.
 - On `/signup` and `/login` the column starts with `viewAuthTabs`, `UI.Tabs` without
   panels, as wide as the column, which reads "Log in" and "Create an account": a
@@ -440,17 +458,20 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
 - `/passkey` asks the account for a passkey, on a page of its own: "Create a passkey"
   runs the ceremony below and then leads home, "Not now" leads home without one
   (a browser may have no passkeys, and the next sign-in is then by link). It holds
-  no state but `model.ceremony`, so anyone signed in may open it; a signed-out
+  no state but its `Ceremony`, so anyone signed in may open it; a signed-out
   visitor is sent to `/login`, as at `/settings/account`.
 - Showing who the link is for gives nothing away: the token that reads the email and
   the username could sign in as them. It is there so that someone sent another
   person's link sees whose account it is before the click. While the link is
   checked, skeletons of the same sizes stand in, so nothing moves when it is found.
-- A passkey takes three steps, `model.ceremony` being `Waiting` meanwhile: post
-  `Api.passkeyOptions`, send them to `main.ts` through the `CreatePasskey` port
-  (`navigator.credentials.create`), and post what comes back in `PasskeyCreated` to
-  `Api.addPasskey`. `PasskeyFailed` carries the `DOMException`'s name; `passkeyProblem`
-  words it. `main.ts` only converts base64url and buffers: the ceremony's options
+- A passkey takes three steps, in `client/Enrolment.elm`, the page's `Ceremony` being
+  `Waiting` meanwhile: post `Api.passkeyOptions`, send them to `main.ts` through the
+  `CreatePasskey` port (`navigator.credentials.create`), and post what comes back in
+  `PasskeyCreated` to `Api.addPasskey`. `/passkey` and `/settings/account` both run it:
+  `Main.enrol` hands the port's answer to the one that is open, and `Enrolment.update`
+  answers `Enrolled passkey` once it is saved. `PasskeyFailed` carries the
+  `DOMException`'s name; `Enrolment` words it, or `Page.SignIn` when the passkey was for
+  a sign-in. `main.ts` only converts base64url and buffers: the ceremony's options
   (`residentKey: "required"`, `attestation: "none"`) are its only constants.
 - Every page but `/signup`, `/login`, `/verify`, `/passkey` and the not-found page
   is in a shell, `viewShell`: a
@@ -502,7 +523,7 @@ connects as `api`, which is not and owns nothing: `app.ts` puts `api` and
   the session is `Unknown` a skeleton of the same height stands there, so the footer
   never changes its height.
 - The theme is three radio items in that menu; the pages without a sidebar
-  (`viewPlain`'s) have the toggle, `UI.Tabs` without panels,
+  (`Plain.frame`'s) have the toggle, `UI.Tabs` without panels,
   its icons `Bold` like the menu's. Either
   saves it to `localStorage` via the `WriteToLocalStorage` port, and the flags read
   it back.
@@ -981,10 +1002,11 @@ go in `test-dependencies`: `bunx elm-test install <package>`, inside `api/` for 
   `expectSent`, not one after the other.
 - `tests/PipelineTest.elm` runs `Pipeline.update` with no program, for the rules a user
   can't reach from the page (an event out of turn, a slider off its grid), and
-  `tests/LibraryTest.elm` does the same for `Library.update`; `tests/MainTest.elm` covers
-  the pages, sending the library's and IndexedDB's events in through `interopToElm`. No
-  test runs the library, the worker, IndexedDB, the clipboard or the share sheet: they
-  need a browser.
+  `tests/LibraryTest.elm` does the same for `Library.update` and
+  `tests/EnrolmentTest.elm` for `Enrolment.update`; `tests/EffectTest.elm` checks that
+  `Effect.map` wraps every message; `tests/MainTest.elm` covers the pages, sending the
+  library's and IndexedDB's events in through `interopToElm`. No test runs the library,
+  the worker, IndexedDB, the clipboard or the share sheet: they need a browser.
 - `tests/Bm25Test.elm` pins the search's ranking on prompts small enough to rank by
   hand, and `tests/ShareTest.elm` each network's address.
 - `api/tests/NeonTest.elm` needs no program: a `Neon.Request` is a record, so `.body` is
