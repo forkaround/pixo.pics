@@ -46,3 +46,7 @@ IndexedDB for Elm and know nothing of pictures.
 - `/library` filters by one tag at a time from its side column. The tag is
   kept in the library's model like the search query, not in the address. A
   chosen tag that no picture carries any more is dropped (`Library.chosen`).
+- Pictures without tags in the loaded library are asked for after every
+  update (`Main.backfill`), newest first, unless a picture is generating. The
+  graphics card is checked on `/studio` and `/settings/models`, not
+  `/library`, so older pictures are tagged after a visit to one of those.

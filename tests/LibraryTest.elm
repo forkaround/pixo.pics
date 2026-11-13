@@ -201,6 +201,20 @@ suite =
                         ]
                         ()
             ]
+        , describe "untagged"
+            [ test "lists the pictures without tags, newest first" <|
+                \() ->
+                    run [ Tagged 2 (tags [ "fox" ]) ] loaded
+                        |> Library.untagged
+                        |> Expect.equal
+                            [ { id = 3, prompt = "a city skyline at sunset" }
+                            , { id = 1, prompt = "a red fox in the snow" }
+                            ]
+            , test "lists nothing before the library is loaded" <|
+                \() ->
+                    Library.untagged opening
+                        |> Expect.equal []
+            ]
         , describe "filtering by tag"
             [ test "counts the tags of the pictures, most used first, then alphabetically" <|
                 \() ->

@@ -16,6 +16,7 @@ module Library exposing
     , saveOf
     , saved
     , tags
+    , untagged
     , update
     , visible
     )
@@ -287,6 +288,18 @@ tags model =
                     Dict.empty
                 |> Dict.values
                 |> List.sortBy (\( tag, n ) -> ( negate n, Tag.toString tag ))
+
+        _ ->
+            []
+
+
+untagged : Model -> List { id : Int, prompt : String }
+untagged model =
+    case model.pictures of
+        Loaded pictures ->
+            pictures
+                |> List.filter (\picture -> picture.tags == Nothing)
+                |> List.map (\picture -> { id = picture.id, prompt = Prompt.toString picture.job.prompt })
 
         _ ->
             []

@@ -348,8 +348,28 @@ sidebarTarget sidebar =
 
 update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
-    step msg model
-        |> Tuple.mapFirst (counted model)
+    let
+        ( stepped, effect ) =
+            step msg model
+
+        ( asked, backfilled ) =
+            backfill stepped
+    in
+    ( counted model asked, Batch [ effect, backfilled ] )
+
+
+backfill : Model -> ( Model, Effect Msg )
+backfill model =
+    case Library.untagged model.library of
+        [] ->
+            ( model, NoEffect )
+
+        jobs ->
+            if canTag model && not (isGenerating model.pipeline.device) then
+                runTagger model (Tagger.update (Tagger.Asked jobs) model.tagger)
+
+            else
+                ( model, NoEffect )
 
 
 counted : Model -> Model -> Model

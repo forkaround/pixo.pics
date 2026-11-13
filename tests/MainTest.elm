@@ -1238,6 +1238,31 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [])
+            , test "tags the library's older pictures once the prompt model can run" <|
+                \() ->
+                    startAt "/library" { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
+                        |> ProgramTest.simulateIncomingPort "interopToElm" olderPictures
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            outgoing
+                            (List.filter (Tuple.first >> (==) "LoadTagger") >> Expect.equal [])
+                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            outgoing
+                            (List.filter (Tuple.first >> (==) "LoadTagger") >> Expect.equal [ ( "LoadTagger", Just "Qwen3-1.7B-q4f16_1-MLC" ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "TaggerLoaded")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string |> Decode.andThen (\name -> Decode.map (Tuple.pair name) (Decode.maybe (Decode.at [ "data", "messages" ] (Decode.map lastTurn (Decode.list turn))))))
+                            (Expect.equal [ ( "TagPicture", Just (Just ( "user", "a city skyline at sunset" )) ) ])
+            , test "leaves older pictures alone without the prompt model" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" olderPictures
+                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.member "LoadTagger" >> Expect.equal False)
             , test "keeps the prompt writer while it tags" <|
                 \() ->
                     readyToTag
@@ -1983,6 +2008,15 @@ library =
                 , stored 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
                 ]
             )
+
+
+olderPictures : Encode.Value
+olderPictures =
+    libraryLoaded
+        [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
+        , stored 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576
+        , stored 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
+        ]
 
 
 taggedLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
