@@ -5,6 +5,7 @@ import ApiClient
 import Browser
 import Browser.Events
 import Browser.Navigation as Navigation
+import Ceremony exposing (Ceremony(..))
 import Data.CredentialId exposing (CredentialId)
 import Data.Email as Email
 import Data.LinkToken exposing (LinkToken)
@@ -12,19 +13,22 @@ import Data.Username as Username
 import Effect exposing (Effect(..))
 import ExploreView
 import Html exposing (Html, a, dd, div, dl, dt, form, li, p, span, text, ul)
-import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, href, id, name, required, type_, value)
+import Html.Attributes exposing (attribute, class, disabled, for, href, id, name, required, type_, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
 import Json.Decode as Decode
 import Library
 import LibraryView
+import LinkForm exposing (Attempt(..), State(..))
 import Logo
 import ModelsView
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
+import Plain
 import RelativeTime
+import Session exposing (Session(..))
 import StudioView
 import Svg.Attributes
 import Task
@@ -99,18 +103,6 @@ type AccountDeletion
     | DeletingAccount
 
 
-type Ceremony
-    = Resting (Maybe String)
-    | Waiting
-
-
-type Session
-    = Unknown
-    | Unavailable String
-    | SignedOut
-    | SignedIn Api.Account
-
-
 type Page
     = Explore
     | Studio
@@ -131,24 +123,14 @@ type Section
 type alias SignUpForm =
     { email : String
     , username : String
-    , state : FormState
+    , state : LinkForm.State
     }
 
 
 type alias SignInForm =
     { email : String
-    , state : FormState
+    , state : LinkForm.State
     }
-
-
-type FormState
-    = Open Attempt
-    | Sent
-
-
-type Attempt
-    = Editing (Maybe String)
-    | Submitting
 
 
 type Verification
@@ -985,20 +967,20 @@ viewBody model =
                 ]
 
         SignUp signUp ->
-            viewPlain model.theme (viewAuthTabs Path.SignUp :: viewSignUp signUp)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignUp :: viewSignUp signUp)
 
         SignIn signIn ->
-            viewPlain model.theme (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
 
         Verify verification ->
-            viewPlain model.theme (viewVerification verification)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewVerification verification)
 
         Passkey ->
-            viewPlain model.theme (viewEnrolment model.ceremony)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewEnrolment model.ceremony)
 
         NotFound ->
-            viewPlain model.theme
-                [ viewLead "Not found" "There is nothing at this address."
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected }
+                [ Plain.lead "Not found" "There is nothing at this address."
                 , div [ class "flex flex-col gap-4" ]
                     [ Button.new
                         |> Button.text "Go home"
@@ -1343,30 +1325,6 @@ notFoundOptions session =
             [ option Path.Account "Account" ]
 
 
-viewPlain : Theme -> List (Html Msg) -> Html Msg
-viewPlain theme children =
-    div [ class "grid min-h-svh bg-background text-foreground lg:grid-cols-2" ]
-        [ div [ class "flex flex-col p-6 md:p-10" ]
-            [ Html.header [ class "flex h-9 items-center" ]
-                [ a
-                    [ href (Path.toString Path.Explore)
-                    , class "flex h-8 items-center rounded-lg ring-ring outline-hidden focus-visible:ring-2"
-                    ]
-                    [ Logo.wordmark [ Svg.Attributes.class "h-4 w-auto" ]
-                    , span [ class "sr-only" ] [ text "pixo" ]
-                    ]
-                ]
-            , Html.main_ [ class "flex flex-1 items-center justify-center py-10" ]
-                [ div [ class "flex w-full max-w-sm flex-col gap-8" ] children ]
-            , Html.footer [ class "flex h-9 items-center" ] [ viewThemeTabs theme ]
-            ]
-        , div [ class "hidden p-4 ps-0 lg:block", attribute "aria-hidden" "true" ]
-            [ div [ class "relative h-full overflow-hidden mask-b-from-55%" ]
-                [ div [ class "absolute inset-x-0 top-0 columns-3 gap-4" ] ExploreView.mosaic ]
-            ]
-        ]
-
-
 viewAuthTabs : Path.Path -> Html Msg
 viewAuthTabs current =
     Tabs.new
@@ -1383,30 +1341,17 @@ viewAuthTabs current =
             ]
 
 
-viewLead : String -> String -> Html Msg
-viewLead heading body =
-    div [ class "flex flex-col gap-2" ]
-        [ Html.h1 [ class "text-2xl font-semibold tracking-tight" ] [ text heading ]
-        , p [ class "text-sm text-pretty text-muted-foreground" ] [ text body ]
-        ]
-
-
-viewSent : String -> List (Html Msg)
-viewSent body =
-    [ viewLead "Check your inbox" body ]
-
-
 viewSignUp : SignUpForm -> List (Html Msg)
 viewSignUp signUp =
     case signUp.state of
         Sent ->
-            viewSent ("We sent a link to " ++ String.trim signUp.email ++ ". It expires in 15 minutes.")
+            LinkForm.sent ("We sent a link to " ++ String.trim signUp.email ++ ". It expires in 15 minutes.")
 
         Open attempt ->
-            [ viewLead "Create your account" "We'll email you a link. No password needed."
+            [ Plain.lead "Create your account" "We'll email you a link. No password needed."
             , form [ onSubmit SignUpSubmitted ]
                 [ Field.group []
-                    [ viewEmailField signUp.email EmailChanged
+                    [ LinkForm.emailField signUp.email EmailChanged
                     , Field.view []
                         [ Field.label [ for "username", class "sr-only" ] [ text "Username" ]
                         , InputGroup.view [ class "h-10" ]
@@ -1425,8 +1370,8 @@ viewSignUp signUp =
                             ]
                         , Field.description [] [ text "3 to 20 letters, digits or underscores." ]
                         ]
-                    , viewAttemptProblem attempt
-                    , viewSubmit attempt
+                    , LinkForm.problem attempt
+                    , LinkForm.submit attempt
                     ]
                 ]
             ]
@@ -1436,13 +1381,13 @@ viewSignIn : Ceremony -> SignInForm -> List (Html Msg)
 viewSignIn ceremony signIn =
     case signIn.state of
         Sent ->
-            viewSent ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
+            LinkForm.sent ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
 
         Open attempt ->
-            [ viewLead "Log in to your account" "Use your passkey, or get a link by email."
+            [ Plain.lead "Log in to your account" "Use your passkey, or get a link by email."
             , form [ onSubmit SignInSubmitted ]
                 [ Field.group []
-                    [ viewProblem ceremony
+                    [ Ceremony.problem ceremony
                     , Button.new
                         |> Button.text
                             (if ceremony == Waiting then
@@ -1459,36 +1404,15 @@ viewSignIn ceremony signIn =
                             , class "h-10"
                             ]
                     , Field.separator [] [ text "or" ]
-                    , viewEmailField signIn.email SignInEmailChanged
-                    , viewAttemptProblem attempt
+                    , LinkForm.emailField signIn.email SignInEmailChanged
+                    , LinkForm.problem attempt
                     , Button.new
-                        |> Button.text (submitLabel attempt)
+                        |> Button.text (LinkForm.submitLabel attempt)
                         |> Button.outline
                         |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting), class "h-10" ]
                     ]
                 ]
             ]
-
-
-viewEmailField : String -> (String -> Msg) -> Html Msg
-viewEmailField email toMsg =
-    Field.view []
-        [ Field.label [ for "email", class "sr-only" ] [ text "Email" ]
-        , InputGroup.view [ class "h-10" ]
-            [ InputGroup.input
-                [ id "email"
-                , name "email"
-                , type_ "email"
-                , Html.Attributes.placeholder "Email"
-                , class "font-medium"
-                , autocomplete True
-                , required True
-                , value email
-                , onInput toMsg
-                ]
-            , InputGroup.start [] [ Phosphor.envelopeSimple Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
-            ]
-        ]
 
 
 viewAccount : Session -> Ceremony -> AccountState -> List (Html Msg)
@@ -1611,7 +1535,7 @@ viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
                         NotLoaded message ->
                             p [ class "text-sm text-muted-foreground" ] [ text message ]
                     ]
-                , viewProblem ceremony
+                , Ceremony.problem ceremony
                 , case removalProblem of
                     Just reason ->
                         Field.error [] [ text reason ]
@@ -1712,49 +1636,12 @@ viewPasskey now confirming passkey =
         ]
 
 
-viewProblem : Ceremony -> Html Msg
-viewProblem ceremony =
-    case ceremony of
-        Resting (Just reason) ->
-            Field.error [] [ text reason ]
-
-        _ ->
-            text ""
-
-
-viewAttemptProblem : Attempt -> Html Msg
-viewAttemptProblem attempt =
-    case attempt of
-        Editing (Just reason) ->
-            Field.error [] [ text reason ]
-
-        _ ->
-            text ""
-
-
-viewSubmit : Attempt -> Html Msg
-viewSubmit attempt =
-    Button.new
-        |> Button.text (submitLabel attempt)
-        |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting), class "h-10" ]
-
-
-submitLabel : Attempt -> String
-submitLabel attempt =
-    case attempt of
-        Submitting ->
-            "Sending the link…"
-
-        Editing _ ->
-            "Email me a link"
-
-
 viewEnrolment : Ceremony -> List (Html Msg)
 viewEnrolment ceremony =
-    [ viewLead "Create your passkey"
+    [ Plain.lead "Create your passkey"
         "A passkey signs you in with your fingerprint, face or screen lock, with no email to wait for."
     , div [ class "flex flex-col gap-4" ]
-        [ viewProblem ceremony
+        [ Ceremony.problem ceremony
         , Button.new
             |> Button.text
                 (if ceremony == Waiting then
@@ -1777,7 +1664,7 @@ viewVerification : Verification -> List (Html Msg)
 viewVerification verification =
     case verification of
         Looking _ ->
-            [ viewLead "Checking your link" "This takes a moment."
+            [ Plain.lead "Checking your link" "This takes a moment."
             , div [ class "flex flex-col gap-4", attribute "aria-hidden" "true" ]
                 [ viewIdentity
                     (Skeleton.view [ class "size-10 shrink-0 rounded-full!" ])
@@ -1793,7 +1680,7 @@ viewVerification verification =
             viewFound found acceptance
 
         Refused reason ->
-            [ viewLead "This link didn't work" reason
+            [ Plain.lead "This link didn't work" reason
             , div [ class "flex flex-col gap-4" ]
                 [ Button.new
                     |> Button.text "Sign up again"
@@ -1827,7 +1714,7 @@ viewFound found acceptance =
                 , accepting = "Logging in…"
                 }
     in
-    [ viewLead words.heading words.body
+    [ Plain.lead words.heading words.body
     , div [ class "flex flex-col gap-4" ]
         [ viewIdentity
             (Avatar.new
@@ -1862,26 +1749,3 @@ viewIdentity avatar details =
         [ avatar
         , div [ class "min-w-0 flex-1" ] details
         ]
-
-
-viewThemeTabs : Theme -> Html Msg
-viewThemeTabs theme =
-    Tabs.new
-        |> Tabs.id "theme"
-        |> Tabs.onSelect ThemeSelected
-        |> Tabs.value theme
-        |> Tabs.tabs
-            [ themeTab Interop.Light Phosphor.sun "Light"
-            , themeTab Interop.Dark Phosphor.moon "Dark"
-            , themeTab Interop.System Phosphor.monitor "System"
-            ]
-        |> Tabs.toHtml [ attribute "aria-label" "Theme" ]
-
-
-themeTab : Theme -> Phosphor.Icon -> String -> Tabs.Tab Theme Msg
-themeTab theme icon label =
-    Tabs.tab theme
-        [ icon Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
-        , span [ class "sr-only" ] [ text label ]
-        ]
-        []
