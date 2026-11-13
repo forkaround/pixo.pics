@@ -4,7 +4,7 @@ import Data.Dimension as Dimension
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Component(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Weights(..))
+import Pipeline exposing (Command(..), Component(..), Device(..), Engine(..), Event(..), Message(..), Msg(..), Seeding(..), Stage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -92,8 +92,8 @@ suite =
             , test "are not remembered when the download stops halfway" <|
                 \() ->
                     run [ DownloadClicked Binary, CancelClicked, Happened (Failed { name = "AbortError", message = "" }) ] supported
-                        |> (\model -> ( model.engine, model.downloaded ))
-                        |> Expect.equal ( Empty, [] )
+                        |> (\model -> ( model.device, model.downloaded ))
+                        |> Expect.equal ( Supported Empty, [] )
             , test "load one part at a time, the last one heard of" <|
                 \() ->
                     run
@@ -103,10 +103,10 @@ suite =
                         , Happened (Downloaded { component = Transformer, loaded = 2, total = 9, cached = False })
                         ]
                         supported
-                        |> .engine
-                        |> (\engine ->
-                                case engine of
-                                    Loading _ parts _ ->
+                        |> .device
+                        |> (\device ->
+                                case device of
+                                    Supported (Loading _ parts _) ->
                                         Maybe.map (\part -> ( part.component, part.loaded )) (Pipeline.current parts)
 
                                     _ ->
@@ -164,10 +164,10 @@ suite =
                     List.map
                         (\seed ->
                             run [ PromptChanged "a bonsai", SeedChanged seed, GenerateClicked ] ready
-                                |> .engine
+                                |> .device
                         )
                         [ "", "-1", "1.5", "4294967296", "seven" ]
-                        |> Expect.equal (List.repeat 5 (Ready Ternary))
+                        |> Expect.equal (List.repeat 5 (Supported (Ready Ternary)))
             , test "takes the largest seed" <|
                 \() ->
                     Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", SeedChanged "4294967295" ] ready)
@@ -187,8 +187,8 @@ suite =
                         , Happened (Failed { name = "Error", message = "Out of memory" })
                         ]
                         ready
-                        |> (\model -> ( model.engine, model.message ))
-                        |> Expect.equal ( Ready Ternary, Just (Problem "Out of memory") )
+                        |> (\model -> ( model.device, model.message ))
+                        |> Expect.equal ( Supported (Ready Ternary), Just (Problem "Out of memory") )
             , test "says so when a picture is aborted and nobody asked" <|
                 \() ->
                     run
@@ -197,8 +197,8 @@ suite =
                         , Happened (Failed { name = "AbortError", message = "Device was lost before MapAsync completed." })
                         ]
                         ready
-                        |> (\model -> ( model.engine, model.message ))
-                        |> Expect.equal ( Ready Ternary, Just (Problem "Device was lost before MapAsync completed.") )
+                        |> (\model -> ( model.device, model.message ))
+                        |> Expect.equal ( Supported (Ready Ternary), Just (Problem "Device was lost before MapAsync completed.") )
             , test "says nothing when a picture is aborted on request" <|
                 \() ->
                     run
@@ -208,8 +208,8 @@ suite =
                         , Happened (Failed { name = "AbortError", message = "The operation was aborted." })
                         ]
                         ready
-                        |> (\model -> ( model.engine, model.message ))
-                        |> Expect.equal ( Ready Ternary, Nothing )
+                        |> (\model -> ( model.device, model.message ))
+                        |> Expect.equal ( Supported (Ready Ternary), Nothing )
             , test "names a failure that says nothing" <|
                 \() ->
                     run [ DownloadClicked Ternary, Happened (Failed { name = "OperationError", message = "" }) ] supported
@@ -224,8 +224,8 @@ suite =
                         , Happened (PictureMade "blob:1")
                         ]
                         ready
-                        |> (\model -> ( model.engine, List.map .url model.pictures ))
-                        |> Expect.equal ( Ready Ternary, [ "blob:1" ] )
+                        |> (\model -> ( model.device, List.map .url model.pictures ))
+                        |> Expect.equal ( Supported (Ready Ternary), [ "blob:1" ] )
             , test "opens a picture with its details hidden, and closes it" <|
                 \() ->
                     [ [ Opened "blob:1" ]
@@ -259,12 +259,12 @@ suite =
             , test "ignores what arrives for work it did not start" <|
                 \() ->
                     run [ Happened ModelLoaded, Happened (PictureMade "blob:1"), Happened (StepFinished 2) ] supported
-                        |> (\model -> ( model.engine, model.pictures ))
-                        |> Expect.equal ( Empty, [] )
+                        |> (\model -> ( model.device, model.pictures ))
+                        |> Expect.equal ( Supported Empty, [] )
             , test "counts the steps that are done" <|
                 \() ->
                     run [ PromptChanged "a bonsai", GenerateClicked, Happened (StepFinished 0), Happened (StepFinished 1) ] ready
-                        |> .engine
+                        |> .device
                         |> stage
                         |> Expect.equal (Just (Denoising 2))
             ]
@@ -298,10 +298,10 @@ seedOf command =
             Nothing
 
 
-stage : Engine -> Maybe Stage
-stage engine =
-    case engine of
-        Generating _ _ found ->
+stage : Device -> Maybe Stage
+stage device =
+    case device of
+        Supported (Generating _ _ found) ->
             Just found
 
         _ ->

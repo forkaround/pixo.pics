@@ -4,7 +4,7 @@ import Html exposing (Html, div, p, text)
 import Html.Attributes exposing (attribute, class, disabled)
 import Html.Events exposing (onClick)
 import Phosphor exposing (IconWeight(..))
-import Pipeline exposing (Engine(..), Model, Msg(..), Weights)
+import Pipeline exposing (Device(..), Engine(..), Model, Msg(..), Weights)
 import StudioView
 import Stylist
 import UI.Badge as Badge
@@ -39,7 +39,7 @@ storage model =
             |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
                 [ p [ class "text-xs text-muted-foreground" ]
                     [ text
-                        (if Pipeline.inMemory model.engine == Nothing then
+                        (if Pipeline.inMemory model.device == Nothing then
                             "Remove local copies to free up space."
 
                          else
@@ -48,7 +48,7 @@ storage model =
                     ]
                 , Button.new
                     |> Button.text
-                        (if model.engine == Clearing then
+                        (if model.device == Supported Clearing then
                             "Removing…"
 
                          else
@@ -57,7 +57,7 @@ storage model =
                     |> Button.outline
                     |> Button.small
                     |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Button.toHtml [ onClick ClearClicked, disabled (model.engine /= Empty), class "max-sm:w-full" ]
+                    |> Button.toHtml [ onClick ClearClicked, disabled (model.device /= Supported Empty), class "max-sm:w-full" ]
                 ]
             |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
         ]
@@ -65,16 +65,16 @@ storage model =
 
 row : Model -> Weights -> Row
 row model weights =
-    case model.engine of
-        Loading chosen parts _ ->
+    case model.device of
+        Supported (Loading chosen parts _) ->
             if chosen == weights then
                 Downloading parts
 
             else
                 stored model weights
 
-        engine ->
-            if Pipeline.inMemory engine == Just weights then
+        device ->
+            if Pipeline.inMemory device == Just weights then
                 InMemory
 
             else
@@ -100,7 +100,7 @@ viewWeights model weights =
             row model weights
 
         idle =
-            model.engine == Empty || Pipeline.inMemory model.engine /= Nothing && not (isGenerating model.engine)
+            model.device == Supported Empty || Pipeline.inMemory model.device /= Nothing && not (isGenerating model.device)
     in
     Card.new
         |> Card.content []
@@ -262,10 +262,10 @@ stylist model =
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
 
 
-isGenerating : Engine -> Bool
-isGenerating engine =
-    case engine of
-        Generating _ _ _ ->
+isGenerating : Device -> Bool
+isGenerating device =
+    case device of
+        Supported (Generating _ _ _) ->
             True
 
         _ ->

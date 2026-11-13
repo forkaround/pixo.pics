@@ -188,7 +188,7 @@ runPipeline model ( pipeline, command ) =
     ( { model
         | pipeline = pipeline
         , generations =
-            if isGenerating pipeline.engine && not (isGenerating model.pipeline.engine) then
+            if isGenerating pipeline.device && not (isGenerating model.pipeline.device) then
                 model.generations + 1
 
             else
@@ -310,7 +310,7 @@ subscriptions model =
 
           else
             Browser.Events.onAnimationFrameDelta SidebarAnimated
-        , if isGenerating model.pipeline.engine then
+        , if isGenerating model.pipeline.device then
             Time.every 4000 (\_ -> HourglassTurned)
 
           else
@@ -723,7 +723,7 @@ viewBody model =
                         Models ->
                             viewSettingsPage "Models"
                                 (text
-                                    (if model.pipeline.engine == Pipeline.Unsupported then
+                                    (if model.pipeline.device == Pipeline.Unsupported then
                                         "They need WebGPU. Try a recent Chrome, Edge or Safari."
 
                                      else
@@ -818,7 +818,7 @@ viewShell model page =
                 ]
                 [ span [ class "sidebar-logo flex h-4 shrink-0" ]
                     [ Logo.sidebar model.sidebarProgress
-                        { running = isGenerating model.pipeline.engine
+                        { running = isGenerating model.pipeline.device
                         , run = model.generations
                         , turn = model.turns
                         }
@@ -844,10 +844,10 @@ viewShell model page =
         |> Sidebar.toHtml [ class "sidebar-morph bg-background text-foreground" ]
 
 
-isGenerating : Pipeline.Engine -> Bool
-isGenerating engine =
-    case engine of
-        Pipeline.Generating _ _ (Pipeline.Denoising _) ->
+isGenerating : Pipeline.Device -> Bool
+isGenerating device =
+    case device of
+        Pipeline.Supported (Pipeline.Generating _ _ (Pipeline.Denoising _)) ->
             True
 
         _ ->

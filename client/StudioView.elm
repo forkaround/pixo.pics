@@ -12,7 +12,7 @@ import Lightbox
 import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
-import Pipeline exposing (Component(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
+import Pipeline exposing (Component(..), Device(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
 import Stylist
 import UI.Button as Button
 import UI.DropdownMenu as DropdownMenu
@@ -38,7 +38,7 @@ controls toMsg stylist model =
             model.settings
     in
     form [ onSubmit (toMsg.pipeline GenerateClicked), class "flex min-h-full flex-col" ]
-        [ Html.fieldset [ disabled (not (Pipeline.hasWebGpu model.engine)), class "flex flex-1 flex-col" ]
+        [ Html.fieldset [ disabled (not (Pipeline.isSupported model.device)), class "flex flex-1 flex-col" ]
             [ Field.group [ class "flex-1 p-4" ]
                 (Html.map toMsg.pipeline (viewWeights model)
                     :: viewPrompt toMsg stylist settings.prompt
@@ -317,7 +317,23 @@ viewSeed seeding =
 
 viewGenerate : Model -> Html Msg
 viewGenerate model =
-    case model.engine of
+    case model.device of
+        Unchecked ->
+            generateButton "Generate" [ disabled True ]
+
+        Checking ->
+            generateButton "Generate" [ disabled True ]
+
+        Unsupported ->
+            generateButton "Generate" [ disabled True ]
+
+        Supported engine ->
+            viewEngine model engine
+
+
+viewEngine : Model -> Engine -> Html Msg
+viewEngine model engine =
+    case engine of
         Empty ->
             viewStart model
 
@@ -354,9 +370,6 @@ viewGenerate model =
                 |> Button.outline
                 |> Button.toHtml [ disabled True ]
 
-        Unsupported ->
-            generateButton "Generate" [ disabled True ]
-
         Releasing (Just _) ->
             viewWaiting "Switching models…"
 
@@ -366,17 +379,11 @@ viewGenerate model =
         Clearing ->
             viewWaiting "Removing…"
 
-        Unchecked ->
-            generateButton "Generate" [ disabled True ]
-
-        Checking ->
-            generateButton "Generate" [ disabled True ]
-
 
 viewStart : Model -> Html Msg
 viewStart model =
     generateButton
-        (if Pipeline.isDownloaded model.settings.weights model || Pipeline.inMemory model.engine == Just model.settings.weights then
+        (if Pipeline.isDownloaded model.settings.weights model || Pipeline.inMemory model.device == Just model.settings.weights then
             "Generate"
 
          else
@@ -479,7 +486,7 @@ canvas toMsg library model =
             List.map (viewPicture toMsg library) model.pictures
     in
     div [ class "mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-10 p-4 md:p-8" ]
-        (case ( model.engine, pictures ) of
+        (case ( model.device, pictures ) of
             ( Unsupported, _ ) ->
                 [ viewEmpty CannotGenerate ]
 
@@ -489,7 +496,7 @@ canvas toMsg library model =
             ( Checking, _ ) ->
                 [ viewEmpty Unknown ]
 
-            ( Generating _ job stage, _ ) ->
+            ( Supported (Generating _ job stage), _ ) ->
                 viewPending job stage :: pictures
 
             ( _, [] ) ->
