@@ -229,6 +229,7 @@ viewDeleteAccount deletion =
                     |> Button.text "Delete account"
                     |> Button.destructive
                     |> Button.small
+                    |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> (if deletion == Nothing then
                             viewButtonSkeleton []
 
@@ -332,8 +333,9 @@ viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
             , if session == Session.Unknown then
                 Button.new
                     |> Button.text "Add a passkey"
-                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.outline
                     |> Button.small
+                    |> Button.startIcon (Phosphor.plus Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> viewButtonSkeleton [ class "max-sm:w-full" ]
 
               else
@@ -345,8 +347,9 @@ viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
                          else
                             "Add a passkey"
                         )
-                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.outline
                     |> Button.small
+                    |> Button.startIcon (Phosphor.plus Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Button.toHtml [ onClick (GotEnrolment Enrolment.requested), disabled (ceremony == Waiting), class "max-sm:w-full" ]
             ]
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]

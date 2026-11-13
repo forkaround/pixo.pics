@@ -148,6 +148,7 @@ viewWeights model weights =
                         |> Button.text "Cancel"
                         |> Button.outline
                         |> Button.small
+                        |> Button.startIcon (Phosphor.x Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml [ onClick CancelClicked, class "shrink-0" ]
                     ]
 
@@ -157,6 +158,7 @@ viewWeights model weights =
                         |> Button.text "Release"
                         |> Button.outline
                         |> Button.small
+                        |> Button.startIcon (Phosphor.ejectSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml [ onClick ReleaseClicked, disabled (not idle), class "shrink-0" ]
                     ]
 
@@ -171,6 +173,7 @@ viewWeights model weights =
                     [ p [ class "flex-1 text-xs text-muted-foreground" ] [ text "Download once, use in the studio." ]
                     , Button.new
                         |> Button.text "Download"
+                        |> Button.outline
                         |> Button.small
                         |> Button.startIcon (Phosphor.downloadSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml
