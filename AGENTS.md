@@ -290,6 +290,14 @@ schema and every grant in `migrations/schema.sql`, routes in `shared/Api.elm`, p
   thing a page asks another site for.
 - Inputs with a placeholder keep their label, `sr-only`: screen readers and the tests'
   `fillIn` need it.
+- The bar's sticky element is half the column wide and the `header` inside it twice
+  that. iOS Safari covers the status bar with a solid colour when a sticky or fixed
+  element at least 90% of the viewport wide sits at the top edge (WebKit's
+  `LocalFrameView::fixedContainerEdges`), and lets the page show through otherwise. The
+  bar's backdrop reaches 6rem above it, to blur what scrolls under the status bar.
+  Safari clips a sticky element to the viewport unless a composited layer holds it
+  (`RenderLayerCompositor::viewportConstrainedSublayers`): that is the rail around it,
+  as tall as the page, with `will-change-transform`. The rail takes no clicks.
 - Text over a picture is white on a dark gradient whatever the theme, and never sits
   where the picture fades into the page (white on white in the light theme). Buttons
   over a picture take their looks from `client/Overlay.elm`.
