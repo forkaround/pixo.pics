@@ -127,6 +127,19 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/signin/passkey" account
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
                         |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
+            , test "believes a passkey's sign-in that is answered once the page is left" <|
+                \() ->
+                    startAt "/login" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.clickButton "Log in with a passkey"
+                        |> ProgramTest.simulateHttpOk "POST"
+                            "/api/auth/signin/passkey/options"
+                            """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyUsed
+                        |> ProgramTest.clickLink "pixo" "/"
+                        |> ProgramTest.ensureViewHas [ text "Guest" ]
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/signin/passkey" account
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
             , test "says so when no passkey is used" <|
                 \() ->
                     startAt "/login" defaultFlags

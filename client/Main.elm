@@ -11,17 +11,17 @@ import Data.Email as Email
 import Data.Username as Username
 import Effect exposing (Effect(..))
 import ExploreView
-import Html exposing (Html, a, div, form, li, p, span, text, ul)
-import Html.Attributes exposing (attribute, class, disabled, href, type_)
-import Html.Events exposing (onClick, onSubmit)
+import Html exposing (Html, a, div, li, p, span, text, ul)
+import Html.Attributes exposing (attribute, class, disabled, href)
+import Html.Events exposing (onClick)
 import InteropDefinitions as Interop exposing (Theme)
 import InteropPorts
 import Json.Decode as Decode
 import Library
 import LibraryView
-import LinkForm exposing (Attempt(..), State(..))
 import Logo
 import ModelsView
+import Page.SignIn
 import Page.SignUp
 import Page.Verify
 import Path
@@ -109,7 +109,7 @@ type Page
     | Library
     | Settings Section
     | SignUp Page.SignUp.Model
-    | SignIn SignInForm
+    | SignIn Page.SignIn.Model
     | Verify Page.Verify.Model
     | Passkey
     | NotFound
@@ -118,12 +118,6 @@ type Page
 type Section
     = Models
     | Account AccountState
-
-
-type alias SignInForm =
-    { email : String
-    , state : LinkForm.State
-    }
 
 
 init : Decode.Value -> Url -> ( Model, Effect Msg )
@@ -170,7 +164,7 @@ open url opened =
             ( { model | page = SignUp Page.SignUp.init }, NoEffect )
 
         Path.SignIn ->
-            ( { model | page = SignIn { email = "", state = Open (Editing Nothing) } }, NoEffect )
+            ( { model | page = SignIn Page.SignIn.init }, NoEffect )
 
         Path.Account ->
             ( { model | page = Settings (Account { passkeys = Loading, confirming = Nothing, removalProblem = Nothing, deletion = KeepAccount, now = Nothing }) }
@@ -254,9 +248,7 @@ type Msg
     | GotVerify Page.Verify.Msg
     | GotSession (Result ApiClient.Error Api.Account)
     | SessionRetried
-    | SignInEmailChanged String
-    | SignInSubmitted
-    | GotSignIn (Result ApiClient.Error ())
+    | GotSignIn Page.SignIn.Msg
     | AccountDeleteRequested
     | AccountDeleteCancelled
     | AccountDeleteConfirmed
@@ -272,9 +264,6 @@ type Msg
     | PasskeyRemoveCancelled
     | PasskeyRemoveConfirmed CredentialId
     | GotPasskeyRemoved CredentialId (Result ApiClient.Error ())
-    | PasskeySignInRequested
-    | GotSignInOptions (Result ApiClient.Error Api.SignInOptions)
-    | GotPasskeySignIn (Result ApiClient.Error Api.Account)
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
@@ -317,28 +306,15 @@ update msg model =
                 ( model, NoEffect )
 
         GotInterop (Ok (Interop.PasskeyUsed assertion)) ->
-            if model.ceremony == Waiting then
-                ( model, Request (ApiClient.request Api.passkeySignIn assertion GotPasskeySignIn) )
-
-            else
-                ( model, NoEffect )
+            update (GotSignIn (Page.SignIn.passkeyUsed assertion)) model
 
         GotInterop (Ok (Interop.PasskeyFailed name)) ->
-            ( { model
-                | ceremony =
-                    Resting
-                        (Just
-                            (case model.page of
-                                SignIn _ ->
-                                    signInProblem name
+            case model.page of
+                SignIn _ ->
+                    update (GotSignIn (Page.SignIn.passkeyFailed name)) model
 
-                                _ ->
-                                    passkeyProblem name
-                            )
-                        )
-              }
-            , NoEffect
-            )
+                _ ->
+                    ( { model | ceremony = Resting (Just (passkeyProblem name)) }, NoEffect )
 
         GotInterop (Ok (Interop.PipelineEvent event)) ->
             runPipeline model (Pipeline.update (Pipeline.Happened event) model.pipeline)
@@ -446,36 +422,23 @@ update msg model =
                 _ ->
                     ( { model | session = Unknown }, Request (ApiClient.request Api.session () GotSession) )
 
-        SignInEmailChanged email ->
-            ( editSignIn (\signIn -> { signIn | email = email }) model, NoEffect )
+        GotSignIn pageMsg ->
+            let
+                believed =
+                    case Page.SignIn.outcome pageMsg of
+                        Page.SignIn.SignedIn account ->
+                            { model | session = SignedIn account }
 
-        SignInSubmitted ->
+                        Page.SignIn.Unchanged ->
+                            model
+            in
             case model.page of
-                SignIn signIn ->
-                    if signIn.state == Open Submitting then
-                        ( model, NoEffect )
-
-                    else
-                        ( { model | page = SignIn { signIn | state = Open Submitting } }
-                        , Request (ApiClient.request Api.signIn { email = signIn.email } GotSignIn)
-                        )
+                SignIn page ->
+                    Page.SignIn.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { believed | page = SignIn next }) (Effect.map GotSignIn)
 
                 _ ->
-                    ( model, NoEffect )
-
-        GotSignIn result ->
-            ( editSignIn
-                (\signIn ->
-                    case result of
-                        Ok () ->
-                            { signIn | state = Sent }
-
-                        Err error ->
-                            { signIn | state = Open (Editing (Just (ApiClient.errorToString error))) }
-                )
-                model
-            , NoEffect
-            )
+                    ( believed, NoEffect )
 
         AccountDeleteRequested ->
             ( editAccount (\account -> { account | deletion = ConfirmDeletion Nothing }) model, NoEffect )
@@ -603,27 +566,6 @@ update msg model =
             , NoEffect
             )
 
-        PasskeySignInRequested ->
-            if model.ceremony == Waiting then
-                ( model, NoEffect )
-
-            else
-                ( { model | ceremony = Waiting }
-                , Request (ApiClient.request Api.passkeySignInOptions () GotSignInOptions)
-                )
-
-        GotSignInOptions (Ok options) ->
-            ( model, SendToJs (Interop.GetPasskey options) )
-
-        GotSignInOptions (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
-
-        GotPasskeySignIn (Ok account) ->
-            ( { model | session = SignedIn account }, PushUrl (Path.toString Path.Explore) )
-
-        GotPasskeySignIn (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
-
         ThemeSelected theme ->
             ( { model | theme = theme }
             , SendToJs
@@ -649,29 +591,6 @@ passkeyProblem name =
 
         _ ->
             "The passkey could not be created."
-
-
-signInProblem : String -> String
-signInProblem name =
-    case name of
-        "NotAllowedError" ->
-            "No passkey was used."
-
-        "NotSupportedError" ->
-            "This browser can't use passkeys."
-
-        _ ->
-            "The passkey could not be used."
-
-
-editSignIn : (SignInForm -> SignInForm) -> Model -> Model
-editSignIn edit model =
-    case model.page of
-        SignIn signIn ->
-            { model | page = SignIn (edit signIn) }
-
-        _ ->
-            model
 
 
 editAccount : (AccountState -> AccountState) -> Model -> Model
@@ -850,7 +769,7 @@ viewBody model =
             Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignUp :: List.map (Html.map GotSignUp) (Page.SignUp.view signUp))
 
         SignIn signIn ->
-            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignIn :: viewSignIn model.ceremony signIn)
+            Plain.frame { theme = model.theme, onTheme = ThemeSelected } (viewAuthTabs Path.SignIn :: List.map (Html.map GotSignIn) (Page.SignIn.view signIn))
 
         Verify verification ->
             Plain.frame { theme = model.theme, onTheme = ThemeSelected } (List.map (Html.map GotVerify) (Page.Verify.view verification))
@@ -1218,44 +1137,6 @@ viewAuthTabs current =
         |> Tabs.toHtml
             [ attribute "aria-label" "Log in or create an account"
             , class "*:data-[slot=tabs-list]:w-full"
-            ]
-
-
-viewSignIn : Ceremony -> SignInForm -> List (Html Msg)
-viewSignIn ceremony signIn =
-    case signIn.state of
-        Sent ->
-            LinkForm.sent ("If " ++ String.trim signIn.email ++ " has an account, we sent it a link. It expires in 15 minutes.")
-
-        Open attempt ->
-            [ Plain.lead "Log in to your account" "Use your passkey, or get a link by email."
-            , form [ onSubmit SignInSubmitted ]
-                [ Field.group []
-                    [ Ceremony.problem ceremony
-                    , Button.new
-                        |> Button.text
-                            (if ceremony == Waiting then
-                                "Waiting for your device…"
-
-                             else
-                                "Log in with a passkey"
-                            )
-                        |> Button.startIcon (Phosphor.fingerprint Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                        |> Button.toHtml
-                            [ type_ "button"
-                            , onClick PasskeySignInRequested
-                            , disabled (ceremony == Waiting)
-                            , class "h-10"
-                            ]
-                    , Field.separator [] [ text "or" ]
-                    , LinkForm.emailField signIn.email SignInEmailChanged
-                    , LinkForm.problem attempt
-                    , Button.new
-                        |> Button.text (LinkForm.submitLabel attempt)
-                        |> Button.outline
-                        |> Button.toHtml [ type_ "submit", disabled (attempt == Submitting), class "h-10" ]
-                    ]
-                ]
             ]
 
 
