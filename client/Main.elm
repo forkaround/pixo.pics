@@ -82,7 +82,7 @@ type alias Model =
     , tagger : Tagger.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
-    , generations : Int
+    , runs : Int
     , turns : Int
     , page : Page
     }
@@ -126,7 +126,7 @@ init flags url =
         , tagger = Tagger.init
         , sidebar = sidebar
         , sidebarProgress = sidebarTarget sidebar
-        , generations = 0
+        , runs = 0
         , turns = 0
         , page = NotFound
         }
@@ -191,12 +191,6 @@ runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Ef
 runPipeline model ( pipeline, command ) =
     ( { model
         | pipeline = pipeline
-        , generations =
-            if isGenerating pipeline.device && not (isGenerating model.pipeline.device) then
-                model.generations + 1
-
-            else
-                model.generations
       }
     , Batch
         (List.filterMap identity
@@ -335,7 +329,7 @@ subscriptions model =
 
           else
             Browser.Events.onAnimationFrameDelta SidebarAnimated
-        , if isGenerating model.pipeline.device then
+        , if isWorking model then
             Time.every 4000 (\_ -> HourglassTurned)
 
           else
@@ -354,6 +348,21 @@ sidebarTarget sidebar =
 
 update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
+    step msg model
+        |> Tuple.mapFirst (counted model)
+
+
+counted : Model -> Model -> Model
+counted before after =
+    if isWorking after && not (isWorking before) then
+        { after | runs = after.runs + 1 }
+
+    else
+        after
+
+
+step : Msg -> Model -> ( Model, Effect Msg )
+step msg model =
     case msg of
         GotInterop (Ok (Interop.SystemThemeChanged systemDark)) ->
             ( { model | systemDark = systemDark }, NoEffect )
@@ -362,12 +371,12 @@ update msg model =
             enrol (Enrolment.created attestation) model
 
         GotInterop (Ok (Interop.PasskeyUsed assertion)) ->
-            update (GotSignIn (Page.SignIn.passkeyUsed assertion)) model
+            step (GotSignIn (Page.SignIn.passkeyUsed assertion)) model
 
         GotInterop (Ok (Interop.PasskeyFailed name)) ->
             case model.page of
                 SignIn _ ->
-                    update (GotSignIn (Page.SignIn.passkeyFailed name)) model
+                    step (GotSignIn (Page.SignIn.passkeyFailed name)) model
 
                 _ ->
                     enrol (Enrolment.failed name) model
@@ -612,10 +621,10 @@ enrol : Enrolment.Msg -> Model -> ( Model, Effect Msg )
 enrol msg model =
     case model.page of
         Passkey _ ->
-            update (GotPasskey (Page.Passkey.enrolment msg)) model
+            step (GotPasskey (Page.Passkey.enrolment msg)) model
 
         Settings (Account _) ->
-            update (GotAccount (Page.Account.enrolment msg)) model
+            step (GotAccount (Page.Account.enrolment msg)) model
 
         _ ->
             ( model, NoEffect )
@@ -859,19 +868,28 @@ viewShell model page =
         |> Sidebar.width "15rem"
         |> Sidebar.header
             [ a
-                [ href (Path.toString Path.Explore)
-                , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
-                ]
+                ([ href (Path.toString Path.Explore)
+                 , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
+                 , class logoTooltip
+                 ]
+                    ++ (if isWorking model then
+                            [ attribute "data-tooltip" (String.join " · " (work model)) ]
+
+                        else
+                            []
+                       )
+                )
                 [ span [ class "sidebar-logo flex h-4 shrink-0" ]
                     [ Logo.sidebar model.sidebarProgress
-                        { running = isGenerating model.pipeline.device
-                        , run = model.generations
+                        { running = isWorking model
+                        , run = model.runs
                         , turn = model.turns
                         }
                         [ Svg.Attributes.class "h-4 w-auto max-w-none shrink-0" ]
                     ]
                 , span [ class "sr-only" ] [ text "pixo" ]
                 ]
+            , span [ class "sr-only", attribute "role" "status" ] [ text (String.join ". " (work model)) ]
             ]
         |> Sidebar.content
             [ Sidebar.group []
@@ -888,6 +906,36 @@ viewShell model page =
         |> Sidebar.rail
         |> Sidebar.page [ class "min-w-0" ] page
         |> Sidebar.toHtml [ class "sidebar-morph bg-background text-foreground" ]
+
+
+work : Model -> List String
+work model =
+    List.filterMap identity
+        [ if isGenerating model.pipeline.device then
+            Just "Generating a picture"
+
+          else
+            Nothing
+        , case Tagger.pending model.tagger of
+            0 ->
+                Nothing
+
+            1 ->
+                Just "Tagging a picture"
+
+            count ->
+                Just ("Tagging " ++ String.fromInt count ++ " pictures")
+        ]
+
+
+isWorking : Model -> Bool
+isWorking model =
+    not (List.isEmpty (work model))
+
+
+logoTooltip : String
+logoTooltip =
+    "supports-[anchor-scope:all]:[anchor-name:--logo-tooltip] supports-[anchor-scope:all]:[anchor-scope:--logo-tooltip] supports-[anchor-scope:all]:after:[position-anchor:--logo-tooltip] supports-[anchor-scope:all]:after:pointer-events-none supports-[anchor-scope:all]:after:invisible supports-[anchor-scope:all]:after:fixed supports-[anchor-scope:all]:after:z-50 supports-[anchor-scope:all]:after:-translate-y-1/2 supports-[anchor-scope:all]:after:rounded-md supports-[anchor-scope:all]:after:bg-foreground supports-[anchor-scope:all]:after:px-3 supports-[anchor-scope:all]:after:py-1.5 supports-[anchor-scope:all]:after:text-xs supports-[anchor-scope:all]:after:font-medium supports-[anchor-scope:all]:after:whitespace-nowrap supports-[anchor-scope:all]:after:text-background supports-[anchor-scope:all]:after:opacity-0 supports-[anchor-scope:all]:after:transition-[opacity,visibility] supports-[anchor-scope:all]:after:duration-150 supports-[anchor-scope:all]:after:content-[attr(data-tooltip)] supports-[anchor-scope:all]:after:[top:anchor(center)] supports-[anchor-scope:all]:after:[inset-inline-start:calc(anchor(end)+8px)] supports-[anchor-scope:all]:data-[tooltip]:hover:after:visible supports-[anchor-scope:all]:data-[tooltip]:hover:after:opacity-100 supports-[anchor-scope:all]:data-[tooltip]:focus-visible:after:visible supports-[anchor-scope:all]:data-[tooltip]:focus-visible:after:opacity-100"
 
 
 isGenerating : Pipeline.Device -> Bool

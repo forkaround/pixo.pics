@@ -1191,6 +1191,38 @@ suite =
                                     , "ReleaseTagger"
                                     ]
                             )
+            , test "says on the logo that it is tagging" <|
+                \() ->
+                    readyToTag
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Save"
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (pictureSaved "blob:https://pixo.pics/1" (stored 1 "blob:https://pixo.pics/2" "a bonsai" 512 512))
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "data-tooltip" "Tagging a picture") ]
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.attribute "role" "status"), containing [ text "Tagging a picture" ] ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "TaggerLoaded")
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (Encode.object [ ( "tag", Encode.string "TagsWritten" ), ( "text", Encode.string "bonsai, tree, studio" ) ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "TaggerReleased")
+                        |> ProgramTest.expectViewHasNot [ attribute (Html.Attributes.attribute "data-tooltip" "Tagging a picture") ]
+            , test "says on the logo that it is generating" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 0)
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "data-tooltip" "Generating a picture") ]
+            , test "names the logo pixo while it works" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 0)
+                        |> ProgramTest.clickLink "pixo" "/"
+                        |> ProgramTest.expectBrowserUrl (String.endsWith "/" >> Expect.equal True)
             , test "saves without tags when the prompt model is not downloaded" <|
                 \() ->
                     ready
