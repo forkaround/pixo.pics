@@ -316,10 +316,10 @@ viewGenerate : Model -> Html Msg
 viewGenerate model =
     case model.engine of
         Empty ->
-            viewStart model
+            viewStart model []
 
         Ready _ ->
-            viewStart model
+            viewStart model []
 
         Loading chosen parts _ ->
             div [ class "flex flex-col gap-4" ]
@@ -364,14 +364,14 @@ viewGenerate model =
             viewWaiting "Removing…"
 
         Unchecked ->
-            viewWaiting ""
+            viewStart model [ disabled True ]
 
         Checking ->
-            viewWaiting ""
+            viewStart model [ disabled True ]
 
 
-viewStart : Model -> Html Msg
-viewStart model =
+viewStart : Model -> List (Html.Attribute Msg) -> Html Msg
+viewStart model attributes =
     Button.new
         |> Button.text
             (if Pipeline.isDownloaded model.settings.weights model || Pipeline.inMemory model.engine == Just model.settings.weights then
@@ -381,7 +381,7 @@ viewStart model =
                 "Download and generate"
             )
         |> Button.startIcon (Phosphor.sparkle Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-        |> Button.toHtml [ type_ "submit" ]
+        |> Button.toHtml (type_ "submit" :: attributes)
 
 
 viewWaiting : String -> Html Msg
