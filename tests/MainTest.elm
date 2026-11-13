@@ -904,6 +904,20 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Nothing here yet" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ text "AI Style" ] ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+            , test "makes pictures but writes no prompts without 16-bit shaders" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (adapterFound [ "subgroups" ])
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ text "Random seed" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
+                        |> ProgramTest.ensureViewHas [ text "Needs 16-bit GPU shaders." ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+            , test "says nothing about 16-bit shaders when the GPU has them" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "AI Style" ] ]
+                        |> ProgramTest.expectViewHasNot [ text "Needs 16-bit GPU shaders." ]
             , test "says at once that a browser without the WebGPU API can't generate, without checking" <|
                 \() ->
                     start { defaultFlags | webGpu = False }
@@ -1215,6 +1229,14 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu" ])
+            , test "loads no prompt model on a GPU without 16-bit shaders" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (adapterFound [])
+                        |> ProgramTest.update (Main.GotStylist (Stylist.StyleChosen Stylist.Photo "a fox in the snow"))
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu" ])
             , test "says what the first rewrite downloads" <|
                 \() ->
                     start defaultFlags
@@ -1387,7 +1409,15 @@ suite =
                         |> ProgramTest.expectHttpRequestWasMade "GET" "/api/health"
             ]
         , describe "Models"
-            [ test "removes the prompt model it downloaded" <|
+            [ test "says the prompt writer needs 16-bit shaders, and still offers the image models" <|
+                \() ->
+                    startAt "/settings/models" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (adapterFound [])
+                        |> ProgramTest.ensureViewHas [ text "Needs 16-bit GPU shaders." ]
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Needs 16-bit GPU shaders." ] ]
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Downloads the first time you use AI Style in the studio." ] ]
+                        |> ProgramTest.expectViewHasNot [ class "invisible", containing [ text "Download once, use in the studio." ] ]
+            , test "removes the prompt model it downloaded" <|
                 \() ->
                     startAt "/settings/models" { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
                         |> ProgramTest.clickButton "Remove the prompt writer"

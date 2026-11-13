@@ -321,6 +321,42 @@ suite =
                         |> .device
                         |> stage
                         |> Expect.equal (Just (Denoising 2))
+            , test "can write prompts only on an adapter with 16-bit shaders" <|
+                \() ->
+                    [ Just [ "shader-f16", "subgroups" ], Just [ "subgroups" ], Just [], Nothing ]
+                        |> List.map
+                            (\features ->
+                                Pipeline.enter (Pipeline.init 1 True [])
+                                    |> Tuple.first
+                                    |> run [ Happened (SupportChecked features) ]
+                                    |> .device
+                            )
+                        |> Expect.equal
+                            [ Supported CanPrompt Empty
+                            , Supported NoShaderF16 Empty
+                            , Supported NoShaderF16 Empty
+                            , Unsupported Kept
+                            ]
+            , test "makes pictures without 16-bit shaders" <|
+                \() ->
+                    Pipeline.enter (Pipeline.init 1 True [])
+                        |> Tuple.first
+                        |> run [ Happened (SupportChecked (Just [])) ]
+                        |> Pipeline.update (DownloadClicked Ternary)
+                        |> Tuple.second
+                        |> Expect.equal (Just (Load Ternary))
+            , test "keeps what the prompt model can do while the image model changes" <|
+                \() ->
+                    Pipeline.enter (Pipeline.init 1 True [])
+                        |> Tuple.first
+                        |> run [ Happened (SupportChecked (Just [])), DownloadClicked Ternary, Happened ModelLoaded, ReleaseClicked, Happened ModelReleased ]
+                        |> .device
+                        |> Expect.equal (Supported NoShaderF16 Empty)
+            , test "says the prompt model runs only with 16-bit shaders" <|
+                \() ->
+                    List.map Pipeline.canPrompt
+                        [ Unchecked, Checking, Unsupported Kept, Supported CanPrompt Empty, Supported NoShaderF16 (Ready Ternary) ]
+                        |> Expect.equal [ False, False, False, True, False ]
             ]
         ]
 

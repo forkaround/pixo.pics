@@ -257,7 +257,7 @@ stylist device model =
                 ]
             ]
         |> Card.footer [ class "min-h-16 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
-            [ hint []
+            [ promptHint []
                 device
                 [ text
                     (if model.downloaded then
@@ -268,6 +268,7 @@ stylist device model =
                     )
                 ]
                 [ text SupportView.needsWebGpu ]
+                [ text SupportView.needsShaderF16 ]
             , if model.downloaded then
                 Button.new
                     |> Button.text
@@ -301,6 +302,17 @@ hint attributes device supported unsupported =
         { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-0.5 h-3 w-48 max-w-full" ] ]
         , supported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] supported
         , unsupported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] unsupported
+        }
+
+
+promptHint : List (Html.Attribute msg) -> Pipeline.Device -> List (Html msg) -> List (Html msg) -> List (Html msg) -> Html msg
+promptHint attributes device supported unsupported noShaderF16 =
+    SupportView.promptLayers attributes
+        device
+        { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-0.5 h-3 w-48 max-w-full" ] ]
+        , supported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] supported
+        , unsupported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] unsupported
+        , noShaderF16 = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] noShaderF16
         }
 
 

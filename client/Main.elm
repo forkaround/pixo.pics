@@ -367,7 +367,7 @@ update msg model =
             runLibrary model (Library.update libraryMsg model.library)
 
         GotStylist stylistMsg ->
-            if Stylist.needsWebGpu stylistMsg && not (Pipeline.isSupported model.pipeline.device) then
+            if Stylist.needsWebGpu stylistMsg && not (Pipeline.canPrompt model.pipeline.device) then
                 ( model, NoEffect )
 
             else

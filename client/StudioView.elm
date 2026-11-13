@@ -42,7 +42,7 @@ controls toMsg stylist model =
         [ Html.fieldset [ disabled (not (Pipeline.isSupported model.device)), class "flex flex-1 flex-col" ]
             [ Field.group [ class "flex-1 p-4" ]
                 (Html.map toMsg.pipeline (viewWeights model)
-                    :: viewPrompt toMsg stylist settings.prompt
+                    :: viewPrompt toMsg stylist model.device settings.prompt
                     :: List.map (Html.map toMsg.pipeline) (settingsFields settings)
                 )
             ]
@@ -96,8 +96,8 @@ settingsFields settings =
         ++ viewSeed settings.seeding
 
 
-viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> String -> Html msg
-viewPrompt toMsg stylist prompt =
+viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Pipeline.Device -> String -> Html msg
+viewPrompt toMsg stylist device prompt =
     let
         busy =
             Stylist.isBusy stylist
@@ -120,13 +120,13 @@ viewPrompt toMsg stylist prompt =
                 )
             , class "min-h-28"
             ]
-        , Html.map toMsg.stylist (viewStyle stylist prompt)
+        , Html.map toMsg.stylist (viewStyle device stylist prompt)
         , message stylist.message
         ]
 
 
-viewStyle : Stylist.Model -> String -> Html Stylist.Msg
-viewStyle stylist prompt =
+viewStyle : Pipeline.Device -> Stylist.Model -> String -> Html Stylist.Msg
+viewStyle device stylist prompt =
     case stylist.state of
         Stylist.Loading progress (Just _) ->
             viewWriting
@@ -144,8 +144,16 @@ viewStyle stylist prompt =
 
         state ->
             div [ class "flex flex-wrap items-center gap-2" ]
-                (viewStyleMenu (state == Stylist.Removing) prompt stylist
-                    :: (if Stylist.canUndo prompt stylist then
+                (viewStyleMenu (state == Stylist.Removing || not (Pipeline.canPrompt device)) prompt stylist
+                    :: (if Pipeline.prompting device == Just Pipeline.NoShaderF16 then
+                            [ p [ class "min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground", title SupportView.needsShaderF16 ]
+                                [ text SupportView.needsShaderF16 ]
+                            ]
+
+                        else
+                            []
+                       )
+                    ++ (if Stylist.canUndo prompt stylist then
                             [ Button.new
                                 |> Button.text "Undo"
                                 |> Button.ghost
@@ -174,12 +182,12 @@ viewWriting shown =
 
 
 viewStyleMenu : Bool -> String -> Stylist.Model -> Html Stylist.Msg
-viewStyleMenu removing prompt stylist =
+viewStyleMenu off prompt stylist =
     DropdownMenu.new
         |> DropdownMenu.id "ai-style"
         |> DropdownMenu.trigger
             ((Button.new |> Button.text "AI Style" |> Button.outline |> Button.small |> Button.toAttributes)
-                ++ [ disabled removing ]
+                ++ [ disabled off ]
             )
             [ Phosphor.magicWand Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
             , text "AI Style"

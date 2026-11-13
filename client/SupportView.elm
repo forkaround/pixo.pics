@@ -1,6 +1,8 @@
 module SupportView exposing
     ( layers
+    , needsShaderF16
     , needsWebGpu
+    , promptLayers
     , unsupportedReason
     , unsupportedTitle
     )
@@ -14,6 +16,7 @@ type Layer
     = CheckingLayer
     | SupportedLayer
     | UnsupportedLayer
+    | NoShaderF16Layer
 
 
 layers :
@@ -22,22 +25,33 @@ layers :
     -> { checking : Html msg, supported : Html msg, unsupported : Html msg }
     -> Html msg
 layers attributes device shown =
+    stack attributes
+        (imageLayer device)
+        [ ( CheckingLayer, shown.checking )
+        , ( SupportedLayer, shown.supported )
+        , ( UnsupportedLayer, shown.unsupported )
+        ]
+
+
+promptLayers :
+    List (Html.Attribute msg)
+    -> Pipeline.Device
+    -> { checking : Html msg, supported : Html msg, unsupported : Html msg, noShaderF16 : Html msg }
+    -> Html msg
+promptLayers attributes device shown =
+    stack attributes
+        (promptLayer device)
+        [ ( CheckingLayer, shown.checking )
+        , ( SupportedLayer, shown.supported )
+        , ( UnsupportedLayer, shown.unsupported )
+        , ( NoShaderF16Layer, shown.noShaderF16 )
+        ]
+
+
+stack : List (Html.Attribute msg) -> Layer -> List ( Layer, Html msg ) -> Html msg
+stack attributes active shown =
     let
-        active =
-            case device of
-                Pipeline.Unchecked ->
-                    CheckingLayer
-
-                Pipeline.Checking ->
-                    CheckingLayer
-
-                Pipeline.Unsupported _ ->
-                    UnsupportedLayer
-
-                Pipeline.Supported _ _ ->
-                    SupportedLayer
-
-        layer which content =
+        layer ( which, content ) =
             div
                 (class "col-start-1 row-start-1 self-start"
                     :: (if which == active then
@@ -49,11 +63,42 @@ layers attributes device shown =
                 )
                 [ content ]
     in
-    div (class "grid" :: attributes)
-        [ layer CheckingLayer shown.checking
-        , layer SupportedLayer shown.supported
-        , layer UnsupportedLayer shown.unsupported
-        ]
+    div (class "grid" :: attributes) (List.map layer shown)
+
+
+imageLayer : Pipeline.Device -> Layer
+imageLayer device =
+    case device of
+        Pipeline.Unchecked ->
+            CheckingLayer
+
+        Pipeline.Checking ->
+            CheckingLayer
+
+        Pipeline.Unsupported _ ->
+            UnsupportedLayer
+
+        Pipeline.Supported _ _ ->
+            SupportedLayer
+
+
+promptLayer : Pipeline.Device -> Layer
+promptLayer device =
+    case device of
+        Pipeline.Unchecked ->
+            CheckingLayer
+
+        Pipeline.Checking ->
+            CheckingLayer
+
+        Pipeline.Unsupported _ ->
+            UnsupportedLayer
+
+        Pipeline.Supported Pipeline.CanPrompt _ ->
+            SupportedLayer
+
+        Pipeline.Supported Pipeline.NoShaderF16 _ ->
+            NoShaderF16Layer
 
 
 unsupportedTitle : String
@@ -69,3 +114,8 @@ unsupportedReason =
 needsWebGpu : String
 needsWebGpu =
     "Needs a WebGPU device to run."
+
+
+needsShaderF16 : String
+needsShaderF16 =
+    "Needs 16-bit GPU shaders."
