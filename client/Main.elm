@@ -19,6 +19,7 @@ import Json.Decode as Decode
 import Library
 import LibraryView
 import Logo
+import Minidenticons
 import ModelsView
 import Page.Account
 import Page.Passkey
@@ -815,7 +816,7 @@ viewSession model =
         SignedIn account ->
             Sidebar.menuItem []
                 [ viewUserMenu model.theme
-                    { avatar = [ text (String.toUpper (String.left 2 (Username.toString account.username))) ]
+                    { avatar = [ span [ class "size-full *:size-full!" ] [ Minidenticons.identicon 75 50 (Username.toString account.username) ] ]
                     , name = Username.toString account.username
                     , detail = Email.toString account.email
                     , actions =

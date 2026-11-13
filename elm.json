@@ -14,6 +14,7 @@
       "elm/svg": "1.0.1",
       "elm/time": "1.0.0",
       "elm/url": "1.0.0",
+      "laurentpayot/minidenticons-elm": "1.0.1",
       "phosphor-icons/phosphor-elm": "2.1.0",
       "rtfeldman/elm-iso8601-date-strings": "1.1.4"
     },
