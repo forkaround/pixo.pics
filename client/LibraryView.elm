@@ -47,14 +47,14 @@ view model =
 
             Unavailable reason ->
                 Empty.new
-                    |> Empty.icon (icon Phosphor.warning)
+                    |> Empty.icon (Phosphor.warning Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Empty.title [ text "Can't open the library" ]
                     |> Empty.description [ text reason ]
                     |> Empty.toHtml []
 
             Loaded [] ->
                 Empty.new
-                    |> Empty.icon (icon Phosphor.images)
+                    |> Empty.icon (Phosphor.images Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Empty.title [ text "No pictures yet" ]
                     |> Empty.description [ text "Pictures you save in the studio are kept in this browser." ]
                     |> Empty.content
@@ -70,7 +70,7 @@ view model =
                 case Library.visible model of
                     [] ->
                         Empty.new
-                            |> Empty.icon (icon Phosphor.magnifyingGlass)
+                            |> Empty.icon (Phosphor.magnifyingGlass Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                             |> Empty.title [ text ("Nothing matches “" ++ String.trim model.query ++ "”") ]
                             |> Empty.toHtml []
 

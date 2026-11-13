@@ -20,6 +20,7 @@ module Pipeline exposing
     , enter
     , frameBudget
     , guidance
+    , hasWebGpu
     , inMemory
     , init
     , isDownloaded
@@ -153,9 +154,14 @@ type alias Failure =
     }
 
 
-init : Int -> List Weights -> Model
-init entropy downloaded =
-    { engine = Unchecked
+init : Int -> Bool -> List Weights -> Model
+init entropy webGpu downloaded =
+    { engine =
+        if webGpu then
+            Unchecked
+
+        else
+            Unsupported
     , settings =
         { weights = Maybe.withDefault Ternary (List.head downloaded)
         , prompt = ""
@@ -236,6 +242,37 @@ preset name ratio use width height =
 isDownloaded : Weights -> Model -> Bool
 isDownloaded chosen model =
     List.member chosen model.downloaded
+
+
+hasWebGpu : Engine -> Bool
+hasWebGpu engine =
+    case engine of
+        Unchecked ->
+            False
+
+        Checking ->
+            False
+
+        Unsupported ->
+            False
+
+        Empty ->
+            True
+
+        Clearing ->
+            True
+
+        Loading _ _ _ ->
+            True
+
+        Ready _ ->
+            True
+
+        Generating _ _ _ ->
+            True
+
+        Releasing _ ->
+            True
 
 
 inMemory : Engine -> Maybe Weights

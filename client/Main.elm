@@ -106,9 +106,9 @@ type Section
 init : Decode.Value -> Url -> ( Model, Effect Msg )
 init flags url =
     let
-        { theme, systemDark, entropy, models, stylist, canShare, sidebarOpen } =
+        { theme, systemDark, entropy, models, stylist, canShare, sidebarOpen, webGpu } =
             InteropPorts.decodeFlags flags
-                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False, sidebarOpen = Nothing }
+                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False, sidebarOpen = Nothing, webGpu = True }
 
         sidebar =
             { open = Maybe.withDefault True sidebarOpen, openMobile = False }
@@ -117,7 +117,7 @@ init flags url =
         { theme = Maybe.withDefault Interop.System theme
         , systemDark = systemDark
         , session = Unknown
-        , pipeline = Pipeline.init entropy (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
+        , pipeline = Pipeline.init entropy webGpu (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , stylist = Stylist.init stylist
         , library = Library.init canShare
         , sidebar = sidebar

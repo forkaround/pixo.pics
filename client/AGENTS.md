@@ -45,7 +45,7 @@ A page with state of its own is a module in `client/Page/`. A new one is:
 
 - **UI**: use the elmcn registry component instead of writing one; Phosphor
   (`phosphor-icons/phosphor-elm`, `Regular`; `Bold` beside medium text: the sidebars'
-  menus and trigger, the user menu, the theme toggle, the login and sign-up forms)
+  menus and trigger, the user menu, the theme toggle, the login and sign-up forms, the empty states' icon)
   instead of hand-written SVG; `sr-only` text on icon-only controls.
 - **Skeletons faithfully represent the final element**: match its structure, dimensions,
   spacing and alignment, so replacing the skeleton with loaded content causes no layout

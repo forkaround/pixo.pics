@@ -21,6 +21,7 @@ import UI.Field as Field
 import UI.Input as Input
 import UI.Progress as Progress
 import UI.Select as Select
+import UI.Skeleton as Skeleton
 import UI.Slider as Slider
 import UI.Switch as Switch
 import UI.Textarea as Textarea
@@ -37,11 +38,13 @@ controls toMsg stylist model =
             model.settings
     in
     form [ onSubmit (toMsg.pipeline GenerateClicked), class "flex min-h-full flex-col" ]
-        [ Field.group [ class "flex-1 p-4" ]
-            (Html.map toMsg.pipeline (viewWeights model)
-                :: viewPrompt toMsg stylist settings.prompt
-                :: List.map (Html.map toMsg.pipeline) (settingsFields settings)
-            )
+        [ Html.fieldset [ disabled (not (Pipeline.hasWebGpu model.engine)), class "flex flex-1 flex-col" ]
+            [ Field.group [ class "flex-1 p-4" ]
+                (Html.map toMsg.pipeline (viewWeights model)
+                    :: viewPrompt toMsg stylist settings.prompt
+                    :: List.map (Html.map toMsg.pipeline) (settingsFields settings)
+                )
+            ]
         , Html.map toMsg.pipeline
             (div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background px-4 py-5" ]
                 [ message model.message
@@ -250,7 +253,7 @@ viewPreset settings preset =
              else
                 "false"
             )
-        , class "flex shrink-0 snap-start items-center gap-2 rounded-md border border-border bg-muted px-2 py-1.5 text-start text-xs whitespace-nowrap outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset aria-pressed:border-ring aria-pressed:bg-background aria-pressed:hover:bg-background dark:bg-input/30 dark:hover:bg-input/50 dark:aria-pressed:bg-input dark:aria-pressed:hover:bg-input"
+        , class "flex shrink-0 snap-start items-center gap-2 rounded-md border border-border bg-muted px-2 py-1.5 text-start text-xs whitespace-nowrap outline-none transition-colors hover:bg-muted/60 disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset aria-pressed:border-ring aria-pressed:bg-background aria-pressed:hover:bg-background dark:bg-input/30 dark:hover:bg-input/50 dark:aria-pressed:bg-input dark:aria-pressed:hover:bg-input"
         ]
         [ span [ class "flex size-5 shrink-0 items-center justify-center", attribute "aria-hidden" "true" ]
             [ span
@@ -316,10 +319,10 @@ viewGenerate : Model -> Html Msg
 viewGenerate model =
     case model.engine of
         Empty ->
-            viewStart model []
+            viewStart model
 
         Ready _ ->
-            viewStart model []
+            viewStart model
 
         Loading chosen parts _ ->
             div [ class "flex flex-col gap-4" ]
@@ -352,7 +355,7 @@ viewGenerate model =
                 |> Button.toHtml [ disabled True ]
 
         Unsupported ->
-            viewWaiting "This browser can't make pictures."
+            generateButton "Generate" [ disabled True ]
 
         Releasing (Just _) ->
             viewWaiting "Switching models…"
@@ -364,22 +367,28 @@ viewGenerate model =
             viewWaiting "Removing…"
 
         Unchecked ->
-            viewStart model [ disabled True ]
+            generateButton "Generate" [ disabled True ]
 
         Checking ->
-            viewStart model [ disabled True ]
+            generateButton "Generate" [ disabled True ]
 
 
-viewStart : Model -> List (Html.Attribute Msg) -> Html Msg
-viewStart model attributes =
+viewStart : Model -> Html Msg
+viewStart model =
+    generateButton
+        (if Pipeline.isDownloaded model.settings.weights model || Pipeline.inMemory model.engine == Just model.settings.weights then
+            "Generate"
+
+         else
+            "Download and generate"
+        )
+        []
+
+
+generateButton : String -> List (Html.Attribute Msg) -> Html Msg
+generateButton label attributes =
     Button.new
-        |> Button.text
-            (if Pipeline.isDownloaded model.settings.weights model || Pipeline.inMemory model.engine == Just model.settings.weights then
-                "Generate"
-
-             else
-                "Download and generate"
-            )
+        |> Button.text label
         |> Button.startIcon (Phosphor.sparkle Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
         |> Button.toHtml (type_ "submit" :: attributes)
 
@@ -472,29 +481,61 @@ canvas toMsg library model =
     div [ class "mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-10 p-4 md:p-8" ]
         (case ( model.engine, pictures ) of
             ( Unsupported, _ ) ->
-                [ Empty.new
-                    |> Empty.icon (Phosphor.warning Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Empty.title [ text "This browser can't make pictures" ]
-                    |> Empty.description
-                        [ text "It needs WebGPU. Try a recent Chrome, Edge or Safari." ]
-                    |> Empty.toHtml []
-                ]
+                [ viewEmpty CannotGenerate ]
+
+            ( Unchecked, _ ) ->
+                [ viewEmpty Unknown ]
+
+            ( Checking, _ ) ->
+                [ viewEmpty Unknown ]
 
             ( Generating _ job stage, _ ) ->
                 viewPending job stage :: pictures
 
             ( _, [] ) ->
-                [ Empty.new
-                    |> Empty.icon (Phosphor.paintBrush Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Empty.title [ text "Nothing here yet" ]
-                    |> Empty.description
-                        [ text "Describe a picture and press Generate. Save the ones you want to keep." ]
-                    |> Empty.toHtml []
-                ]
+                [ viewEmpty CanGenerate ]
 
             _ ->
                 pictures
         )
+
+
+type Capability
+    = Unknown
+    | CanGenerate
+    | CannotGenerate
+
+
+viewEmpty : Capability -> Html msg
+viewEmpty capability =
+    let
+        layer shown =
+            class
+                (if shown == capability then
+                    "col-start-1 row-start-1 self-start"
+
+                 else
+                    "invisible col-start-1 row-start-1 self-start"
+                )
+    in
+    div [ class "grid w-full flex-1 content-center" ]
+        [ Empty.new
+            |> Empty.icon (Skeleton.view [ class "size-full rounded-lg" ])
+            |> Empty.title [ Skeleton.view [ class "my-0.5 h-4 w-40" ] ]
+            |> Empty.description [ Skeleton.view [ class "my-1 h-4 w-64" ] ]
+            |> Empty.toHtml [ layer Unknown, attribute "aria-hidden" "true" ]
+        , Empty.new
+            |> Empty.icon (Phosphor.paintBrush Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+            |> Empty.title [ text "Nothing here yet" ]
+            |> Empty.description
+                [ text "Describe a picture and press Generate. Save the ones you want to keep." ]
+            |> Empty.toHtml [ layer CanGenerate ]
+        , Empty.new
+            |> Empty.icon (Phosphor.warning Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+            |> Empty.title [ text "Cannot generate images on this device" ]
+            |> Empty.description [ text "Pixo needs a WebGPU device" ]
+            |> Empty.toHtml [ layer CannotGenerate ]
+        ]
 
 
 viewPending : Pipeline.Job -> Stage -> Html msg

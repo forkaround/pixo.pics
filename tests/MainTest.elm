@@ -891,11 +891,35 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu" ])
+            , test "keeps the form disabled until it knows the browser can run the model" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Nothing here yet" ] ]
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Cannot generate images on this device" ] ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Nothing here yet" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ text "AI Style" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+            , test "says at once that a browser without the WebGPU API can't generate, without checking" <|
+                \() ->
+                    start { defaultFlags | webGpu = False }
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Cannot generate images on this device" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
             , test "says so when the browser has no WebGPU" <|
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
-                        |> ProgramTest.expectViewHas [ text "This browser can't make pictures" ]
+                        |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Cannot generate images on this device" ] ]
+                        |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Nothing here yet" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "Random seed" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
             , test "downloads the model, then makes a picture from the prompt, the size, the steps and the seed" <|
                 \() ->
                     start defaultFlags
@@ -1183,6 +1207,7 @@ suite =
             , test "asks for an idea first" <|
                 \() ->
                     start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.ensureViewHas [ text "Describe the picture first." ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
@@ -1191,6 +1216,7 @@ suite =
             , test "loads the prompt model, then rewrites the idea as it streams in" <|
                 \() ->
                     start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" " a fox in the snow "
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
@@ -1220,6 +1246,7 @@ suite =
             , test "remembers the prompt model it downloaded" <|
                 \() ->
                     start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
@@ -1255,6 +1282,7 @@ suite =
             , test "stops writing and gives the idea back" <|
                 \() ->
                     start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
@@ -1270,6 +1298,7 @@ suite =
             , test "keeps the idea when the answer is not a prompt" <|
                 \() ->
                     start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
@@ -1279,6 +1308,7 @@ suite =
             , test "shows why the prompt model failed, and keeps the idea" <|
                 \() ->
                     start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (stylistFailed "Error" "Out of memory.")
@@ -1673,12 +1703,13 @@ type alias Flags =
     , stylist : Maybe String
     , canShare : Bool
     , sidebar : Maybe String
+    , webGpu : Bool
     }
 
 
 defaultFlags : Flags
 defaultFlags =
-    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False, sidebar = Nothing }
+    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False, sidebar = Nothing, webGpu = True }
 
 
 ready : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
@@ -1732,6 +1763,7 @@ startAt path flags =
                 , ( "stylist", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.stylist) )
                 , ( "canShare", Encode.bool flags.canShare )
                 , ( "sidebar", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.sidebar) )
+                , ( "webGpu", Encode.bool flags.webGpu )
                 ]
             )
 
@@ -2109,6 +2141,7 @@ newAccount =
 styled : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 styled =
     start defaultFlags
+        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
         |> ProgramTest.clickButton "Photo"
         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")

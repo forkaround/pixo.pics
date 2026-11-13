@@ -188,7 +188,7 @@ toHtml attrs (Slider config) =
     Html.span
         ([ attribute "data-slot" "slider"
          , attribute "data-orientation" orientation
-         , class "relative flex touch-none items-center select-none data-disabled:opacity-50"
+         , class "relative flex touch-none items-center select-none data-disabled:opacity-50 has-disabled:opacity-50"
          , class
             (case config.orientation of
                 Horizontal ->

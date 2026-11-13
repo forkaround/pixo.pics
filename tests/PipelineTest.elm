@@ -134,7 +134,7 @@ suite =
         , describe "update"
             [ test "checks the browser on the first visit only" <|
                 \() ->
-                    Pipeline.enter (Pipeline.init 1 [])
+                    Pipeline.enter (Pipeline.init 1 True [])
                         |> Tuple.mapFirst Pipeline.enter
                         |> (\( ( _, second ), first ) -> ( first, second ))
                         |> Expect.equal ( Just Check, Nothing )
@@ -273,7 +273,7 @@ suite =
 
 supported : Pipeline.Model
 supported =
-    Pipeline.enter (Pipeline.init 1 [])
+    Pipeline.enter (Pipeline.init 1 True [])
         |> Tuple.first
         |> run [ Happened (SupportChecked True) ]
 

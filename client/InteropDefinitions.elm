@@ -62,6 +62,7 @@ type alias Flags =
     , stylist : Maybe String
     , canShare : Bool
     , sidebarOpen : Maybe Bool
+    , webGpu : Bool
     }
 
 
@@ -424,7 +425,7 @@ themeDecoder =
 
 flags : Decoder Flags
 flags =
-    TsDecode.map7 Flags
+    TsDecode.map8 Flags
         (TsDecode.field "theme" (TsDecode.nullable themeDecoder))
         (TsDecode.field "systemDark" TsDecode.bool)
         (TsDecode.field "entropy" TsDecode.int)
@@ -432,3 +433,4 @@ flags =
         (TsDecode.field "stylist" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "canShare" TsDecode.bool)
         (TsDecode.field "sidebar" (TsDecode.nullable (TsDecode.stringUnion [ ( "expanded", True ), ( "collapsed", False ) ])))
+        (TsDecode.field "webGpu" TsDecode.bool)

@@ -105,6 +105,7 @@ const app = Elm.Main.init({
     stylist: stored("stylist"),
     canShare: canShare(),
     sidebar: stored("sidebar") as Flags["sidebar"],
+    webGpu: "gpu" in navigator,
   },
 });
 

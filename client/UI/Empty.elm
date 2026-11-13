@@ -122,7 +122,7 @@ viewMedia value =
         ( variant, extra, children ) =
             case value of
                 Icon child ->
-                    ( "icon", "size-8 rounded-lg bg-muted text-foreground [&_svg:not([class*='size-'])]:size-4", [ child ] )
+                    ( "icon", "size-10 rounded-lg bg-muted text-foreground [&_svg:not([class*='size-'])]:size-5", [ child ] )
 
                 Media items ->
                     ( "default", "bg-transparent", items )
