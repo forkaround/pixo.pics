@@ -14,9 +14,14 @@ no part.
   graphics card's memory across pages.
 - An event is applied only in the state that waits for it, so one that arrives late
   changes nothing. The library runs one job at a time: a cancel waits for it to stop
-  (`PipelineFailed` named `AbortError`, which shows no message). A graphics card that
-  drops the device mid-picture rejects with the same name, and that one is shown: the
-  model in memory is then unusable until released and loaded again.
+  (`PipelineFailed` named `AbortError`), in `Cancelling` for a download and `Stopping`
+  for a picture, and only then shows no message. A graphics card that drops the device
+  mid-picture rejects with the same name, and that one is shown: the model in memory is
+  then unusable until released and loaded again. A model that finishes loading as its
+  download is cancelled is kept, and its picture is not made.
+- A label for work in progress uses the verb of what is actually happening: the button's
+  own (Cancel, "Cancelling…"; Stop, "Stopping…"), or the real step where it differs
+  ("Downloading" a part, but "Loading" one from the cache).
 - `model.pipeline.device` says whether the browser has WebGPU: `Unchecked`, `Checking`,
   `Unsupported` with a `Storage` or `Supported` with the `Engine`, so the model can only
   load, generate or be released on a device that can run it. A browser without
@@ -38,7 +43,9 @@ no part.
   `Pipeline.weightsSize` was read from a real download: change it with the list.
 - What the library takes: a `Dimension` in multiples of 16 (ours: 256 to 1024 in steps
   of 64, and a preset must be on that grid), a seed read as 32 bits, `guidanceScale` 1
-  and nothing else.
+  and nothing else. The studio offers only `Pipeline.presets`, and starts at Square
+  (1:1, `Dimension.default`). Steps are typed, kept as text and read when Generate is
+  pressed, as the seed is.
 - A worker frees the page's thread, not the graphics card, which also draws the page.
   The library submits some 350 passes a step without waiting for the card, and the
   browser's frames queue behind them: stalls of 1.4 s. So `pace` in the worker wraps the
@@ -62,7 +69,7 @@ no part.
 
 ## Prompt writer
 
-AI Style, under the studio's prompt, rewrites a short idea as a FLUX.2 prompt with
+AI Style, in the studio's prompt box, rewrites a short idea as a FLUX.2 prompt with
 [WebLLM](https://github.com/mlc-ai/web-llm) in a web worker (`client/stylist.worker.ts`),
 which `main.ts` starts on the first command. `client/Stylist.elm` decides everything: the
 model, the styles, their examples, the instructions, the sampling and what is kept of the
@@ -86,6 +93,12 @@ answer.
   drops it and keeps the first line of each label, also while the answer streams in.
 - Another style rewrites the first idea while the prompt is still the last answer, so
   styles don't pile up. Undo gives the idea back.
+- While it writes, AI Style holds the prompt: `Stylist.update` hands it over (`Took`,
+  then `Gave` with the answer or the idea) and `Pipeline.Draft` is `Styling`, so the
+  studio has no prompt to make a picture from. The box shows `Stylist.shown` meanwhile.
+- The instructions give the picture's size, ratio and orientation (`Stylist.Frame`), and
+  the Camera line asks for a composition that fills it. The examples name no ratio or
+  widescreen framing of their own, which would contradict a square or tall picture.
 - WebLLM keeps the model in the Cache API (`webllm/*`), apart from Bonsai's IndexedDB:
   "Remove downloaded models" leaves it, and the Prompt writer card removes it.
   `stylist` in `localStorage` holds the id of the model that finished loading.

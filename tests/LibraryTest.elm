@@ -131,7 +131,7 @@ suite =
                         |> Expect.equal
                             [ { database = "pixo"
                               , store = "pictures"
-                              , row = "{\"prompt\":\"a red fox in the snow\",\"width\":512,\"height\":512,\"steps\":4,\"seed\":578021833,\"model\":\"prism-ml/bonsai-image-ternary-4B-mlx-2bit\"}"
+                              , row = "{\"prompt\":\"a red fox in the snow\",\"width\":1024,\"height\":1024,\"steps\":4,\"seed\":578021833,\"model\":\"prism-ml/bonsai-image-ternary-4B-mlx-2bit\"}"
                               , blobs = [ ( "blob", "blob:studio" ) ]
                               , label = "blob:studio"
                               }

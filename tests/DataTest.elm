@@ -145,6 +145,11 @@ suite =
                     List.filterMap Steps.fromInt [ 0, 1, 4, 50, 51 ]
                         |> List.map Steps.toInt
                         |> Expect.equal [ 1, 4, 50 ]
+            , test "reads a whole number, trimmed" <|
+                \() ->
+                    List.filterMap Steps.fromString [ " 8 ", "4.5", "-4", "", "51" ]
+                        |> List.map Steps.toString
+                        |> Expect.equal [ "8" ]
             ]
         , describe "Seed"
             [ test "reads a whole number, trimmed" <|

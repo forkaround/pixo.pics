@@ -1,4 +1,4 @@
-module Data.Steps exposing (Steps, default, fewest, fromInt, most, toInt)
+module Data.Steps exposing (Steps, default, fewest, fromInt, fromString, most, toInt, toString)
 
 
 type Steps
@@ -27,6 +27,25 @@ fromInt count =
 
     else
         Nothing
+
+
+fromString : String -> Maybe Steps
+fromString value =
+    let
+        clean =
+            String.trim value
+    in
+    if not (String.isEmpty clean) && String.all Char.isDigit clean then
+        String.toInt clean
+            |> Maybe.andThen fromInt
+
+    else
+        Nothing
+
+
+toString : Steps -> String
+toString (Steps count) =
+    String.fromInt count
 
 
 toInt : Steps -> Int

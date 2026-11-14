@@ -22,7 +22,7 @@ step =
 
 default : Dimension
 default =
-    Dimension 512
+    Dimension 1024
 
 
 fromInt : Int -> Maybe Dimension

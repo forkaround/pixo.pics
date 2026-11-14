@@ -4,26 +4,25 @@ import Data.Dimension as Dimension exposing (Dimension)
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
-import Html exposing (Html, button, div, figcaption, figure, form, img, p, span, text)
-import Html.Attributes exposing (alt, attribute, checked, class, disabled, download, for, height, href, id, name, placeholder, readonly, src, style, title, type_, value, width)
-import Html.Events exposing (onCheck, onClick, onInput, onSubmit)
+import Html exposing (Html, button, div, figcaption, figure, form, img, label, p, span, text)
+import Html.Attributes exposing (alt, attribute, class, disabled, download, for, height, href, id, name, placeholder, readonly, src, style, title, type_, value, width)
+import Html.Events exposing (onClick, onInput, onSubmit)
 import Library
 import Lightbox
 import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
-import Pipeline exposing (Component(..), Device(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
+import Pipeline exposing (Component(..), Device(..), Draft(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
 import Stylist
 import SupportView
 import UI.Button as Button
+import UI.Card as Card
 import UI.DropdownMenu as DropdownMenu
 import UI.Empty as Empty
 import UI.Field as Field
-import UI.Input as Input
+import UI.InputGroup as InputGroup
 import UI.Progress as Progress
 import UI.Select as Select
-import UI.Slider as Slider
-import UI.Switch as Switch
 import UI.Textarea as Textarea
 
 
@@ -33,169 +32,162 @@ import UI.Textarea as Textarea
 
 controls : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> Html msg
 controls toMsg stylist model =
+    div [ class "sticky bottom-0 z-10 px-1.5 pb-[max(--spacing(1.5),env(safe-area-inset-bottom))] md:px-8" ]
+        [ form [ onSubmit (toMsg.pipeline GenerateClicked), class "mx-auto w-full md:max-w-2xl" ]
+            [ Html.fieldset [ disabled (not (Pipeline.isSupported model.device)), class "min-w-0" ]
+                [ Card.new
+                    |> Card.small
+                    |> Card.content [ class "flex flex-col gap-2" ]
+                        (viewPrompt toMsg stylist model
+                            ++ [ message stylist.message
+                               , message model.message
+                               ]
+                        )
+                    |> Card.footer [ class "min-h-13 flex-wrap gap-2" ] (viewFooter toMsg stylist model)
+                    |> Card.toHtml [ class "shadow-lg [&_:not([popover],[popover]_*)]:text-[length:inherit]! [&_:not([popover],[popover]_*)]:leading-[inherit]! has-[#prompt:focus-visible]:ring-ring/50 has-[#prompt:focus-visible]:ring-2" ]
+                ]
+            ]
+        ]
+
+
+viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> List (Html msg)
+viewPrompt toMsg stylist model =
     let
         settings =
             model.settings
+
+        ( shown, styling ) =
+            case settings.prompt of
+                Editing prompt ->
+                    ( prompt, False )
+
+                Styling ->
+                    ( Maybe.withDefault "" (Stylist.shown stylist), True )
     in
-    form [ onSubmit (toMsg.pipeline GenerateClicked), class "flex min-h-full flex-col" ]
-        [ Html.fieldset [ disabled (not (Pipeline.isSupported model.device)), class "flex flex-1 flex-col" ]
-            [ Field.group [ class "flex-1 p-4" ]
-                (Html.map toMsg.pipeline (viewWeights model)
-                    :: viewPrompt toMsg stylist model.device settings.prompt
-                    :: List.map (Html.map toMsg.pipeline) (settingsFields settings)
-                )
-            ]
-        , Html.map toMsg.pipeline
-            (div [ class "sticky bottom-0 z-10 flex flex-col gap-3 border-t bg-background px-4 py-5" ]
-                [ message model.message
-                , viewGenerate model
-                ]
+    [ Field.label [ for "prompt", class "sr-only" ] [ text "Prompt" ]
+    , Textarea.view
+        [ id "prompt"
+        , name "prompt"
+        , placeholder "A bonsai tree on a misty mountain top"
+        , value shown
+        , onInput (PromptChanged >> toMsg.pipeline)
+        , disabled (isLocked model)
+        , attribute "aria-busy"
+            (if styling then
+                "true"
+
+             else
+                "false"
             )
+        , class "max-h-[calc(2lh+--spacing(2))] min-h-[calc(2lh+--spacing(2))]! resize-none overflow-y-auto rounded-none! border-0! bg-transparent! px-0! py-1! transition-[max-height]! duration-300 ease-out focus:max-h-[30svh] focus-visible:ring-0! aria-busy:max-h-[30svh] motion-reduce:transition-none! dark:bg-transparent!"
         ]
-
-
-settingsFields : Pipeline.Settings -> List (Html Msg)
-settingsFields settings =
-    [ viewPresets settings
-    , viewSlider "Width"
-        (String.fromInt (Dimension.toInt settings.width) ++ " px")
-        { value = Dimension.toInt settings.width
-        , min = Dimension.smallest
-        , max = Dimension.largest
-        , step = Dimension.step
-        }
-        WidthChanged
-    , viewSlider "Height"
-        (String.fromInt (Dimension.toInt settings.height) ++ " px")
-        { value = Dimension.toInt settings.height
-        , min = Dimension.smallest
-        , max = Dimension.largest
-        , step = Dimension.step
-        }
-        HeightChanged
-    , viewSlider "Steps"
-        (String.fromInt (Steps.toInt settings.steps))
-        { value = Steps.toInt settings.steps
-        , min = Steps.fewest
-        , max = Steps.most
-        , step = 1
-        }
-        StepsChanged
-    , Field.horizontal []
-        [ Field.label [ for "random-seed" ] [ text "Random seed" ]
-        , Switch.new
-            |> Switch.toHtml
-                [ id "random-seed"
-                , name "random-seed"
-                , checked (settings.seeding == RandomSeed)
-                , onCheck RandomSeedToggled
-                ]
-        ]
+    , div [ class "flex min-h-8 flex-wrap items-center gap-2" ]
+        (List.map (Html.map toMsg.stylist) (viewStyle (isLocked model) model.device stylist settings)
+            ++ [ Html.map toMsg.pipeline (viewWeights model) ]
+        )
     ]
-        ++ viewSeed settings.seeding
 
 
-viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Pipeline.Device -> String -> Html msg
-viewPrompt toMsg stylist device prompt =
+isLocked : Model -> Bool
+isLocked model =
+    model.settings.prompt == Styling || isMakingPicture model.device
+
+
+isMakingPicture : Device -> Bool
+isMakingPicture device =
+    case Pipeline.engineOf device of
+        Just (Loading _ _ waiting) ->
+            waiting /= Nothing
+
+        Just (Generating _ _ _) ->
+            True
+
+        Just (Releasing (Just pending)) ->
+            pending.job /= Nothing
+
+        _ ->
+            False
+
+
+viewStyle : Bool -> Pipeline.Device -> Stylist.Model -> Pipeline.Settings -> List (Html Stylist.Msg)
+viewStyle locked device stylist settings =
     let
-        busy =
-            Stylist.isBusy stylist
+        prompt =
+            case settings.prompt of
+                Editing typed ->
+                    typed
+
+                Styling ->
+                    ""
+
+        picture =
+            { width = Dimension.toInt settings.width, height = Dimension.toInt settings.height }
     in
-    Field.view []
-        [ Field.label [ for "prompt" ] [ text "Prompt" ]
-        , Textarea.view
-            [ id "prompt"
-            , name "prompt"
-            , placeholder "A bonsai tree on a misty mountain top"
-            , value prompt
-            , onInput (PromptChanged >> toMsg.pipeline)
-            , readonly busy
-            , attribute "aria-busy"
-                (if busy then
-                    "true"
-
-                 else
-                    "false"
-                )
-            , class "min-h-28"
-            ]
-        , Html.map toMsg.stylist (viewStyle device stylist prompt)
-        , message stylist.message
-        ]
-
-
-viewStyle : Pipeline.Device -> Stylist.Model -> String -> Html Stylist.Msg
-viewStyle device stylist prompt =
     case stylist.state of
-        Stylist.Loading progress (Just _) ->
-            viewWriting
-                [ Progress.new (100 * progress)
-                    |> Progress.label [ text "Loading the prompt model" ]
-                    |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
-                    |> Progress.toHtml [ class "min-w-0 flex-1" ]
-                ]
+        Stylist.Loading _ (Just _) ->
+            [ viewStyleMenu True picture prompt stylist ]
 
-        Stylist.Writing job _ ->
-            viewWriting [ p [ class "flex-1 text-sm text-muted-foreground", attribute "role" "status" ] [ text ("Writing a " ++ Stylist.styleName job.style ++ " prompt…") ] ]
+        Stylist.Writing _ _ ->
+            [ stop "Stop generating" ]
 
         Stylist.Stopping _ ->
-            viewWriting [ p [ class "flex-1 text-sm text-muted-foreground", attribute "role" "status" ] [ text "Stopping…" ] ]
+            [ Button.new
+                |> Button.text "Stopping…"
+                |> Button.outline
+                |> Button.small
+                |> Button.toHtml [ disabled True, class "shrink-0" ]
+            ]
 
         state ->
-            div [ class "flex flex-wrap items-center gap-2" ]
-                (viewStyleMenu (state == Stylist.Removing || not (Pipeline.canPrompt device)) prompt stylist
-                    :: (if Pipeline.prompting device == Just Pipeline.NoShaderF16 then
-                            [ p [ class "min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground", title SupportView.needsShaderF16 ]
-                                [ text SupportView.needsShaderF16 ]
-                            ]
+            viewStyleMenu (locked || state == Stylist.Removing || not (Pipeline.canPrompt device)) picture prompt stylist
+                :: (if Pipeline.prompting device == Just Pipeline.NoShaderF16 then
+                        [ p [ class "min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground", title SupportView.needsShaderF16 ]
+                            [ text SupportView.needsShaderF16 ]
+                        ]
 
-                        else
-                            []
-                       )
-                    ++ (if Stylist.canUndo prompt stylist then
-                            [ Button.new
-                                |> Button.text "Undo"
-                                |> Button.ghost
-                                |> Button.small
-                                |> Button.startIcon (Phosphor.arrowCounterClockwise Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                                |> Button.toHtml [ onClick Stylist.UndoClicked ]
-                            ]
+                    else
+                        []
+                   )
+                ++ (if Stylist.canUndo prompt stylist then
+                        [ Button.new
+                            |> Button.icon (Phosphor.arrowCounterClockwise Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                            |> Button.label "Undo"
+                            |> Button.ghost
+                            |> Button.small
+                            |> Button.toHtml [ onClick Stylist.UndoClicked, title "Undo", disabled locked ]
+                        ]
 
-                        else
-                            []
-                       )
-                )
+                    else
+                        []
+                   )
 
 
-viewWriting : List (Html Stylist.Msg) -> Html Stylist.Msg
-viewWriting shown =
-    div [ class "flex min-h-8 items-center gap-3" ]
-        (shown
-            ++ [ Button.new
-                    |> Button.text "Stop"
-                    |> Button.outline
-                    |> Button.small
-                    |> Button.toHtml [ onClick Stylist.StopClicked, class "shrink-0" ]
-               ]
-        )
+stop : String -> Html Stylist.Msg
+stop label =
+    Button.new
+        |> Button.text label
+        |> Button.outline
+        |> Button.small
+        |> Button.toHtml [ onClick Stylist.StopClicked, class "shrink-0" ]
 
 
-viewStyleMenu : Bool -> String -> Stylist.Model -> Html Stylist.Msg
-viewStyleMenu off prompt stylist =
+viewStyleMenu : Bool -> Stylist.Frame -> String -> Stylist.Model -> Html Stylist.Msg
+viewStyleMenu off picture prompt stylist =
     DropdownMenu.new
         |> DropdownMenu.id "ai-style"
+        |> DropdownMenu.top
         |> DropdownMenu.trigger
             ((Button.new |> Button.text "AI Style" |> Button.outline |> Button.small |> Button.toAttributes)
                 ++ [ disabled off ]
             )
-            [ Phosphor.magicWand Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            [ Phosphor.magicWand Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
             , text "AI Style"
             , Phosphor.caretDown Regular |> Phosphor.withClass "opacity-60" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
             ]
         |> DropdownMenu.content
             (DropdownMenu.label [ text "Rewrite the prompt as" ]
                 :: List.map
-                    (\style -> DropdownMenu.item [ onClick (Stylist.StyleChosen style prompt) ] [ text (Stylist.styleName style) ])
+                    (\style -> DropdownMenu.item [ onClick (Stylist.StyleChosen style picture prompt) ] [ text (Stylist.styleName style) ])
                     Stylist.styles
                 ++ (if stylist.downloaded then
                         []
@@ -211,70 +203,233 @@ viewStyleMenu off prompt stylist =
 
 viewWeights : Model -> Html Msg
 viewWeights model =
-    Field.view []
-        [ Field.label [ for "weights" ] [ text "Model" ]
+    span [ class "ms-auto flex" ]
+        [ Field.label [ for "weights", class "sr-only" ] [ text "Model" ]
         , Select.new
             |> Select.id "weights"
             |> Select.onSelect WeightsChosen
             |> Select.value (Just model.settings.weights)
-            |> Select.items (List.map (\known -> Select.item known [ text (Pipeline.weightsName known) ]) Pipeline.weights)
-            |> Select.toHtml [ class "w-full" ]
-        , Field.description [] [ Html.a [ href (Path.toString Path.Models) ] [ text "Manage models" ] ]
+            |> Select.group "Bonsai" (List.map (\known -> Select.item known [ text (Pipeline.weightsVariant known) ]) Pipeline.weights)
+            |> Select.small
+            |> Select.toHtml [ disabled (isLocked model) ]
         ]
 
 
-viewPresets : Pipeline.Settings -> Html Msg
-viewPresets settings =
-    Field.view []
-        [ Field.title [] [ text "Size" ]
-        , div []
-            [ div
-                [ class "-mx-4 flex snap-x scroll-px-4 gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                , attribute "role" "group"
-                , attribute "aria-label" "Size"
+viewFooter : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> List (Html msg)
+viewFooter toMsg stylist model =
+    case ( viewWork model, viewPromptModel stylist ) of
+        ( Nothing, Nothing ) ->
+            List.map (Html.map toMsg.pipeline) (viewSettings (isLocked model) model.settings (viewGenerate model))
+
+        ( work, promptModel ) ->
+            List.filterMap identity
+                [ Maybe.map (viewRow >> Html.map toMsg.pipeline) work
+                , Maybe.map (viewRow >> Html.map toMsg.stylist) promptModel
                 ]
-                (List.map (viewPreset settings) Pipeline.presets)
+
+
+viewRow : List (Html msg) -> Html msg
+viewRow =
+    div [ class "flex w-full min-w-0 flex-wrap items-center gap-2" ]
+
+
+viewPromptModel : Stylist.Model -> Maybe (List (Html Stylist.Msg))
+viewPromptModel stylist =
+    case stylist.state of
+        Stylist.Loading progress (Just _) ->
+            Just
+                [ Progress.new (100 * progress)
+                    |> Progress.label
+                        [ text
+                            (if stylist.downloaded then
+                                "Loading the prompt model"
+
+                             else
+                                "Downloading the prompt model"
+                            )
+                        ]
+                    |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
+                    |> Progress.toHtml [ class "min-w-0 flex-1 [&_[data-slot=progress-value]]:text-xs" ]
+                , Button.new
+                    |> Button.text "Cancel"
+                    |> Button.outline
+                    |> Button.small
+                    |> Button.toHtml [ onClick Stylist.StopClicked, class "ms-auto" ]
+                ]
+
+        _ ->
+            Nothing
+
+
+viewGenerate : Model -> Html Msg
+viewGenerate model =
+    case Pipeline.engineOf model.device of
+        Just Empty ->
+            viewStart model
+
+        Just (Ready _) ->
+            viewStart model
+
+        Just (Generating _ _ (Denoising _)) ->
+            Button.new
+                |> Button.text "Cancel"
+                |> Button.outline
+                |> Button.small
+                |> Button.toHtml [ onClick CancelClicked, class "ms-auto max-md:w-full" ]
+
+        Just (Generating _ _ Stopping) ->
+            Button.new
+                |> Button.text "Cancelling…"
+                |> Button.outline
+                |> Button.small
+                |> Button.toHtml [ disabled True, class "ms-auto max-md:w-full" ]
+
+        _ ->
+            generateButton "Generate" [ disabled True ]
+
+
+viewWork : Model -> Maybe (List (Html Msg))
+viewWork model =
+    case Pipeline.engineOf model.device of
+        Just (Loading chosen parts _) ->
+            Just
+                [ loading chosen parts
+                    |> List.singleton
+                    |> div [ class "min-w-0 flex-1" ]
+                , cancel
+                ]
+
+        Just (Cancelling chosen parts) ->
+            Just
+                [ loading chosen parts
+                    |> List.singleton
+                    |> div [ class "min-w-0 flex-1" ]
+                , Button.new
+                    |> Button.text "Cancelling…"
+                    |> Button.outline
+                    |> Button.small
+                    |> Button.toHtml [ disabled True, class "ms-auto" ]
+                ]
+
+        Just (Generating _ _ _) ->
+            Nothing
+
+        Just (Releasing (Just _)) ->
+            Just (viewWaiting "Switching models…")
+
+        Just (Releasing Nothing) ->
+            Just (viewWaiting "Releasing…")
+
+        Just Clearing ->
+            Just (viewWaiting "Removing…")
+
+        Just Empty ->
+            Nothing
+
+        Just (Ready _) ->
+            Nothing
+
+        Nothing ->
+            Nothing
+
+
+viewSettings : Bool -> Pipeline.Settings -> Html Msg -> List (Html Msg)
+viewSettings locked settings generate =
+    [ div [ class "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 md:flex md:flex-wrap md:items-center" ]
+        [ viewSize locked settings
+        , viewSeed locked settings.seeding
+        , viewSteps locked settings
+        , generate
+        ]
+    ]
+
+
+viewSteps : Bool -> Pipeline.Settings -> Html Msg
+viewSteps locked settings =
+    InputGroup.view [ InputGroup.small, class "w-auto!" ]
+        [ InputGroup.start [] [ label [ for "steps" ] [ text "Steps" ] ]
+        , InputGroup.input
+            [ id "steps"
+            , name "steps"
+            , type_ "number"
+            , Html.Attributes.min (String.fromInt Steps.fewest)
+            , Html.Attributes.max (String.fromInt Steps.most)
+            , attribute "inputmode" "numeric"
+            , value settings.steps
+            , onInput StepsChanged
+            , disabled locked
+            , class "w-14! flex-none! text-center tabular-nums"
             ]
         ]
 
 
-viewPreset : Pipeline.Settings -> Pipeline.Preset -> Html Msg
-viewPreset settings preset =
+viewSize : Bool -> Pipeline.Settings -> Html Msg
+viewSize locked settings =
     let
-        across =
-            toFloat (Dimension.toInt preset.width)
+        chosen =
+            List.filter (\preset -> preset.width == settings.width && preset.height == settings.height) Pipeline.presets
+                |> List.head
+    in
+    DropdownMenu.new
+        |> DropdownMenu.id "size"
+        |> DropdownMenu.top
+        |> DropdownMenu.trigger
+            ((Button.new |> Button.text "Size" |> Button.outline |> Button.small |> Button.toAttributes)
+                ++ [ attribute "aria-label"
+                        (case chosen of
+                            Just preset ->
+                                "Size: " ++ preset.name ++ ", " ++ preset.ratio
 
-        down =
-            toFloat (Dimension.toInt preset.height)
+                            Nothing ->
+                                "Size: " ++ size settings.width settings.height
+                        )
+                   , class "tabular-nums"
+                   , disabled locked
+                   ]
+            )
+            [ shapeIcon settings.width settings.height
+            , text (Maybe.withDefault (size settings.width settings.height) (Maybe.map .ratio chosen))
+            , Phosphor.caretDown Regular |> Phosphor.withClass "opacity-60" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+            ]
+        |> DropdownMenu.content
+            (DropdownMenu.label [ text "Size" ]
+                :: List.map
+                    (\preset ->
+                        DropdownMenu.radioItem (chosen == Just preset)
+                            [ onClick (PresetChosen preset)
+                            , title (preset.use ++ ", " ++ size preset.width preset.height)
+                            , attribute "popovertarget" "size-menu"
+                            , attribute "popovertargetaction" "hide"
+                            ]
+                            [ shapeIcon preset.width preset.height
+                            , text preset.name
+                            , DropdownMenu.shortcut [ span [ class "tabular-nums" ] [ text preset.ratio ] ]
+                            ]
+                    )
+                    Pipeline.presets
+            )
+        |> DropdownMenu.toHtml [ class "w-56" ]
+
+
+shapeIcon : Dimension -> Dimension -> Html msg
+shapeIcon across down =
+    let
+        wide =
+            toFloat (Dimension.toInt across)
+
+        tall =
+            toFloat (Dimension.toInt down)
 
         side length =
-            String.fromFloat (18 * min 1 length) ++ "px"
+            String.fromFloat (14 * min 1 length) ++ "px"
     in
-    button
-        [ type_ "button"
-        , onClick (PresetChosen preset)
-        , title (preset.use ++ ", " ++ size preset.width preset.height)
-        , attribute "aria-pressed"
-            (if settings.width == preset.width && settings.height == preset.height then
-                "true"
-
-             else
-                "false"
-            )
-        , class "flex shrink-0 snap-start items-center gap-2 rounded-md border border-border bg-muted px-2 py-1.5 text-start text-xs whitespace-nowrap outline-none transition-colors hover:bg-muted/60 disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset aria-pressed:border-ring aria-pressed:bg-background aria-pressed:hover:bg-background dark:bg-input/30 dark:hover:bg-input/50 dark:aria-pressed:bg-input dark:aria-pressed:hover:bg-input"
-        ]
-        [ span [ class "flex size-5 shrink-0 items-center justify-center", attribute "aria-hidden" "true" ]
-            [ span
-                [ class "rounded-[3px] border-[1.5px] border-current"
-                , style "width" (side (across / down))
-                , style "height" (side (down / across))
-                ]
-                []
+    span [ class "flex size-4 shrink-0 items-center justify-center", attribute "aria-hidden" "true" ]
+        [ span
+            [ class "rounded-[2px] border-[1.5px] border-current"
+            , style "width" (side (wide / tall))
+            , style "height" (side (tall / wide))
             ]
-        , span [ class "flex flex-col leading-tight" ]
-            [ span [ class "font-medium" ] [ text preset.name ]
-            , span [ class "text-[0.6875rem] text-muted-foreground tabular-nums" ] [ text preset.ratio ]
-            ]
+            []
         ]
 
 
@@ -283,109 +438,48 @@ size across down =
     String.fromInt (Dimension.toInt across) ++ " × " ++ String.fromInt (Dimension.toInt down)
 
 
-viewSlider : String -> String -> { value : Int, min : Int, max : Int, step : Int } -> (Float -> Msg) -> Html Msg
-viewSlider label shown scale toMsg =
-    Field.view []
-        [ Field.label [ class "w-full flex-col items-stretch gap-3" ]
-            [ span [ class "flex items-baseline justify-between" ]
-                [ text label
-                , span [ class "font-normal text-muted-foreground tabular-nums" ] [ text shown ]
-                ]
-            , Slider.new
-                |> Slider.value (toFloat scale.value)
-                |> Slider.onChange toMsg
-                |> Slider.min (toFloat scale.min)
-                |> Slider.max (toFloat scale.max)
-                |> Slider.step (toFloat scale.step)
-                |> Slider.toHtml []
+viewSeed : Bool -> Seeding -> Html Msg
+viewSeed locked seeding =
+    let
+        ( typed, random ) =
+            case seeding of
+                RandomSeed ->
+                    ( "", True )
+
+                FixedSeed seed ->
+                    ( seed, False )
+    in
+    InputGroup.view [ InputGroup.small, class "w-auto!" ]
+        [ InputGroup.start [] [ label [ for "seed" ] [ text "Seed" ] ]
+        , InputGroup.input
+            [ id "seed"
+            , name "seed"
+            , attribute "inputmode" "numeric"
+            , placeholder "Random"
+            , value typed
+            , onInput SeedChanged
+            , disabled locked
+            , class "tabular-nums md:w-24! md:flex-none!"
+            ]
+        , InputGroup.end []
+            [ InputGroup.button
+                |> Button.icon (Phosphor.diceFive Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Button.label "Random seed"
+                |> Button.toHtml
+                    [ attribute "aria-pressed"
+                        (if random then
+                            "true"
+
+                         else
+                            "false"
+                        )
+                    , title "Random seed"
+                    , onClick (RandomSeedToggled (not random))
+                    , disabled locked
+                    , class "aria-pressed:bg-muted! aria-pressed:text-foreground! dark:aria-pressed:bg-input!"
+                    ]
             ]
         ]
-
-
-viewSeed : Seeding -> List (Html Msg)
-viewSeed seeding =
-    case seeding of
-        RandomSeed ->
-            []
-
-        FixedSeed seed ->
-            [ Field.view []
-                [ Field.label [ for "seed" ] [ text "Seed" ]
-                , Input.view
-                    [ id "seed"
-                    , name "seed"
-                    , attribute "inputmode" "numeric"
-                    , value seed
-                    , onInput SeedChanged
-                    ]
-                , Field.description [] [ text "Same seed, same picture." ]
-                ]
-            ]
-
-
-viewGenerate : Model -> Html Msg
-viewGenerate model =
-    case model.device of
-        Unchecked ->
-            generateButton "Generate" [ disabled True ]
-
-        Checking ->
-            generateButton "Generate" [ disabled True ]
-
-        Unsupported _ ->
-            generateButton "Generate" [ disabled True ]
-
-        Supported _ running ->
-            viewEngine model running
-
-
-viewEngine : Model -> Engine -> Html Msg
-viewEngine model engine =
-    case engine of
-        Empty ->
-            viewStart model
-
-        Ready _ ->
-            viewStart model
-
-        Loading chosen parts _ ->
-            div [ class "flex flex-col gap-4" ]
-                [ loading chosen parts
-                , Button.new
-                    |> Button.text "Cancel"
-                    |> Button.outline
-                    |> Button.toHtml [ onClick CancelClicked ]
-                ]
-
-        Generating _ job (Denoising done) ->
-            let
-                steps =
-                    Steps.toInt job.steps
-            in
-            div [ class "flex flex-col gap-4" ]
-                [ Progress.new (100 * toFloat done / toFloat steps)
-                    |> Progress.label [ text (stepLabel done steps) ]
-                    |> Progress.toHtml []
-                , Button.new
-                    |> Button.text "Cancel"
-                    |> Button.outline
-                    |> Button.toHtml [ onClick CancelClicked ]
-                ]
-
-        Generating _ _ Stopping ->
-            Button.new
-                |> Button.text "Stopping…"
-                |> Button.outline
-                |> Button.toHtml [ disabled True ]
-
-        Releasing (Just _) ->
-            viewWaiting "Switching models…"
-
-        Releasing Nothing ->
-            viewWaiting "Releasing…"
-
-        Clearing ->
-            viewWaiting "Removing…"
 
 
 viewStart : Model -> Html Msg
@@ -397,31 +491,38 @@ viewStart model =
          else
             "Download and generate"
         )
-        []
+        [ disabled (model.settings.prompt == Styling) ]
 
 
 generateButton : String -> List (Html.Attribute Msg) -> Html Msg
 generateButton label attributes =
     Button.new
         |> Button.text label
-        |> Button.startIcon (Phosphor.sparkle Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-        |> Button.toHtml (type_ "submit" :: attributes)
+        |> Button.startIcon (Phosphor.sparkle Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+        |> Button.small
+        |> Button.toHtml (type_ "submit" :: class "ms-auto max-md:w-full" :: attributes)
 
 
-viewWaiting : String -> Html Msg
+cancel : Html Msg
+cancel =
+    Button.new
+        |> Button.text "Cancel"
+        |> Button.outline
+        |> Button.small
+        |> Button.toHtml [ onClick CancelClicked, class "ms-auto" ]
+
+
+viewWaiting : String -> List (Html Msg)
 viewWaiting reason =
-    div [ class "flex flex-col gap-2" ]
-        [ Button.new
-            |> Button.text "Generate"
-            |> Button.toHtml [ type_ "submit", disabled True ]
-        , p [ class "min-h-5 text-sm text-muted-foreground" ] [ text reason ]
-        ]
+    [ p [ class "min-w-0 flex-1 text-sm text-muted-foreground", attribute "role" "status" ] [ text reason ]
+    , generateButton "Generate" [ disabled True ]
+    ]
 
 
 stepLabel : Int -> Int -> String
 stepLabel done steps =
     if done < steps then
-        "Step " ++ String.fromInt (done + 1) ++ " of " ++ String.fromInt steps
+        "Generating · Step " ++ String.fromInt (done + 1) ++ " of " ++ String.fromInt steps
 
     else
         "Finishing…"
@@ -451,7 +552,13 @@ loading chosen parts =
             [ text
                 (case part of
                     Just found ->
-                        "Loading the " ++ String.toLower (componentName found.component)
+                        (if found.cached then
+                            "Loading the "
+
+                         else
+                            "Downloading the "
+                        )
+                            ++ String.toLower (componentName found.component)
 
                     Nothing ->
                         "Loading " ++ Pipeline.weightsName chosen ++ "…"
@@ -538,18 +645,21 @@ viewEmpty device =
 
 viewPending : Pipeline.Job -> Stage -> Html msg
 viewPending job stage =
-    div [ class "flex w-full flex-col items-center gap-3", attribute "role" "status" ]
-        [ div (class "animate-pulse rounded-xl bg-muted" :: frame job) []
-        , p [ class "text-sm text-muted-foreground" ]
-            [ text
-                (case stage of
-                    Denoising done ->
-                        stepLabel done (Steps.toInt job.steps)
+    div (class "relative flex items-center justify-center overflow-hidden rounded-xl" :: frame job)
+        [ div [ class "absolute inset-0 animate-pulse bg-muted motion-reduce:animate-none" ] []
+        , case stage of
+            Denoising done ->
+                let
+                    steps =
+                        Steps.toInt job.steps
+                in
+                Progress.new (100 * toFloat done / toFloat steps)
+                    |> Progress.label [ text (stepLabel done steps) ]
+                    |> Progress.formatValue (\finished -> String.fromInt (floor finished) ++ "%")
+                    |> Progress.toHtml [ class "relative w-2/3 max-w-64 tabular-nums [&_[data-slot=progress-track]]:bg-foreground/10!" ]
 
-                    Stopping ->
-                        "Stopping…"
-                )
-            ]
+            Stopping ->
+                p [ class "relative text-sm text-muted-foreground", attribute "role" "status" ] [ text "Cancelling…" ]
         ]
 
 

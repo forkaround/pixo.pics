@@ -3,6 +3,7 @@ module Pipeline exposing
     , Component(..)
     , Device(..)
     , Download
+    , Draft(..)
     , Engine(..)
     , Event(..)
     , Failure
@@ -39,6 +40,7 @@ module Pipeline exposing
     , weightsId
     , weightsName
     , weightsSize
+    , weightsVariant
     )
 
 import Data.Dimension as Dimension exposing (Dimension)
@@ -89,6 +91,7 @@ type Engine
     = Empty
     | Clearing
     | Loading Weights (List Download) (Maybe Job)
+    | Cancelling Weights (List Download)
     | Ready Weights
     | Generating Weights Job Stage
     | Releasing (Maybe Pending)
@@ -117,12 +120,17 @@ type Weights
 
 type alias Settings =
     { weights : Weights
-    , prompt : String
+    , prompt : Draft
     , width : Dimension
     , height : Dimension
-    , steps : Steps
+    , steps : String
     , seeding : Seeding
     }
+
+
+type Draft
+    = Editing String
+    | Styling
 
 
 type Seeding
@@ -185,10 +193,10 @@ init entropy webGpu downloaded =
             Unsupported Kept
     , settings =
         { weights = Maybe.withDefault Ternary (List.head downloaded)
-        , prompt = ""
+        , prompt = Editing ""
         , width = Dimension.default
         , height = Dimension.default
-        , steps = Steps.default
+        , steps = Steps.toString Steps.default
         , seeding = RandomSeed
         }
     , message = Nothing
@@ -230,6 +238,16 @@ weightsName chosen =
 
         Binary ->
             "Bonsai binary, 1-bit"
+
+
+weightsVariant : Weights -> String
+weightsVariant chosen =
+    case chosen of
+        Ternary ->
+            "Ternary, 2-bit"
+
+        Binary ->
+            "Binary, 1-bit"
 
 
 weightsSize : Weights -> String
@@ -394,10 +412,10 @@ type Msg
     | ReleaseClicked
     | ClearClicked
     | PromptChanged String
+    | StylingStarted
+    | StylingEnded String
     | PresetChosen Preset
-    | WidthChanged Float
-    | HeightChanged Float
-    | StepsChanged Float
+    | StepsChanged String
     | RandomSeedToggled Bool
     | SeedChanged String
     | SeedReused Seed
@@ -446,19 +464,24 @@ update msg model =
             ( edit (\settings -> { settings | weights = chosen }) model, Nothing )
 
         PromptChanged prompt ->
-            ( edit (\settings -> { settings | prompt = prompt }) model, Nothing )
+            case model.settings.prompt of
+                Editing _ ->
+                    ( edit (\settings -> { settings | prompt = Editing prompt }) model, Nothing )
+
+                Styling ->
+                    ( model, Nothing )
+
+        StylingStarted ->
+            ( edit (\settings -> { settings | prompt = Styling }) model, Nothing )
+
+        StylingEnded prompt ->
+            ( edit (\settings -> { settings | prompt = Editing prompt }) model, Nothing )
 
         PresetChosen chosen ->
             ( edit (\settings -> { settings | width = chosen.width, height = chosen.height }) model, Nothing )
 
-        WidthChanged pixels ->
-            ( edit (\settings -> { settings | width = Maybe.withDefault settings.width (Dimension.fromInt (round pixels)) }) model, Nothing )
-
-        HeightChanged pixels ->
-            ( edit (\settings -> { settings | height = Maybe.withDefault settings.height (Dimension.fromInt (round pixels)) }) model, Nothing )
-
         StepsChanged count ->
-            ( edit (\settings -> { settings | steps = Maybe.withDefault settings.steps (Steps.fromInt (round count)) }) model, Nothing )
+            ( edit (\settings -> { settings | steps = count }) model, Nothing )
 
         RandomSeedToggled True ->
             ( edit (\settings -> { settings | seeding = RandomSeed }) model, Nothing )
@@ -498,8 +521,8 @@ update msg model =
 
         CancelClicked ->
             case model.device of
-                Supported _ (Loading _ _ _) ->
-                    ( model, Just Cancel )
+                Supported _ (Loading chosen parts _) ->
+                    ( setEngine (Cancelling chosen parts) model, Just Cancel )
 
                 Supported _ (Generating loaded job (Denoising _)) ->
                     ( setEngine (Generating loaded job Stopping) model, Just Cancel )
@@ -527,16 +550,21 @@ update msg model =
                     ( model, Nothing )
 
         GenerateClicked ->
-            if inMemory model.device == Nothing && engineOf model.device /= Just Empty then
-                ( model, Nothing )
+            case model.settings.prompt of
+                Styling ->
+                    ( model, Nothing )
 
-            else
-                case plan model of
-                    Ok ( job, random ) ->
-                        start { weights = model.settings.weights, job = Just job } { model | random = random }
+                Editing prompt ->
+                    if inMemory model.device == Nothing && engineOf model.device /= Just Empty then
+                        ( model, Nothing )
 
-                    Err problem ->
-                        ( { model | message = Just (Problem problem) }, Nothing )
+                    else
+                        case plan prompt model of
+                            Ok ( job, random ) ->
+                                start { weights = model.settings.weights, job = Just job } { model | random = random }
+
+                            Err problem ->
+                                ( { model | message = Just (Problem problem) }, Nothing )
 
         Happened event ->
             happened event model
@@ -619,6 +647,14 @@ happened event model =
                 Nothing ->
                     ( loaded, Nothing )
 
+        ( ModelLoaded, Supported _ (Cancelling chosen _) ) ->
+            ( setEngine (Ready chosen)
+                { model
+                    | downloaded = chosen :: List.filter (\known -> known /= chosen) model.downloaded
+                }
+            , Nothing
+            )
+
         ( StepFinished index, Supported _ (Generating loaded job (Denoising _)) ) ->
             ( setEngine (Generating loaded job (Denoising (index + 1))) model, Nothing )
 
@@ -667,7 +703,7 @@ happened event model =
 isCancellable : Device -> Bool
 isCancellable device =
     case device of
-        Supported _ (Loading _ _ _) ->
+        Supported _ (Cancelling _ _) ->
             True
 
         Supported _ (Generating _ _ Stopping) ->
@@ -711,6 +747,9 @@ restEngine engine =
         Loading _ _ _ ->
             Just Empty
 
+        Cancelling _ _ ->
+            Just Empty
+
         Ready _ ->
             Nothing
 
@@ -730,21 +769,24 @@ explain failure =
         failure.message
 
 
-plan : Model -> Result String ( Job, Random.Seed )
-plan { settings, random } =
-    case ( Prompt.parse settings.prompt, draw settings.seeding random ) of
-        ( Nothing, _ ) ->
+plan : String -> Model -> Result String ( Job, Random.Seed )
+plan text { settings, random } =
+    case ( Prompt.parse text, Steps.fromString settings.steps, draw settings.seeding random ) of
+        ( Nothing, _, _ ) ->
             Err "Describe the picture first."
 
-        ( _, Nothing ) ->
+        ( _, Nothing, _ ) ->
+            Err ("Steps are a whole number from " ++ String.fromInt Steps.fewest ++ " to " ++ String.fromInt Steps.most ++ ".")
+
+        ( _, _, Nothing ) ->
             Err ("The seed is a whole number from 0 to " ++ String.fromInt Seed.largest ++ ".")
 
-        ( Just prompt, Just ( seed, next ) ) ->
+        ( Just prompt, Just steps, Just ( seed, next ) ) ->
             Ok
                 ( { prompt = prompt
                   , width = settings.width
                   , height = settings.height
-                  , steps = settings.steps
+                  , steps = steps
                   , seed = seed
                   }
                 , next

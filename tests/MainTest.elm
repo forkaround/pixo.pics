@@ -8,6 +8,7 @@ import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Main
+import Pipeline
 import ProgramTest exposing (ProgramTest)
 import SimulatedEffect.Cmd
 import SimulatedEffect.Http
@@ -915,7 +916,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (adapterFound [ "subgroups" ])
-                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ text "Random seed" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ id "seed" ] ]
                         |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
                         |> ProgramTest.ensureViewHas [ text "Needs 16-bit GPU shaders." ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
@@ -940,7 +941,7 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Cannot generate images on this device" ] ]
                         |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Nothing here yet" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
-                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "Random seed" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ id "seed" ] ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
             , test "says it can't generate when the worker failed on another page" <|
                 \() ->
@@ -957,7 +958,6 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "  a bonsai on a mountain "
-                        |> ProgramTest.check "random-seed" "Random seed" False
                         |> ProgramTest.fillIn "seed" "Seed" "7"
                         |> ProgramTest.clickButton "Download and generate"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
@@ -975,7 +975,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "0%" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "text_encoder" 1775000000 1775000000 False)
                         |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "transformer" 599000000 1425271472 False)
-                        |> ProgramTest.ensureViewHas [ text "Loading the transformer" ]
+                        |> ProgramTest.ensureViewHas [ text "Downloading the transformer" ]
                         |> ProgramTest.ensureViewHas [ text "42%" ]
                         |> ProgramTest.ensureView
                             (Query.findAll [ attribute (Html.Attributes.attribute "role" "progressbar") ]
@@ -987,8 +987,8 @@ suite =
                             (List.filterMap identity
                                 >> Expect.equal
                                     [ { prompt = "a bonsai on a mountain"
-                                      , width = 512
-                                      , height = 512
+                                      , width = 1024
+                                      , height = 1024
                                       , numInferenceSteps = 4
                                       , seed = 7
                                       , guidanceScale = 1
@@ -996,14 +996,14 @@ suite =
                                       }
                                     ]
                             )
-                        |> ProgramTest.ensureViewHas [ text "Step 1 of 4" ]
+                        |> ProgramTest.ensureViewHas [ text "Generating · Step 1 of 4" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 0)
-                        |> ProgramTest.ensureViewHas [ text "Step 2 of 4" ]
+                        |> ProgramTest.ensureViewHas [ text "Generating · Step 2 of 4" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 3)
                         |> ProgramTest.ensureViewHas [ text "Finishing…" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
                         |> ProgramTest.ensureViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
-                        |> ProgramTest.expectViewHas [ text "512 × 512 · 4 steps · seed 7" ]
+                        |> ProgramTest.expectViewHas [ text "1024 × 1024 · 4 steps · seed 7" ]
             , test "remembers the model it downloaded" <|
                 \() ->
                     start defaultFlags
@@ -1045,9 +1045,9 @@ suite =
             , test "makes room for another model before it loads it" <|
                 \() ->
                     ready
-                        |> ProgramTest.clickButton "Bonsai binary, 1-bit"
+                        |> ProgramTest.clickButton "Binary, 1-bit"
                         |> ProgramTest.ensureViewHas
-                            [ tag "button", id "weights", containing [ text "Bonsai binary, 1-bit" ] ]
+                            [ tag "button", id "weights", containing [ text "Binary, 1-bit" ] ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Download and generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelReleased")
@@ -1062,13 +1062,118 @@ suite =
                     ready
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Story"
-                        |> ProgramTest.ensureViewHas [ text "576 px" ]
+                        |> ProgramTest.ensureViewHas [ id "size", attribute (Html.Attributes.attribute "aria-label" "Size: Story, 9:16"), containing [ text "9:16" ] ]
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             generation
                             (List.filterMap (Maybe.map (\made -> ( made.width, made.height )))
                                 >> Expect.equal [ ( 576, 1024 ) ]
                             )
+            , test "starts square, with no sliders for the size" <|
+                \() ->
+                    ready
+                        |> ProgramTest.ensureViewHas [ id "size", attribute (Html.Attributes.attribute "aria-label" "Size: Square, 1:1"), containing [ text "1:1" ] ]
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.attribute "role" "menuitemradio")
+                            , attribute (Html.Attributes.attribute "aria-checked" "true")
+                            , containing [ text "Square" ]
+                            ]
+                        |> ProgramTest.ensureView (Query.findAll [ attribute (Html.Attributes.attribute "aria-checked" "true") ] >> Query.count (Expect.equal 1))
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "role" "slider") ]
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap (Maybe.map (\made -> ( made.width, made.height )))
+                                >> Expect.equal [ ( 1024, 1024 ) ]
+                            )
+            , test "shows the seed while it is random, and fixes the one typed" <|
+                \() ->
+                    ready
+                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.value ""), attribute (Html.Attributes.placeholder "Random") ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Random seed"), attribute (Html.Attributes.attribute "aria-pressed" "true") ]
+                        |> ProgramTest.fillIn "seed" "Seed" "31"
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Random seed"), attribute (Html.Attributes.attribute "aria-pressed" "false") ]
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap (Maybe.map .seed) >> Expect.equal [ 31 ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.clickButton "Random seed"
+                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.value "") ]
+                        |> ProgramTest.clickButton "Random seed"
+                        |> ProgramTest.expectViewHas [ id "seed", attribute (Html.Attributes.value "31") ]
+            , test "takes the steps typed" <|
+                \() ->
+                    ready
+                        |> ProgramTest.ensureViewHas [ id "steps", attribute (Html.Attributes.type_ "number"), attribute (Html.Attributes.value "4") ]
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.fillIn "steps" "Steps" "8"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureViewHas [ text "Generating · Step 1 of 8" ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap (Maybe.map .numInferenceSteps) >> Expect.equal [ 8 ])
+            , test "keeps the controls while it generates, and counts the steps on the picture" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.attribute "data-slot" "card-footer")
+                            , containing [ id "size" ]
+                            , containing [ id "seed" ]
+                            , containing [ id "steps" ]
+                            , containing [ tag "button", containing [ text "Cancel" ] ]
+                            ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ text "Generating · Step 1 of 4" ] ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ attribute (Html.Attributes.attribute "role" "progressbar") ] ]
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.style "aspect-ratio" "1024 / 1024")
+                            , containing [ attribute (Html.Attributes.attribute "role" "progressbar"), containing [ text "Generating · Step 1 of 4" ], containing [ text "0%" ] ]
+                            ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (generationStep 0)
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.style "aspect-ratio" "1024 / 1024")
+                            , containing [ attribute (Html.Attributes.attribute "role" "progressbar"), containing [ text "Generating · Step 2 of 4" ], containing [ text "25%" ] ]
+                            ]
+                        |> ProgramTest.clickButton "Cancel"
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Cancelling…" ] ] ]
+            , test "locks every control but Cancel while it makes a picture" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureView (lockedBut "Cancel")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.expectView (Query.findAll [ id "prompt", attribute (Html.Attributes.disabled False) ] >> Query.count (Expect.equal 1))
+            , test "says it is cancelling a download until it stops" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "transformer" 599000000 1425271472 False)
+                        |> ProgramTest.clickButton "Cancel"
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.attribute "data-slot" "card-footer")
+                            , containing [ text "Downloading the transformer" ]
+                            , containing [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Cancelling…" ] ]
+                            ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "AbortError" "")
+                        |> ProgramTest.ensureViewHasNot [ text "Cancelling…" ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+            , test "says how many steps it takes" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.fillIn "steps" "Steps" "80"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.ensureViewHas [ text "Steps are a whole number from 1 to 50." ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap identity >> Expect.equal [])
             , test "draws a new seed for each picture when the seed is random" <|
                 \() ->
                     ready
@@ -1113,7 +1218,8 @@ suite =
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.clickButton "Cancel"
-                        |> ProgramTest.ensureViewHas [ text "Stopping…" ]
+                        |> ProgramTest.ensureViewHas [ text "Cancelling…" ]
+                        |> ProgramTest.ensureViewHasNot [ text "Stopping…" ]
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "GenerateImage", "CancelPipeline" ])
@@ -1138,7 +1244,6 @@ suite =
                 \() ->
                     ready
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
-                        |> ProgramTest.check "random-seed" "Random seed" False
                         |> ProgramTest.fillIn "seed" "Seed" "7"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1153,8 +1258,8 @@ suite =
                                       , blobs = [ ( "blob", "blob:https://pixo.pics/1" ) ]
                                       , label = "blob:https://pixo.pics/1"
                                       , prompt = "a bonsai"
-                                      , width = 512
-                                      , height = 512
+                                      , width = 1024
+                                      , height = 1024
                                       , steps = 4
                                       , seed = 7
                                       , model = "prism-ml/bonsai-image-ternary-4B-mlx-2bit"
@@ -1298,7 +1403,7 @@ suite =
                         |> ProgramTest.clickButton "Open a bonsai"
                         |> ProgramTest.ensureViewHas [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "open" "") ]
                         |> ProgramTest.ensureViewHas
-                            [ id "studio-picture", containing [ text "512 × 512 · 4 steps · seed " ], containing [ text "Bonsai ternary, 2-bit" ] ]
+                            [ id "studio-picture", containing [ text "1024 × 1024 · 4 steps · seed " ], containing [ text "Bonsai ternary, 2-bit" ] ]
                         |> ProgramTest.within
                             (Query.find [ id "studio-picture" ])
                             (ProgramTest.clickButton "Save")
@@ -1352,7 +1457,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked False)
-                        |> ProgramTest.update (Main.GotStylist (Stylist.StyleChosen Stylist.Photo "a fox in the snow"))
+                        |> ProgramTest.update (Main.GotStylist (Stylist.StyleChosen Stylist.Photo { width = 1024, height = 1024 } "a fox in the snow"))
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu" ])
@@ -1360,7 +1465,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (adapterFound [])
-                        |> ProgramTest.update (Main.GotStylist (Stylist.StyleChosen Stylist.Photo "a fox in the snow"))
+                        |> ProgramTest.update (Main.GotStylist (Stylist.StyleChosen Stylist.Photo { width = 1024, height = 1024 } "a fox in the snow"))
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu" ])
@@ -1391,7 +1496,7 @@ suite =
                             (Decode.field "tag" Decode.string |> Decode.andThen (\name -> Decode.map (Tuple.pair name) (Decode.maybe (Decode.at [ "data", "model" ] Decode.string))))
                             (Expect.equal [ ( "CheckWebGpu", Nothing ), ( "LoadStylist", Just "Qwen3-1.7B-q4f16_1-MLC" ) ])
                         |> ProgramTest.simulateIncomingPort "interopToElm" (stylistProgress 0.25)
-                        |> ProgramTest.ensureViewHas [ text "Loading the prompt model" ]
+                        |> ProgramTest.ensureViewHas [ text "Downloading the prompt model" ]
                         |> ProgramTest.ensureViewHas [ text "25%" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
@@ -1405,12 +1510,86 @@ suite =
                                       }
                                     ]
                             )
-                        |> ProgramTest.ensureViewHas [ text "Writing a Photo prompt…" ]
+                        |> ProgramTest.ensureViewHasNot [ text "Writing a Photo prompt…" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Stop generating" ] ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "<think>\n\n</think>\n\nSubject: a red fox curled up in fresh snow\nSty")
-                        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.value "Subject: a red fox curled up in fresh snow"), attribute (Html.Attributes.readonly True) ]
+                        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.value "Subject: a red fox curled up in fresh snow"), attribute (Html.Attributes.disabled True) ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten ("<think>\n\n</think>\n\n" ++ foxPrompt))
                         |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.value foxPrompt) ]
-                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "Undo" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Undo") ]
+            , test "writes for the size chosen" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Widescreen"
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            instructing
+                            (List.filterMap identity
+                                >> List.map (String.contains "The picture is 1024 by 576 pixels, 16:9, a wide landscape frame.")
+                                >> Expect.equal [ True ]
+                            )
+            , test "can't generate while it writes the prompt" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "Subject: a red fox")
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Download and generate" ] ]
+                        |> ProgramTest.update (Main.GotPipeline Pipeline.GenerateClicked)
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "role" "progressbar") ]
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.filter (\name -> name == "LoadModel" || name == "GenerateImage") >> Expect.equal [])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten foxPrompt)
+                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap (Maybe.map .prompt) >> Expect.equal [ foxPrompt ])
+            , test "shows the prompt model loading in place of the settings, and cancels the rewrite" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (stylistProgress 0.42)
+                        |> ProgramTest.ensureViewHas
+                            [ attribute (Html.Attributes.attribute "data-slot" "card-footer")
+                            , containing [ text "Downloading the prompt model" ]
+                            , containing [ text "42%" ]
+                            , containing [ tag "button", containing [ text "Cancel" ] ]
+                            ]
+                        |> ProgramTest.ensureViewHasNot [ id "steps" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", id "ai-style", attribute (Html.Attributes.disabled True) ]
+                        |> ProgramTest.clickButton "Cancel"
+                        |> ProgramTest.ensureViewHasNot [ text "Downloading the prompt model" ]
+                        |> ProgramTest.ensureViewHas [ id "steps" ]
+                        |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow"), attribute (Html.Attributes.disabled False) ]
+            , test "locks every control but Stop generating while it writes" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "Subject: a red fox")
+                        |> ProgramTest.ensureView (lockedBut "Stop generating")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten foxPrompt)
+                        |> ProgramTest.expectView (Query.findAll [ id "prompt", attribute (Html.Attributes.disabled False) ] >> Query.count (Expect.equal 1))
+            , test "loads the prompt model it already has, rather than downloading it" <|
+                \() ->
+                    start { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
+                        |> ProgramTest.clickButton "Photo"
+                        |> ProgramTest.ensureViewHasNot [ text "Downloading the prompt model" ]
+                        |> ProgramTest.expectViewHas [ text "Loading the prompt model" ]
             , test "remembers the prompt model it downloaded" <|
                 \() ->
                     start defaultFlags
@@ -1429,7 +1608,7 @@ suite =
                 \() ->
                     styled
                         |> ProgramTest.clickButton "Undo"
-                        |> ProgramTest.ensureViewHasNot [ text "Undo" ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Undo") ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
             , test "rewrites the first idea, not the last prompt, in another style" <|
                 \() ->
@@ -1442,7 +1621,7 @@ suite =
                 \() ->
                     styled
                         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the rain"
-                        |> ProgramTest.ensureViewHasNot [ text "Undo" ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Undo") ]
                         |> ProgramTest.clickButton "Anime"
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             writing
@@ -1455,13 +1634,14 @@ suite =
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "Subject: a red fox")
-                        |> ProgramTest.clickButton "Stop"
+                        |> ProgramTest.clickButton "Stop generating"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (List.reverse >> List.head >> Expect.equal (Just "StopWriting"))
-                        |> ProgramTest.ensureViewHas [ text "Stopping…" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Stopping…" ] ]
+                        |> ProgramTest.ensureViewHasNot [ tag "button", containing [ text "Stop generating" ] ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten "Subject: a red fox")
-                        |> ProgramTest.ensureViewHasNot [ text "Undo" ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Undo") ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
             , test "keeps the idea when the answer is not a prompt" <|
                 \() ->
@@ -1594,7 +1774,7 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "transformer" 712635736 1425271472 False)
-                        |> ProgramTest.ensureViewHas [ text "Loading the transformer" ]
+                        |> ProgramTest.ensureViewHas [ text "Downloading the transformer" ]
                         |> ProgramTest.ensureViewHas [ text "50%" ]
                         |> ProgramTest.ensureViewHas
                             [ attribute (Html.Attributes.attribute "data-slot" "card-footer")
@@ -2567,6 +2747,40 @@ writing =
                                 (Decode.field "thinking" Decode.bool)
                             )
                         )
+
+                else
+                    Decode.succeed Nothing
+            )
+
+
+lockedBut : String -> Query.Single msg -> Expect.Expectation
+lockedBut kept =
+    let
+        off selectors =
+            Query.findAll selectors >> Query.each (Query.has [ attribute (Html.Attributes.disabled True) ])
+    in
+    Query.find [ tag "form" ]
+        >> Expect.all
+            [ Query.findAll [ tag "button", containing [ text kept ] ] >> Query.count (Expect.equal 1)
+            , Query.findAll [ tag "button", containing [ text kept ] ] >> Query.each (Query.hasNot [ attribute (Html.Attributes.disabled True) ])
+            , Query.find [ id "prompt" ] >> Query.has [ attribute (Html.Attributes.disabled True) ]
+            , off [ tag "input" ]
+            , off [ id "ai-style" ]
+            , off [ id "weights" ]
+            , off [ id "size" ]
+            , off [ attribute (Html.Attributes.attribute "aria-label" "Random seed") ]
+            , off [ attribute (Html.Attributes.attribute "aria-label" "Undo") ]
+            , off [ attribute (Html.Attributes.type_ "submit") ]
+            ]
+
+
+instructing : Decode.Decoder (Maybe String)
+instructing =
+    Decode.field "tag" Decode.string
+        |> Decode.andThen
+            (\name ->
+                if name == "WritePrompt" then
+                    Decode.map Just (Decode.at [ "data", "messages" ] (Decode.index 0 (Decode.field "content" Decode.string)))
 
                 else
                     Decode.succeed Nothing

@@ -212,13 +212,16 @@ runPipeline model ( pipeline, command ) =
     )
 
 
-runStylist : Model -> ( Stylist.Model, Maybe Stylist.Command, Maybe String ) -> ( Model, Effect Msg )
-runStylist model ( stylist, command, prompt ) =
+runStylist : Model -> ( Stylist.Model, Maybe Stylist.Command, Maybe Stylist.Handover ) -> ( Model, Effect Msg )
+runStylist model ( stylist, command, handover ) =
     let
         ( written, effect ) =
-            case prompt of
-                Just text ->
-                    runPipeline model (Pipeline.update (Pipeline.PromptChanged text) model.pipeline)
+            case handover of
+                Just Stylist.Took ->
+                    runPipeline model (Pipeline.update Pipeline.StylingStarted model.pipeline)
+
+                Just (Stylist.Gave text) ->
+                    runPipeline model (Pipeline.update (Pipeline.StylingEnded text) model.pipeline)
 
                 Nothing ->
                     ( model, NoEffect )
@@ -750,9 +753,9 @@ viewBody model =
             viewFrame model
                 "Studio"
                 []
-                [ viewAside "border-b md:w-80 md:border-e md:border-b-0" [ StudioView.controls { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline ]
-                , viewContent
+                [ viewContent
                     [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
+                    , StudioView.controls { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline
                     , StudioView.lightbox { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
                     ]
                 ]

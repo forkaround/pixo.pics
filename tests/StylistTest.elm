@@ -2,7 +2,7 @@ module StylistTest exposing (suite)
 
 import Expect
 import Pipeline exposing (Message(..))
-import Stylist exposing (Command(..), Event(..), Msg(..), Role(..), State(..), Style(..))
+import Stylist exposing (Command(..), Event(..), Handover(..), Msg(..), Role(..), State(..), Style(..))
 import Test exposing (Test, describe, test)
 
 
@@ -11,7 +11,7 @@ suite =
     describe "Stylist"
         [ test "needs WebGPU only to write a prompt" <|
             \() ->
-                List.map Stylist.needsWebGpu [ StyleChosen Photo "a fox", StopClicked, UndoClicked, RemoveClicked ]
+                List.map Stylist.needsWebGpu [ StyleChosen Photo square "a fox", StopClicked, UndoClicked, RemoveClicked ]
                     |> Expect.equal [ True, False, False, False ]
         , describe "tidy"
             [ test "drops the empty thinking the model starts with" <|
@@ -54,34 +54,53 @@ suite =
         , describe "conversation"
             [ test "is the instructions, two examples and the idea" <|
                 \() ->
-                    Stylist.conversation { style = Photo, idea = "a fox" }
+                    Stylist.conversation { style = Photo, frame = square, idea = "a fox" }
                         |> List.map .role
                         |> Expect.equal [ System, User, Assistant, User, Assistant, User ]
             , test "ends with the idea" <|
                 \() ->
-                    Stylist.conversation { style = Comic, idea = "a fox" }
+                    Stylist.conversation { style = Comic, frame = square, idea = "a fox" }
                         |> List.reverse
                         |> List.head
                         |> Maybe.map .content
                         |> Expect.equal (Just "a fox")
             , test "names the style in the instructions" <|
                 \() ->
-                    Stylist.conversation { style = PixelArt, idea = "a fox" }
+                    Stylist.conversation { style = PixelArt, frame = square, idea = "a fox" }
                         |> List.head
                         |> Maybe.map (.content >> String.contains "\"Pixel art\"")
                         |> Expect.equal (Just True)
             , test "shows every style answered in six labelled lines" <|
                 \() ->
                     Stylist.styles
-                        |> List.concatMap (\style -> Stylist.conversation { style = style, idea = "a fox" })
+                        |> List.concatMap (\style -> Stylist.conversation { style = style, frame = square, idea = "a fox" })
                         |> List.filter (\turn -> turn.role == Assistant)
                         |> List.map (\turn -> List.map (String.split ":" >> List.head) (String.lines turn.content))
                         |> List.filter ((/=) (List.map Just [ "Subject", "Style", "Setting", "Lighting", "Camera", "Mood" ]))
                         |> Expect.equal []
+            , test "tells the shape of the picture" <|
+                \() ->
+                    List.map
+                        (\frame ->
+                            Stylist.conversation { style = Photo, frame = frame, idea = "a fox" }
+                                |> List.head
+                                |> Maybe.map .content
+                                |> Maybe.withDefault ""
+                                |> (\content -> List.filter (\shape -> String.contains shape content) [ "1:1, a square frame", "9:16, a tall portrait frame", "16:9, a wide landscape frame" ])
+                        )
+                        [ square, { width = 576, height = 1024 }, { width = 1024, height = 576 } ]
+                        |> Expect.equal [ [ "1:1, a square frame" ], [ "9:16, a tall portrait frame" ], [ "16:9, a wide landscape frame" ] ]
+            , test "has examples that frame no shape of their own" <|
+                \() ->
+                    Stylist.styles
+                        |> List.concatMap (\style -> Stylist.conversation { style = style, frame = square, idea = "a fox" })
+                        |> List.filter (\turn -> turn.role == Assistant)
+                        |> List.filter (\turn -> String.contains ":1 " turn.content || String.contains ":1," turn.content || String.contains "widescreen" turn.content)
+                        |> Expect.equal []
             , test "has examples of a fair length" <|
                 \() ->
                     Stylist.styles
-                        |> List.concatMap (\style -> Stylist.conversation { style = style, idea = "a fox" })
+                        |> List.concatMap (\style -> Stylist.conversation { style = style, frame = square, idea = "a fox" })
                         |> List.filter (\turn -> turn.role == Assistant)
                         |> List.map (.content >> String.words >> List.length)
                         |> List.filter (\count -> count < 60 || count > 100)
@@ -89,7 +108,7 @@ suite =
             , test "has examples that never say what is missing" <|
                 \() ->
                     Stylist.styles
-                        |> List.concatMap (\style -> Stylist.conversation { style = style, idea = "a fox" })
+                        |> List.concatMap (\style -> Stylist.conversation { style = style, frame = square, idea = "a fox" })
                         |> List.filter (\turn -> turn.role == Assistant)
                         |> List.concatMap (.content >> String.words)
                         |> List.filter (\word -> List.member (String.toLower word) [ "no", "not", "without", "never" ])
@@ -98,24 +117,24 @@ suite =
         , describe "update"
             [ test "loads the model once, then writes with it" <|
                 \() ->
-                    run [ StyleChosen Photo "a fox", Happened Loaded, Happened (Finished whole), StyleChosen Anime whole ] asleep
+                    run [ StyleChosen Photo square "a fox", Happened Loaded, Happened (Finished whole), StyleChosen Anime square whole ] asleep
                         |> .commands
                         |> List.map commandName
                         |> Expect.equal [ "Load", "Write", "Write" ]
             , test "writes for the last style chosen while it loads" <|
                 \() ->
-                    run [ StyleChosen Photo "a fox", StyleChosen Comic "a fox", Happened Loaded ] asleep
+                    run [ StyleChosen Photo square "a fox", StyleChosen Comic square "a fox", Happened Loaded ] asleep
                         |> .model
                         |> .state
-                        |> Expect.equal (Writing { style = Comic, idea = "a fox" } "")
+                        |> Expect.equal (Writing { style = Comic, frame = square, idea = "a fox" } "")
             , test "only loads after a stop while loading" <|
                 \() ->
-                    run [ StyleChosen Photo "a fox", StopClicked, Happened Loaded ] asleep
+                    run [ StyleChosen Photo square "a fox", StopClicked, Happened Loaded ] asleep
                         |> (\result -> ( result.model.state, List.map commandName result.commands ))
                         |> Expect.equal ( Awake, [ "Load" ] )
             , test "ignores text that comes after it finished" <|
                 \() ->
-                    run [ StyleChosen Photo "a fox", Happened Loaded, Happened (Finished whole), Happened (Streamed "Subject: late") ] asleep
+                    run [ StyleChosen Photo square "a fox", Happened Loaded, Happened (Finished whole), Happened (Streamed "Subject: late") ] asleep
                         |> .prompts
                         |> Expect.equal [ whole ]
             , test "ignores a load nobody waits for" <|
@@ -126,14 +145,14 @@ suite =
                         |> Expect.equal Asleep
             , test "starts again on a failed load" <|
                 \() ->
-                    run [ StyleChosen Photo "a fox", Happened (Failed { name = "Error", message = "No WebGPU." }) ] asleep
+                    run [ StyleChosen Photo square "a fox", Happened (Failed { name = "Error", message = "No WebGPU." }) ] asleep
                         |> .model
                         |> (\model -> ( model.state, model.message ))
                         |> Expect.equal ( Asleep, Just (Problem "No WebGPU.") )
             , test "shows nothing when its own stop ends the writing" <|
                 \() ->
                     run
-                        [ StyleChosen Photo "a fox"
+                        [ StyleChosen Photo square "a fox"
                         , Happened Loaded
                         , StopClicked
                         , Happened (Failed { name = "AbortError", message = "Aborted." })
@@ -143,9 +162,34 @@ suite =
                         |> Expect.equal ( Nothing, [ "a fox" ] )
             , test "can't undo while it writes" <|
                 \() ->
-                    run [ StyleChosen Photo "a fox", Happened Loaded, Happened (Finished whole), StyleChosen Anime whole, UndoClicked ] asleep
+                    run [ StyleChosen Photo square "a fox", Happened Loaded, Happened (Finished whole), StyleChosen Anime square whole, UndoClicked ] asleep
                         |> .prompts
                         |> Expect.equal [ whole ]
+            , test "takes the prompt while it writes, and gives it back" <|
+                \() ->
+                    run [ StyleChosen Photo square "a fox", Happened Loaded, Happened (Finished whole) ] asleep
+                        |> .handovers
+                        |> Expect.equal [ Took, Gave whole ]
+            , test "gives the idea back when it stops loading" <|
+                \() ->
+                    run [ StyleChosen Photo square "a fox", StopClicked ] asleep
+                        |> .handovers
+                        |> Expect.equal [ Took, Gave "a fox" ]
+            , test "gives the idea back when the load fails" <|
+                \() ->
+                    run [ StyleChosen Photo square "a fox", Happened (Failed { name = "Error", message = "No WebGPU." }) ] asleep
+                        |> .handovers
+                        |> Expect.equal [ Took, Gave "a fox" ]
+            , test "takes no prompt it can't rewrite" <|
+                \() ->
+                    run [ StyleChosen Photo square "  " ] asleep
+                        |> .handovers
+                        |> Expect.equal []
+            , test "keeps the prompt to itself while the answer streams in" <|
+                \() ->
+                    run [ StyleChosen Photo square "a fox", Happened Loaded, Happened (Streamed "Subject: a red fox") ] asleep
+                        |> (\result -> ( result.handovers, Stylist.shown result.model ))
+                        |> Expect.equal ( [ Took ], Just "Subject: a red fox" )
             , test "removes only a model it has" <|
                 \() ->
                     run [ RemoveClicked ] asleep
@@ -168,6 +212,7 @@ whole =
 type alias Run =
     { model : Stylist.Model
     , commands : List Command
+    , handovers : List Handover
     , prompts : List String
     }
 
@@ -177,16 +222,32 @@ run msgs model =
     List.foldl
         (\msg done ->
             let
-                ( next, command, prompt ) =
+                ( next, command, handover ) =
                     Stylist.update msg done.model
             in
             { model = next
             , commands = done.commands ++ List.filterMap identity [ command ]
-            , prompts = done.prompts ++ List.filterMap identity [ prompt ]
+            , handovers = done.handovers ++ List.filterMap identity [ handover ]
+            , prompts = done.prompts ++ List.filterMap given [ handover ]
             }
         )
-        { model = model, commands = [], prompts = [] }
+        { model = model, commands = [], handovers = [], prompts = [] }
         msgs
+
+
+given : Maybe Handover -> Maybe String
+given handover =
+    case handover of
+        Just (Gave prompt) ->
+            Just prompt
+
+        _ ->
+            Nothing
+
+
+square : Stylist.Frame
+square =
+    { width = 1024, height = 1024 }
 
 
 commandName : Command -> String

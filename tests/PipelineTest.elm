@@ -1,10 +1,11 @@
 module PipelineTest exposing (suite)
 
 import Data.Dimension as Dimension
+import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Component(..), Device(..), Engine(..), Event(..), Message(..), Msg(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
+import Pipeline exposing (Command(..), Component(..), Device(..), Draft(..), Engine(..), Event(..), Message(..), Msg(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -23,26 +24,28 @@ suite =
                         |> Expect.equal []
             ]
         , describe "settings"
-            [ test "keep a width that is off the grid out" <|
+            [ test "start square, at the first preset's size" <|
                 \() ->
-                    run [ WidthChanged 700 ] ready
+                    Pipeline.init 1 True []
                         |> .settings
-                        |> .width
-                        |> Dimension.toInt
-                        |> Expect.equal 512
-            , test "take a width and a height apart" <|
+                        |> (\settings -> List.filter (\preset -> preset.width == settings.width && preset.height == settings.height) Pipeline.presets)
+                        |> List.map .ratio
+                        |> Expect.equal [ "1:1" ]
+            , test "make a picture with the steps typed" <|
                 \() ->
-                    run [ WidthChanged 1024, HeightChanged 256 ] ready
-                        |> .settings
-                        |> (\settings -> ( Dimension.toInt settings.width, Dimension.toInt settings.height ))
-                        |> Expect.equal ( 1024, 256 )
-            , test "keep more steps than the library takes out" <|
+                    Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", StepsChanged " 20 " ] ready)
+                        |> Tuple.second
+                        |> Maybe.andThen stepsOf
+                        |> Expect.equal (Just 20)
+            , test "refuse steps the library doesn't take" <|
                 \() ->
-                    run [ StepsChanged 20, StepsChanged 51 ] ready
-                        |> .settings
-                        |> .steps
-                        |> Steps.toInt
-                        |> Expect.equal 20
+                    List.map
+                        (\steps ->
+                            Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", StepsChanged steps ] ready)
+                                |> Tuple.mapFirst .message
+                        )
+                        [ "", "0", "51", "4.5", "four" ]
+                        |> Expect.equal (List.repeat 5 ( Just (Problem "Steps are a whole number from 1 to 50."), Nothing ))
             , test "start a fixed seed from the last picture's" <|
                 \() ->
                     run
@@ -115,6 +118,21 @@ suite =
                         |> run [ ClearClicked, Happened (Failed { name = "Error", message = "Blocked" }) ]
                         |> (\model -> ( model.device, model.downloaded ))
                         |> Expect.equal ( Unsupported Kept, [ Binary ] )
+            , test "say they are cancelling until the download stops, quietly" <|
+                \() ->
+                    run [ DownloadClicked Binary, CancelClicked ] supported
+                        |> (\cancelling -> ( cancelling.device, run [ Happened (Failed { name = "AbortError", message = "" }) ] cancelling |> .message ))
+                        |> Expect.equal ( Supported CanPrompt (Cancelling Binary []), Nothing )
+            , test "keep a model that finished loading as the download was cancelled, and make no picture with it" <|
+                \() ->
+                    Pipeline.update (Happened ModelLoaded) (run [ PromptChanged "a bonsai", GenerateClicked, CancelClicked ] supported)
+                        |> Tuple.mapFirst (\model -> ( model.device, model.downloaded ))
+                        |> Expect.equal ( ( Supported CanPrompt (Ready Ternary), [ Ternary ] ), Nothing )
+            , test "say why a download stopped that nobody cancelled" <|
+                \() ->
+                    run [ DownloadClicked Binary, Happened (Failed { name = "AbortError", message = "The device was lost." }) ] supported
+                        |> (\model -> ( model.device, model.message ))
+                        |> Expect.equal ( Supported CanPrompt Empty, Just (Problem "The device was lost.") )
             , test "are not remembered when the download stops halfway" <|
                 \() ->
                     run [ DownloadClicked Binary, CancelClicked, Happened (Failed { name = "AbortError", message = "" }) ] supported
@@ -228,6 +246,23 @@ suite =
                         |> Tuple.second
                         |> Maybe.andThen seedOf
                         |> Expect.equal (Just Seed.largest)
+            , test "makes no picture while AI Style writes the prompt" <|
+                \() ->
+                    Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", StylingStarted ] ready)
+                        |> Tuple.mapFirst (\model -> ( model.settings.prompt, model.message ))
+                        |> Expect.equal ( ( Styling, Nothing ), Nothing )
+            , test "keeps what is typed out of the prompt AI Style writes" <|
+                \() ->
+                    run [ PromptChanged "a bonsai", StylingStarted, PromptChanged "a cactus" ] ready
+                        |> .settings
+                        |> .prompt
+                        |> Expect.equal Styling
+            , test "makes the picture AI Style wrote" <|
+                \() ->
+                    Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", StylingStarted, StylingEnded "Subject: a bonsai" ] ready)
+                        |> Tuple.second
+                        |> Maybe.andThen promptOf
+                        |> Expect.equal (Just "Subject: a bonsai")
             , test "makes one picture at a time" <|
                 \() ->
                     Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", GenerateClicked ] ready)
@@ -383,6 +418,26 @@ seedOf command =
     case command of
         Generate job ->
             Just (Seed.toInt job.seed)
+
+        _ ->
+            Nothing
+
+
+stepsOf : Command -> Maybe Int
+stepsOf command =
+    case command of
+        Generate job ->
+            Just (Steps.toInt job.steps)
+
+        _ ->
+            Nothing
+
+
+promptOf : Command -> Maybe String
+promptOf command =
+    case command of
+        Generate job ->
+            Just (Prompt.toString job.prompt)
 
         _ ->
             Nothing

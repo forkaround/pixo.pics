@@ -2,6 +2,8 @@ module Stylist exposing
     ( Command(..)
     , Event(..)
     , Failure
+    , Frame
+    , Handover(..)
     , Job
     , Model
     , Msg(..)
@@ -18,6 +20,7 @@ module Stylist exposing
     , modelSize
     , needsWebGpu
     , request
+    , shown
     , styleName
     , styles
     , tidy
@@ -52,7 +55,14 @@ type State
 
 type alias Job =
     { style : Style
+    , frame : Frame
     , idea : String
+    }
+
+
+type alias Frame =
+    { width : Int
+    , height : Int
     }
 
 
@@ -177,6 +187,27 @@ isBusy model =
             False
 
 
+shown : Model -> Maybe String
+shown model =
+    case model.state of
+        Loading _ (Just job) ->
+            Just job.idea
+
+        Writing job text ->
+            case tidy text of
+                "" ->
+                    Just job.idea
+
+                written ->
+                    Just written
+
+        Stopping job ->
+            Just job.idea
+
+        _ ->
+            Nothing
+
+
 canUndo : String -> Model -> Bool
 canUndo prompt model =
     case model.written of
@@ -192,7 +223,7 @@ canUndo prompt model =
 
 
 type Msg
-    = StyleChosen Style String
+    = StyleChosen Style Frame String
     | StopClicked
     | UndoClicked
     | RemoveClicked
@@ -215,21 +246,26 @@ type Command
     | Remove
 
 
-update : Msg -> Model -> ( Model, Maybe Command, Maybe String )
+type Handover
+    = Took
+    | Gave String
+
+
+update : Msg -> Model -> ( Model, Maybe Command, Maybe Handover )
 update msg model =
     case msg of
-        StyleChosen style prompt ->
+        StyleChosen style frame prompt ->
             case Prompt.parse prompt of
                 Nothing ->
                     ( { model | message = Just (Problem "Describe the picture first.") }, Nothing, Nothing )
 
                 Just _ ->
-                    start { style = style, idea = ideaOf prompt model } { model | message = Nothing }
+                    start { style = style, frame = frame, idea = ideaOf prompt model } { model | message = Nothing }
 
         StopClicked ->
             case model.state of
-                Loading progress (Just _) ->
-                    ( { model | state = Loading progress Nothing }, Nothing, Nothing )
+                Loading progress (Just job) ->
+                    ( { model | state = Loading progress Nothing }, Nothing, Just (Gave job.idea) )
 
                 Writing job _ ->
                     ( { model | state = Stopping job }, Just Stop, Nothing )
@@ -240,7 +276,7 @@ update msg model =
         UndoClicked ->
             case ( model.written, isBusy model ) of
                 ( Just written, False ) ->
-                    ( { model | written = Nothing, message = Nothing }, Nothing, Just written.idea )
+                    ( { model | written = Nothing, message = Nothing }, Nothing, Just (Gave written.idea) )
 
                 _ ->
                     ( model, Nothing, Nothing )
@@ -274,28 +310,28 @@ ideaOf prompt model =
             String.trim prompt
 
 
-start : Job -> Model -> ( Model, Maybe Command, Maybe String )
+start : Job -> Model -> ( Model, Maybe Command, Maybe Handover )
 start job model =
     case model.state of
         Asleep ->
-            ( { model | state = Loading 0 (Just job) }, Just Load, Nothing )
+            ( { model | state = Loading 0 (Just job) }, Just Load, Just Took )
 
         Loading progress _ ->
-            ( { model | state = Loading progress (Just job) }, Nothing, Nothing )
+            ( { model | state = Loading progress (Just job) }, Nothing, Just Took )
 
         Awake ->
-            write job model
+            ( { model | state = Writing job "" }, Just (Write (request job)), Just Took )
 
         _ ->
             ( model, Nothing, Nothing )
 
 
-write : Job -> Model -> ( Model, Maybe Command, Maybe String )
+write : Job -> Model -> ( Model, Maybe Command, Maybe Handover )
 write job model =
     ( { model | state = Writing job "" }, Just (Write (request job)), Nothing )
 
 
-remove : Model -> ( Model, Maybe Command, Maybe String )
+remove : Model -> ( Model, Maybe Command, Maybe Handover )
 remove model =
     if model.downloaded then
         ( { model | state = Removing, message = Nothing }, Just Remove, Nothing )
@@ -304,7 +340,7 @@ remove model =
         ( model, Nothing, Nothing )
 
 
-happened : Event -> Model -> ( Model, Maybe Command, Maybe String )
+happened : Event -> Model -> ( Model, Maybe Command, Maybe Handover )
 happened event model =
     case ( event, model.state ) of
         ( Progressed progress, Loading _ waiting ) ->
@@ -323,7 +359,7 @@ happened event model =
                     ( loaded, Nothing, Nothing )
 
         ( Streamed text, Writing job _ ) ->
-            ( { model | state = Writing job text }, Nothing, Just (tidy text) )
+            ( { model | state = Writing job text }, Nothing, Nothing )
 
         ( Finished text, Writing job _ ) ->
             let
@@ -331,13 +367,13 @@ happened event model =
                     tidy text
             in
             if isWhole prompt then
-                ( { model | state = Awake, written = Just { idea = job.idea, prompt = prompt } }, Nothing, Just prompt )
+                ( { model | state = Awake, written = Just { idea = job.idea, prompt = prompt } }, Nothing, Just (Gave prompt) )
 
             else
-                ( { model | state = Awake, message = Just (Problem "That didn't come out right. Try again.") }, Nothing, Just job.idea )
+                ( { model | state = Awake, message = Just (Problem "That didn't come out right. Try again.") }, Nothing, Just (Gave job.idea) )
 
         ( Finished _, Stopping job ) ->
-            ( { model | state = Awake }, Nothing, Just job.idea )
+            ( { model | state = Awake }, Nothing, Just (Gave job.idea) )
 
         ( Removed, Removing ) ->
             ( { model | state = Asleep, downloaded = False, message = Just (Info "Prompt model removed.") }, Nothing, Nothing )
@@ -349,21 +385,21 @@ happened event model =
             ( model, Nothing, Nothing )
 
 
-failed : Failure -> State -> Model -> ( Model, Maybe Command, Maybe String )
+failed : Failure -> State -> Model -> ( Model, Maybe Command, Maybe Handover )
 failed failure state model =
     let
         problem =
             Just (Problem (explain failure))
     in
     case state of
-        Loading _ _ ->
-            ( { model | state = Asleep, message = problem }, Nothing, Nothing )
+        Loading _ waiting ->
+            ( { model | state = Asleep, message = problem }, Nothing, Maybe.map (.idea >> Gave) waiting )
 
         Writing job _ ->
-            ( { model | state = Awake, message = problem }, Nothing, Just job.idea )
+            ( { model | state = Awake, message = problem }, Nothing, Just (Gave job.idea) )
 
         Stopping job ->
-            ( { model | state = Awake }, Nothing, Just job.idea )
+            ( { model | state = Awake }, Nothing, Just (Gave job.idea) )
 
         Removing ->
             ( { model | state = Asleep, message = problem }, Nothing, Nothing )
@@ -494,28 +530,29 @@ request job =
 
 conversation : Job -> List Turn
 conversation job =
-    { role = System, content = instructions job.style }
+    { role = System, content = instructions job.style job.frame }
         :: List.concatMap
-            (\shown ->
-                [ { role = User, content = shown.idea }
-                , { role = Assistant, content = shown.prompt }
+            (\given ->
+                [ { role = User, content = given.idea }
+                , { role = Assistant, content = given.prompt }
                 ]
             )
             (examples job.style)
         ++ [ { role = User, content = job.idea } ]
 
 
-instructions : Style -> String
-instructions style =
+instructions : Style -> Frame -> String
+instructions style frame =
     String.join "\n"
         [ "You write prompts for the FLUX.2 image model in the style \"" ++ styleName style ++ "\": " ++ look style ++ "."
+        , "The picture is " ++ shape frame ++ "."
         , ""
         , "Turn each idea into exactly these six lines, in this order:"
         , "Subject: the main subject from the idea and what it is doing, with concrete details"
         , "Style: the style words, plus a few that suit the idea"
         , "Setting: the place, the background and a few props"
         , "Lighting: the light source, its direction, the time of day and the colors"
-        , "Camera: the lens, viewpoint, framing and composition"
+        , "Camera: the lens, viewpoint, and a composition that fills " ++ orientation frame
         , "Mood: two or three words"
         , ""
         , "Rules:"
@@ -527,6 +564,39 @@ instructions style =
         ]
 
 
+shape : Frame -> String
+shape frame =
+    let
+        common =
+            gcd frame.width frame.height
+
+        ratio =
+            String.fromInt (frame.width // common) ++ ":" ++ String.fromInt (frame.height // common)
+    in
+    String.fromInt frame.width ++ " by " ++ String.fromInt frame.height ++ " pixels, " ++ ratio ++ ", " ++ orientation frame
+
+
+orientation : Frame -> String
+orientation frame =
+    if frame.width > frame.height then
+        "a wide landscape frame"
+
+    else if frame.width < frame.height then
+        "a tall portrait frame"
+
+    else
+        "a square frame"
+
+
+gcd : Int -> Int -> Int
+gcd a b =
+    if b == 0 then
+        max 1 a
+
+    else
+        gcd b (modBy b a)
+
+
 look : Style -> String
 look style =
     case style of
@@ -534,7 +604,7 @@ look style =
             "a realistic photograph: name a real camera body, a lens focal length and an aperture, and natural or practical light"
 
         Cinematic ->
-            "a still from a feature film: anamorphic widescreen framing, motivated dramatic light, a color grade"
+            "a still from a feature film: an anamorphic lens, motivated dramatic light, a color grade"
 
         AnalogFilm ->
             "a picture taken on analog film: name a film stock, visible grain, organic colors, a vintage camera"
@@ -595,7 +665,7 @@ examples style =
                 , "cinematic film still, teal and orange color grade, subtle film grain"
                 , "an endless desert under a hazy sky, a crashed landing module half buried behind him"
                 , "hard late-afternoon sun from the side, long shadows, warm dust glowing in the air"
-                , "anamorphic 40mm lens, wide shot from low angle, 2.39:1 framing, shallow depth of field"
+                , "anamorphic 40mm lens, wide shot from low angle, horizon low in the frame, shallow depth of field"
                 , "lonely, epic, determined"
                 ]
             , example "a woman in a red dress at a train station"
@@ -603,7 +673,7 @@ examples style =
                 , "cinematic film still, color graded, subtle film grain, muted greens with a vivid red accent"
                 , "a grand old train station, steam from a departing train, travelers in dark coats rushing past"
                 , "shafts of morning light through tall arched windows, haze in the air, strong contrast"
-                , "spherical 85mm lens, medium shot at eye level, 2.39:1 framing, background softly blurred"
+                , "spherical 85mm lens, medium shot at eye level, subject off center, background softly blurred"
                 , "longing, romantic, tense"
                 ]
             ]
@@ -773,7 +843,7 @@ example idea lines =
 needsWebGpu : Msg -> Bool
 needsWebGpu msg =
     case msg of
-        StyleChosen _ _ ->
+        StyleChosen _ _ _ ->
             True
 
         StopClicked ->

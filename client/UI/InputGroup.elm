@@ -3,6 +3,7 @@ module UI.InputGroup exposing
     , button
     , end
     , input
+    , small
     , start
     , text
     , textarea
@@ -20,7 +21,7 @@ view attrs children =
     Html.div
         ([ attribute "data-slot" "input-group"
          , attribute "role" "group"
-         , class "group/input-group relative flex h-8 w-full min-w-0 items-center rounded-lg border border-input transition-colors outline-none has-[>textarea]:h-auto dark:bg-input/30"
+         , class "group/input-group relative flex h-8 w-full min-w-0 items-center rounded-lg border border-input transition-colors outline-none has-[>textarea]:h-auto data-[size=sm]:h-7 data-[size=sm]:rounded-[min(var(--radius-md),12px)] dark:bg-input/30"
          , class "has-[[data-slot=input-group-control]:focus-visible]:border-ring has-[[data-slot=input-group-control]:focus-visible]:ring-3 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/50"
          , class "has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 dark:has-[[data-slot][aria-invalid=true]]:ring-destructive/40"
          , class "has-disabled:bg-input/50 has-disabled:opacity-50 dark:has-disabled:bg-input/80"
@@ -32,6 +33,11 @@ view attrs children =
         children
 
 
+small : Attribute msg
+small =
+    attribute "data-size" "sm"
+
+
 
 -- CONTROLS
 
@@ -40,7 +46,7 @@ input : List (Attribute msg) -> Html msg
 input attrs =
     Html.input
         (attribute "data-slot" "input-group-control"
-            :: class "h-8 w-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-2.5 py-1 text-base outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+            :: class "h-8 w-full min-w-0 flex-1 rounded-none group-data-[size=sm]/input-group:h-7 border-0 bg-transparent px-2.5 py-1 text-base outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
             :: attrs
         )
         []
