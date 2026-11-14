@@ -70,7 +70,7 @@ storage model =
             |> Card.title [ Html.h3 [] [ text "Model storage" ] ]
             |> Card.description [ text "Downloaded models are kept in this browser." ]
             |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
-                [ p [ class "text-xs text-muted-foreground" ]
+                [ p [ class "text-sm text-muted-foreground" ]
                     [ text (storageHint model.device) ]
                 , Button.new
                     |> Button.text
@@ -82,7 +82,7 @@ storage model =
                         )
                     |> Button.outline
                     |> Button.small
-                    |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.startIcon (Phosphor.trash Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Button.toHtml [ onClick ClearClicked, disabled (Pipeline.engineOf model.device /= Just Empty && model.device /= Unsupported Kept), class "max-sm:w-full" ]
                 ]
             |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
@@ -138,18 +138,7 @@ viewWeights model weights =
                     ]
                 , div [ class "min-w-0 flex-1 space-y-1" ]
                     [ div [ class "flex flex-wrap items-center gap-2" ]
-                        (Html.h3 [ class "text-base font-semibold tracking-tight" ] [ text name ]
-                            :: (case state of
-                                    InMemory ->
-                                        [ badge "In memory" ]
-
-                                    Downloaded ->
-                                        [ badge "Downloaded" ]
-
-                                    _ ->
-                                        []
-                               )
-                        )
+                        [ Html.h3 [ class "text-base font-semibold tracking-tight" ] [ text name ] ]
                     , p [ class "text-sm text-muted-foreground" ]
                         [ text
                             (case state of
@@ -174,29 +163,30 @@ viewWeights model weights =
                         |> Button.text "Cancel"
                         |> Button.outline
                         |> Button.small
-                        |> Button.startIcon (Phosphor.x Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                        |> Button.startIcon (Phosphor.x Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml [ onClick CancelClicked, class "shrink-0" ]
                     ]
 
                 InMemory ->
-                    [ p [ class "flex-1 text-xs text-muted-foreground" ] [ text "Ready to generate on this device." ]
+                    [ p [ class "flex-1 text-sm text-muted-foreground" ] [ text "Ready to generate on this device." ]
                     , Button.new
                         |> Button.text "Release"
                         |> Button.outline
                         |> Button.small
-                        |> Button.startIcon (Phosphor.ejectSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                        |> Button.startIcon (Phosphor.ejectSimple Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml [ onClick ReleaseClicked, disabled (not idle), class "shrink-0" ]
                     ]
 
                 Downloaded ->
                     let
                         checkCircle =
-                            Phosphor.checkCircle Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+                            Phosphor.checkCircle Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
                     in
-                    [ hint []
+                    [ hint [ class "flex-1" ]
                         model.device
-                        [ checkCircle, text "Saved in this browser. Ready to use in the studio." ]
-                        [ checkCircle, text ("Saved in this browser. " ++ SupportView.needsWebGpu) ]
+                        [ checkCircle, text "Ready to use in the studio." ]
+                        [ checkCircle, text SupportView.needsWebGpu ]
+                    , badge "Downloaded"
                     ]
 
                 NotDownloaded ->
@@ -205,7 +195,7 @@ viewWeights model weights =
                         |> Button.text "Download"
                         |> Button.outline
                         |> Button.small
-                        |> Button.startIcon (Phosphor.downloadSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                        |> Button.startIcon (Phosphor.downloadSimple Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                         |> Button.toHtml
                             [ onClick (DownloadClicked weights)
                             , disabled (not idle)
@@ -280,7 +270,7 @@ stylist device model =
                         )
                     |> Button.outline
                     |> Button.small
-                    |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.startIcon (Phosphor.trash Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Button.toHtml
                         [ onClick Stylist.RemoveClicked
                         , disabled (not idle)
@@ -299,9 +289,9 @@ hint : List (Html.Attribute msg) -> Pipeline.Device -> List (Html msg) -> List (
 hint attributes device supported unsupported =
     SupportView.layers attributes
         device
-        { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-0.5 h-3 w-48 max-w-full" ] ]
-        , supported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] supported
-        , unsupported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] unsupported
+        { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-[3px] h-3.5 w-48 max-w-full" ] ]
+        , supported = p [ class "flex items-center gap-2 text-sm text-muted-foreground" ] supported
+        , unsupported = p [ class "flex items-center gap-2 text-sm text-muted-foreground" ] unsupported
         }
 
 
@@ -309,10 +299,10 @@ promptHint : List (Html.Attribute msg) -> Pipeline.Device -> List (Html msg) -> 
 promptHint attributes device supported unsupported noShaderF16 =
     SupportView.promptLayers attributes
         device
-        { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-0.5 h-3 w-48 max-w-full" ] ]
-        , supported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] supported
-        , unsupported = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] unsupported
-        , noShaderF16 = p [ class "flex items-center gap-2 text-xs text-muted-foreground" ] noShaderF16
+        { checking = div [ attribute "aria-hidden" "true" ] [ Skeleton.view [ class "my-[3px] h-3.5 w-48 max-w-full" ] ]
+        , supported = p [ class "flex items-center gap-2 text-sm text-muted-foreground" ] supported
+        , unsupported = p [ class "flex items-center gap-2 text-sm text-muted-foreground" ] unsupported
+        , noShaderF16 = p [ class "flex items-center gap-2 text-sm text-muted-foreground" ] noShaderF16
         }
 
 
@@ -330,5 +320,4 @@ badge : String -> Html msg
 badge label =
     Badge.new
         |> Badge.text label
-        |> Badge.secondary
         |> Badge.toHtml []

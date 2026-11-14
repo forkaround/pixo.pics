@@ -22,8 +22,8 @@ import LibraryView
 import Logo
 import Minidenticons
 import ModelsView
-import Page.About
 import Page.Account
+import Page.General
 import Page.Passkey
 import Page.SignIn
 import Page.SignUp
@@ -101,7 +101,7 @@ type Page
 
 
 type Section
-    = About Page.About.Model
+    = General Page.General.Model
     | Models
     | Account Page.Account.Model
 
@@ -149,9 +149,9 @@ open url opened =
         Path.Library ->
             runLibrary { model | page = Library } (Library.enter model.library)
 
-        Path.About ->
-            Page.About.load
-                |> Tuple.mapBoth (\page -> { model | page = Settings (About page) }) (Effect.map GotAbout)
+        Path.General ->
+            Page.General.load
+                |> Tuple.mapBoth (\page -> { model | page = Settings (General page) }) (Effect.map GotGeneral)
 
         Path.Models ->
             runPipeline { model | page = Settings Models } (Pipeline.enter model.pipeline)
@@ -164,7 +164,7 @@ open url opened =
 
         Path.Account ->
             if model.session == SignedOut then
-                ( { model | page = Settings (Account Page.Account.init) }, PushUrl (Path.toString Path.SignIn) )
+                ( { model | page = Settings (Account Page.Account.init) }, NoEffect )
 
             else
                 Page.Account.load Page.Account.init
@@ -308,7 +308,7 @@ type Msg
     | SignOutClicked
     | GotSignOut (Result ApiClient.Error ())
     | GotPasskey Page.Passkey.Msg
-    | GotAbout Page.About.Msg
+    | GotGeneral Page.General.Msg
     | GotAccount Page.Account.Msg
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
@@ -533,9 +533,6 @@ step msg model =
                 ( _, ApiClient.Unauthorized _ ) ->
                     ( { model | session = SignedOut }
                     , case model.page of
-                        Settings (Account _) ->
-                            PushUrl (Path.toString Path.SignIn)
-
                         Passkey _ ->
                             PushUrl (Path.toString Path.SignIn)
 
@@ -599,11 +596,11 @@ step msg model =
                 _ ->
                     ( model, NoEffect )
 
-        GotAbout pageMsg ->
+        GotGeneral pageMsg ->
             case model.page of
-                Settings (About page) ->
-                    Page.About.update pageMsg page
-                        |> Tuple.mapBoth (\next -> { model | page = Settings (About next) }) (Effect.map GotAbout)
+                Settings (General page) ->
+                    Page.General.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { model | page = Settings (General next) }) (Effect.map GotGeneral)
 
                 _ ->
                     ( model, NoEffect )
@@ -721,8 +718,8 @@ title page =
         Library ->
             "Library · pixo"
 
-        Settings (About _) ->
-            "About · pixo"
+        Settings (General _) ->
+            "General · pixo"
 
         Settings Models ->
             "Models · pixo"
@@ -778,23 +775,18 @@ viewBody model =
                 [ viewAside "md:w-56 md:pt-6"
                     [ Sidebar.group []
                         [ Sidebar.menu [ class "max-md:flex-row max-md:flex-wrap" ]
-                            (viewDestination (isAbout model.page) Path.About Phosphor.info "About"
-                                :: viewDestination (section == Models) Path.Models Phosphor.cube "Models"
-                                :: (if isAccount model.page || isSignedIn model.session then
-                                        [ viewDestination (isAccount model.page) Path.Account Phosphor.userCircle "Account" ]
-
-                                    else
-                                        []
-                                   )
-                            )
+                            [ viewDestination (isGeneral model.page) Path.General Phosphor.info "General"
+                            , viewDestination (section == Models) Path.Models Phosphor.cube "Models"
+                            , viewDestination (isAccount model.page) Path.Account Phosphor.userCircle "Account"
+                            ]
                         ]
                     ]
                 , viewContent
                     [ case section of
-                        About about ->
-                            viewSettingsPage "About"
-                                (text "What stays on this device, and the server this app talks to.")
-                                (Page.About.view about)
+                        General general ->
+                            viewSettingsPage "General"
+                                (text "Privacy and release health.")
+                                (Page.General.view general)
 
                         Models ->
                             viewSettingsPage "Models"
@@ -919,7 +911,7 @@ viewShell model page =
                     [ viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
                     , viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
                     , viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
-                    , viewDestination (isSettings model.page) Path.Models Phosphor.sliders "Settings"
+                    , viewDestination (isSettings model.page) Path.General Phosphor.sliders "Settings"
                     ]
                 ]
             ]
@@ -980,10 +972,10 @@ invitation session =
             ExploreView.Guest
 
 
-isAbout : Page -> Bool
-isAbout page =
+isGeneral : Page -> Bool
+isGeneral page =
     case page of
-        Settings (About _) ->
+        Settings (General _) ->
             True
 
         _ ->
@@ -994,16 +986,6 @@ isAccount : Page -> Bool
 isAccount page =
     case page of
         Settings (Account _) ->
-            True
-
-        _ ->
-            False
-
-
-isSignedIn : Session -> Bool
-isSignedIn session =
-    case session of
-        SignedIn _ ->
             True
 
         _ ->

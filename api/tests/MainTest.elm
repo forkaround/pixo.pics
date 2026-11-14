@@ -53,7 +53,7 @@ suite =
                               ]
                             , [ health "first"
                                     200
-                                    """{"status":"warn","releaseId":"0641607","region":"arn1","checks":{"database":{"status":"warn","latencyMs":1500,"output":"Slower than 1000 ms."}}}"""
+                                    """{"status":"warn","releaseId":"0641607","region":"arn1","checks":{"database":{"status":"warn","latencyMs":1500,"output":"Database slow, over 1000 ms"}}}"""
                               ]
                             )
             , test "fails when its role is exempt from row-level security" <|
@@ -63,7 +63,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"allowed":true,"remaining":59,"retry_after":0}]},{"rows":[{"exempt":true}],"rowCount":1}]}"""
                         |> expectSent (\values -> ( levels values, responses values ))
                             ( [ "info", "error" ]
-                            , [ health "first" 503 (failed "Unexpected result.") ]
+                            , [ health "first" 503 (failed "Database sent an unexpected result") ]
                             )
             , test "limits by address before it checks the database" <|
                 \() ->
@@ -94,7 +94,7 @@ suite =
                             , [ { resolve = "first"
                                 , status = 429
                                 , headers = ( "retry-after", "2" ) :: jsonHeaders
-                                , body = """{"error":"Too many attempts. Try again later."}"""
+                                , body = """{"error":"Too many attempts, try again later"}"""
                                 }
                               ]
                             )
@@ -103,13 +103,13 @@ suite =
                     start (Just databaseUrl)
                         |> request "first" "GET" [ "api", "health" ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
-                        |> expectResponses [ health "first" 503 (failed "Unreachable.") ]
+                        |> expectResponses [ health "first" 503 (failed "Database unreachable") ]
             , test "fails when Neon takes too long" <|
                 \() ->
                     start (Just databaseUrl)
                         |> request "first" "GET" [ "api", "health" ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.timeout
-                        |> expectResponses [ health "first" 503 (failed "Timed out after 5000 ms.") ]
+                        |> expectResponses [ health "first" 503 (failed "Database timed out after 5000 ms") ]
             , test "fails at once when the database isn't configured" <|
                 \() ->
                     start Nothing
@@ -245,7 +245,7 @@ suite =
                             [ { resolve = "first"
                               , status = 429
                               , headers = ( "retry-after", "240" ) :: jsonHeaders
-                              , body = """{"error":"Too many attempts. Try again later."}"""
+                              , body = """{"error":"Too many attempts, try again later"}"""
                               }
                             ]
             , test "answers 400 to a body that is not a sign-up" <|
@@ -900,7 +900,7 @@ suite =
                             [ { resolve = "first"
                               , status = 429
                               , headers = ( "retry-after", "45" ) :: jsonHeaders
-                              , body = """{"error":"Too many attempts. Try again later."}"""
+                              , body = """{"error":"Too many attempts, try again later"}"""
                               }
                             ]
             ]

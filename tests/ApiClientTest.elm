@@ -24,7 +24,7 @@ suite =
             , test "fails when the server can't be reached" <|
                 \() ->
                     answer Test.Http.networkError
-                        |> Expect.equal (Err (ApiClient.Failed "Could not reach the server. Start both apps with `bun dev`."))
+                        |> Expect.equal (Err (ApiClient.Failed "Network offline"))
             , test "decodes the endpoint's response from an error status" <|
                 \() ->
                     (ApiClient.request Api.health () identity).onResponse

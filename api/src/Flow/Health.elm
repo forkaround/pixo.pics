@@ -45,7 +45,7 @@ update server msg =
                         (Response.health server.release
                             { status = Api.Warn
                             , latencyMs = Just latency
-                            , output = Just ("Slower than " ++ String.fromInt slowAfter ++ " ms.")
+                            , output = Just ("Database slow, over " ++ String.fromInt slowAfter ++ " ms")
                             }
                         )
                     , log Interop.Warn ("Health check slow: the database took " ++ String.fromInt latency ++ " ms.")
@@ -77,19 +77,19 @@ failure : Neon.Error -> String
 failure problem =
     case problem of
         Neon.Timeout ->
-            "Timed out after " ++ String.fromFloat healthTimeout ++ " ms."
+            "Database timed out after " ++ String.fromFloat healthTimeout ++ " ms"
 
         Neon.NetworkError ->
-            "Unreachable."
+            "Database unreachable"
 
         Neon.BadUrl _ ->
-            "Unreachable."
+            "Database URL is invalid"
 
         Neon.ServerError status _ ->
-            "Neon answered with HTTP " ++ String.fromInt status ++ "."
+            "Database down HTTP " ++ String.fromInt status
 
         Neon.QueryFailed _ ->
-            "The query failed."
+            "Database query failed"
 
         Neon.UnexpectedResult _ ->
-            "Unexpected result."
+            "Database sent an unexpected result"

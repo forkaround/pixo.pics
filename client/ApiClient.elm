@@ -83,13 +83,13 @@ fromResponse : Decode.Decoder a -> Http.Response String -> Result Error a
 fromResponse decoder response =
     case response of
         Http.BadUrl_ url ->
-            Err (Failed ("Bad URL: " ++ url))
+            Err (Failed ("Invalid request URL: " ++ url))
 
         Http.Timeout_ ->
-            Err (Failed "The server took too long to answer.")
+            Err (Failed "Server timed out")
 
         Http.NetworkError_ ->
-            Err (Failed "Could not reach the server. Start both apps with `bun dev`.")
+            Err (Failed "Network offline")
 
         Http.BadStatus_ metadata body ->
             case Decode.decodeString Api.errorDecoder body of
@@ -100,16 +100,12 @@ fromResponse decoder response =
                     Decode.decodeString decoder body
                         |> Result.mapError
                             (\_ ->
-                                refusal metadata.statusCode
-                                    ("The server answered with status "
-                                        ++ String.fromInt metadata.statusCode
-                                        ++ ". Is it running? Start both apps with `bun dev`."
-                                    )
+                                refusal metadata.statusCode ("Server error HTTP " ++ String.fromInt metadata.statusCode)
                             )
 
         Http.GoodStatus_ _ body ->
             Decode.decodeString decoder body
-                |> Result.mapError (\error -> Failed ("Unexpected response: " ++ Decode.errorToString error))
+                |> Result.mapError (\_ -> Failed "Unexpected server response")
 
 
 refusal : Int -> String -> Error

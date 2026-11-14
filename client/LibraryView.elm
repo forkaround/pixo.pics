@@ -245,7 +245,7 @@ view model =
                         ]
                     |> Empty.toHtml []
 
-            Loaded pictures ->
+            Loaded _ ->
                 case Library.visible model of
                     [] ->
                         Empty.new
@@ -254,12 +254,8 @@ view model =
                             |> Empty.toHtml []
 
                     found ->
-                        div [ class "flex flex-col gap-3 p-4" ]
-                            [ p [ class "text-xs text-muted-foreground tabular-nums", attribute "role" "status" ]
-                                [ text (count (List.length found) (List.length pictures)) ]
-                            , div [ class "columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5" ]
-                                (List.map (viewTile model) found)
-                            ]
+                        div [ class "columns-2 gap-4 p-4 md:columns-3 xl:columns-4 2xl:columns-5" ]
+                            (List.map (viewTile model) found)
         , viewDialog model
         , if model.zoomed then
             text ""
@@ -268,19 +264,6 @@ view model =
             div [ class "pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4" ]
                 [ viewNotice model.notice ]
         ]
-
-
-count : Int -> Int -> String
-count found total =
-    if found == total then
-        if total == 1 then
-            "1 picture"
-
-        else
-            String.fromInt total ++ " pictures"
-
-    else
-        String.fromInt found ++ " of " ++ String.fromInt total ++ " pictures"
 
 
 icon : Phosphor.Icon -> Html msg

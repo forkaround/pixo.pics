@@ -30,11 +30,11 @@ suite =
                             Url.fromString "https://pixo.pics/library/"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just Path.Library)
-                   , test "opens the models at the settings" <|
+                   , test "opens general at the settings" <|
                         \() ->
                             Url.fromString "https://pixo.pics/settings"
                                 |> Maybe.map Path.parse
-                                |> Expect.equal (Just Path.Models)
+                                |> Expect.equal (Just Path.General)
                    , test "leaves a query string out of it" <|
                         \() ->
                             Url.fromString "https://pixo.pics/login?from=email"
@@ -80,9 +80,9 @@ next path =
             Just Path.Library
 
         Path.Library ->
-            Just Path.About
+            Just Path.General
 
-        Path.About ->
+        Path.General ->
             Just Path.Models
 
         Path.Models ->

@@ -7,7 +7,7 @@ import Data.CredentialId exposing (CredentialId)
 import Effect exposing (Effect(..))
 import Enrolment
 import Html exposing (Html, div, li, p, span, text, ul)
-import Html.Attributes exposing (attribute, class, disabled)
+import Html.Attributes exposing (attribute, class, disabled, href)
 import Html.Events exposing (onClick)
 import Path
 import Phosphor exposing (IconWeight(..))
@@ -17,6 +17,7 @@ import Time
 import UI.AlertDialog as AlertDialog
 import UI.Button as Button
 import UI.Card as Card
+import UI.Empty as Empty
 import UI.Field as Field
 import UI.Item as Item
 import UI.Skeleton as Skeleton
@@ -213,7 +214,18 @@ view session account =
             []
 
         Session.SignedOut ->
-            []
+            [ Empty.new
+                |> Empty.icon (Phosphor.userCircle Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Empty.title [ text "Not logged in" ]
+                |> Empty.description [ text "Log in to manage your passkeys and account." ]
+                |> Empty.content
+                    [ Button.new
+                        |> Button.text "Log in"
+                        |> Button.small
+                        |> Button.toAnchor [ href (Path.toString Path.SignIn) ]
+                    ]
+                |> Empty.toHtml [ class "border" ]
+            ]
 
 
 viewDeleteAccount : Maybe AccountDeletion -> Html Msg
@@ -229,7 +241,7 @@ viewDeleteAccount deletion =
                     |> Button.text "Delete account"
                     |> Button.destructive
                     |> Button.small
-                    |> Button.startIcon (Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.startIcon (Phosphor.trash Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> (if deletion == Nothing then
                             viewButtonSkeleton []
 
@@ -329,13 +341,13 @@ viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
                 ]
             ]
         |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
-            [ p [ class "text-xs text-muted-foreground" ] [ text "You can still log in with an email link." ]
+            [ p [ class "text-sm text-muted-foreground" ] [ text "You can still log in with an email link." ]
             , if session == Session.Unknown then
                 Button.new
                     |> Button.text "Add a passkey"
                     |> Button.outline
                     |> Button.small
-                    |> Button.startIcon (Phosphor.plus Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> viewButtonSkeleton [ class "max-sm:w-full" ]
 
               else
@@ -349,7 +361,7 @@ viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
                         )
                     |> Button.outline
                     |> Button.small
-                    |> Button.startIcon (Phosphor.plus Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                    |> Button.startIcon (Phosphor.plus Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
                     |> Button.toHtml [ onClick (GotEnrolment Enrolment.requested), disabled (ceremony == Waiting), class "max-sm:w-full" ]
             ]
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]

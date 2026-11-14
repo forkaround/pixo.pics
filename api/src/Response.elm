@@ -67,7 +67,7 @@ invalidLink =
 
 tooManyRequests : Int -> Response
 tooManyRequests seconds =
-    error 429 "Too many attempts. Try again later."
+    error 429 "Too many attempts, try again later"
         |> withHeader "retry-after" (String.fromInt seconds)
 
 

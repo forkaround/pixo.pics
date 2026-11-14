@@ -9,7 +9,7 @@ type Path
     = Explore
     | Studio
     | Library
-    | About
+    | General
     | Models
     | Account
     | SignUp
@@ -31,8 +31,8 @@ toString path =
         Library ->
             "/library"
 
-        About ->
-            "/settings/about"
+        General ->
+            "/settings/general"
 
         Models ->
             "/settings/models"
@@ -71,8 +71,8 @@ parser =
         [ Parser.map Explore Parser.top
         , Parser.map Studio (Parser.s "studio")
         , Parser.map Library (Parser.s "library")
-        , Parser.map Models (Parser.s "settings")
-        , Parser.map About (Parser.s "settings" </> Parser.s "about")
+        , Parser.map General (Parser.s "settings")
+        , Parser.map General (Parser.s "settings" </> Parser.s "general")
         , Parser.map Models (Parser.s "settings" </> Parser.s "models")
         , Parser.map Account (Parser.s "settings" </> Parser.s "account")
         , Parser.map SignUp (Parser.s "signup")

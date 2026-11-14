@@ -458,7 +458,7 @@ loading chosen parts =
                 )
             ]
         |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
-        |> Progress.toHtml []
+        |> Progress.toHtml [ class "[&_[data-slot=progress-value]]:text-xs" ]
 
 
 percentage : Pipeline.Download -> Float

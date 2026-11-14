@@ -101,8 +101,8 @@ suite =
                         |> ProgramTest.clickButton "Email me a link"
                         |> ProgramTest.simulateHttpResponse "POST"
                             "/api/auth/signin"
-                            (response 429 """{"error":"Too many attempts. Try again later."}""")
-                        |> ProgramTest.expectViewHas [ text "Too many attempts. Try again later." ]
+                            (response 429 """{"error":"Too many attempts, try again later"}""")
+                        |> ProgramTest.expectViewHas [ text "Too many attempts, try again later" ]
             , test "signs in with a passkey: a challenge, the browser, then home" <|
                 \() ->
                     startAt "/login" defaultFlags
@@ -315,11 +315,13 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Signed in as ada (ada@example.com)" ]
                         |> ProgramTest.ensureViewHasNot [ text "Welcome, ada" ]
                         |> ProgramTest.expectViewHasNot [ text "Signed in on this browser" ]
-            , test "sends a signed-out visitor to sign in" <|
+            , test "asks a signed-out visitor to log in" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/login")
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/account")
+                        |> ProgramTest.ensureViewHas [ text "Not logged in" ]
+                        |> ProgramTest.clickLink "Log in" "/login"
                         |> ProgramTest.expectViewHas [ text "Use your passkey, or get a link by email." ]
             , test "is listed in the settings" <|
                 \() ->
@@ -327,11 +329,12 @@ suite =
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.clickLink "Account" "/settings/account"
                         |> ProgramTest.expectViewHas [ text "Signed in as ada (ada@example.com)" ]
-            , test "is left out of the settings for a visitor who is signed out" <|
+            , test "is listed in the settings for a visitor who is signed out" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
-                        |> ProgramTest.expectViewHasNot [ text "Account" ]
+                        |> ProgramTest.clickLink "Account" "/settings/account"
+                        |> ProgramTest.expectViewHas [ text "Not logged in" ]
             , test "signs out, back to home" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -757,7 +760,8 @@ suite =
                     start defaultFlags
                         |> ProgramTest.clickLink "Library" "/library"
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/library")
-                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.clickLink "Settings" "/settings/general"
+                        |> ProgramTest.clickLink "Models" "/settings/models"
                         |> ProgramTest.ensureViewHas [ text "Remove downloaded models" ]
                         |> ProgramTest.clickLink "Studio" "/studio"
                         |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
@@ -1122,8 +1126,9 @@ suite =
             , test "keeps the model in memory across pages, and checks the browser only once" <|
                 \() ->
                     ready
-                        |> ProgramTest.clickLink "Settings" "/settings/models"
-                        |> ProgramTest.ensureViewHas [ text "In memory" ]
+                        |> ProgramTest.clickLink "Settings" "/settings/general"
+                        |> ProgramTest.clickLink "Models" "/settings/models"
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Release" ] ]
                         |> ProgramTest.clickLink "Studio" "/studio"
                         |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
@@ -1245,7 +1250,8 @@ suite =
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             outgoing
                             (List.filter (Tuple.first >> (==) "LoadTagger") >> Expect.equal [])
-                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.clickLink "Settings" "/settings/general"
+                        |> ProgramTest.clickLink "Models" "/settings/models"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             outgoing
@@ -1258,7 +1264,8 @@ suite =
                 \() ->
                     startAt "/library" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" olderPictures
-                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.clickLink "Settings" "/settings/general"
+                        |> ProgramTest.clickLink "Models" "/settings/models"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
@@ -1272,7 +1279,8 @@ suite =
                         |> ProgramTest.clickButton "Save"
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (pictureSaved "blob:https://pixo.pics/1" (stored 1 "blob:https://pixo.pics/2" "a bonsai" 512 512))
-                        |> ProgramTest.clickLink "Settings" "/settings/models"
+                        |> ProgramTest.clickLink "Settings" "/settings/general"
+                        |> ProgramTest.clickLink "Models" "/settings/models"
                         |> ProgramTest.clickButton "Remove the prompt writer"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
@@ -1475,13 +1483,17 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Out of memory." ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
             ]
-        , describe "About"
+        , describe "General"
             [ test "checks the server as it opens, with its release, region and latency" <|
                 \() ->
-                    startAt "/settings/about" defaultFlags
+                    startAt "/settings/general" defaultFlags
+                        |> ProgramTest.ensureViewHas [ text "Checking health status" ]
+                        |> ProgramTest.ensureViewHasNot [ text "Region" ]
                         |> ProgramTest.simulateHttpOk "GET"
                             "/api/health"
                             """{"status":"pass","releaseId":"7990ba2c0ffee","region":"fra1","links":{"release":"https://github.com/ricardocasares/pixo.pics/commit/7990ba2c0ffee"},"checks":{"database":{"status":"pass","latencyMs":25}}}"""
+                        |> ProgramTest.ensureViewHasNot [ text "Checking health status" ]
+                        |> ProgramTest.ensureViewHas [ text "Healthy" ]
                         |> ProgramTest.ensureViewHas [ text "fra1" ]
                         |> ProgramTest.ensureViewHas [ text "25 ms" ]
                         |> ProgramTest.expectViewHas
@@ -1489,42 +1501,45 @@ suite =
                             , attribute (Html.Attributes.href "https://github.com/ricardocasares/pixo.pics/commit/7990ba2c0ffee")
                             , containing [ text "7990ba2" ]
                             ]
-            , test "says that prompts and pictures never reach the server" <|
+            , test "says that prompts and pictures stay on this device unless shared" <|
                 \() ->
-                    startAt "/settings/about" defaultFlags
-                        |> ProgramTest.ensureViewHas [ text "Your prompts and pictures stay on this device." ]
-                        |> ProgramTest.expectViewHas [ text "The server is only used for authentication: your account, passkeys and sessions." ]
+                    startAt "/settings/general" defaultFlags
+                        |> ProgramTest.expectViewHas [ text "Your prompts and pictures stay on this device unless you decide to share them on the public feed." ]
             , test "checks again each time it is opened" <|
                 \() ->
-                    startAt "/settings/about" defaultFlags
+                    startAt "/settings/general" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET" "/api/health" health
                         |> ProgramTest.clickLink "Models" "/settings/models"
-                        |> ProgramTest.clickLink "About" "/settings/about"
+                        |> ProgramTest.clickLink "General" "/settings/general"
                         |> ProgramTest.expectHttpRequestWasMade "GET" "/api/health"
             , test "says why the database is slow" <|
                 \() ->
-                    startAt "/settings/about" defaultFlags
+                    startAt "/settings/general" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET"
                             "/api/health"
-                            """{"status":"warn","region":"fra1","checks":{"database":{"status":"warn","latencyMs":1500,"output":"Slower than 1000 ms."}}}"""
+                            """{"status":"warn","region":"fra1","checks":{"database":{"status":"warn","latencyMs":1500,"output":"Database slow, over 1000 ms"}}}"""
                         |> ProgramTest.ensureViewHas [ text "1500 ms" ]
-                        |> ProgramTest.expectViewHas [ text "Slower than 1000 ms." ]
+                        |> ProgramTest.expectViewHas [ text "Database slow, over 1000 ms" ]
             , test "reads a failed check from its 503" <|
                 \() ->
-                    startAt "/settings/about" defaultFlags
+                    startAt "/settings/general" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/health"
-                            (response 503 """{"status":"fail","checks":{"database":{"status":"fail","latencyMs":5000,"output":"Timed out after 5000 ms."}}}""")
-                        |> ProgramTest.expectViewHas [ text "Timed out after 5000 ms." ]
+                            (response 503 """{"status":"fail","checks":{"database":{"status":"fail","latencyMs":5000,"output":"Database timed out after 5000 ms"}}}""")
+                        |> ProgramTest.ensureView
+                            (Query.find [ attribute (Html.Attributes.attribute "data-slot" "item") ]
+                                >> Query.has [ containing [ text "Database timed out after 5000 ms" ] ]
+                            )
+                        |> ProgramTest.expectViewHasNot [ text "Region" ]
             , test "says when the server can't be reached" <|
                 \() ->
-                    startAt "/settings/about" defaultFlags
+                    startAt "/settings/general" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/health" Test.Http.networkError
-                        |> ProgramTest.expectViewHas [ text "Could not reach the server. Start both apps with `bun dev`." ]
+                        |> ProgramTest.expectViewHas [ text "Network offline" ]
             , test "is listed in the settings" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
-                        |> ProgramTest.clickLink "About" "/settings/about"
+                        |> ProgramTest.clickLink "General" "/settings/general"
                         |> ProgramTest.expectHttpRequestWasMade "GET" "/api/health"
             ]
         , describe "Models"
@@ -1602,7 +1617,7 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
-                        |> ProgramTest.ensureViewHas [ text "In memory" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Release" ] ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.maybe localStorageWrite)
                             (List.filterMap (Maybe.map .value)
@@ -1705,7 +1720,6 @@ suite =
             , test "shows every picture in its own shape" <|
                 \() ->
                     library
-                        |> ProgramTest.ensureViewHas [ text "3 pictures" ]
                         |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.style "aspect-ratio" "1024 / 576") ]
                         |> ProgramTest.expectViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/3") ]
             , test "says so when nothing is saved yet" <|
@@ -1725,7 +1739,7 @@ suite =
                 \() ->
                     library
                         |> ProgramTest.fillIn "search" "Search prompts" "sunset light"
-                        |> ProgramTest.ensureViewHas [ text "2 of 3 pictures" ]
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "aria-label" "Open a city skyline at sunset") ]
                         |> ProgramTest.ensureViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/2") ]
                         |> ProgramTest.expectViewHasNot [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
             , test "finds a prompt whatever accents the search is typed with" <|
@@ -1738,7 +1752,7 @@ suite =
                                 ]
                             )
                         |> ProgramTest.fillIn "search" "Search prompts" "Kraków"
-                        |> ProgramTest.ensureViewHas [ text "1 of 2 pictures" ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Open a bowl of ramen") ]
                         |> ProgramTest.expectViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
             , test "says so when no prompt matches" <|
                 \() ->
@@ -1790,10 +1804,10 @@ suite =
                 \() ->
                     taggedLibrary
                         |> ProgramTest.clickButton "sunset"
-                        |> ProgramTest.ensureViewHas [ text "2 of 3 pictures" ]
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "aria-label" "Open a city skyline at sunset") ]
                         |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Open a red fox in the snow") ]
                         |> ProgramTest.clickButton "All pictures"
-                        |> ProgramTest.expectViewHas [ text "3 pictures" ]
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "aria-label" "Open a red fox in the snow") ]
             , test "says how pictures get tags when none has any" <|
                 \() ->
                     library
@@ -1851,7 +1865,7 @@ suite =
                             (ProgramTest.clickButton "Delete")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pictureDeleted 3)
                         |> ProgramTest.ensureViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "open" "") ]
-                        |> ProgramTest.expectViewHas [ text "2 pictures" ]
+                        |> ProgramTest.expectViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Open a city skyline at sunset") ]
             , test "deletes a picture once that is confirmed" <|
                 \() ->
                     startAt "/library" defaultFlags
@@ -1974,7 +1988,8 @@ ready : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 ready =
     start defaultFlags
         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-        |> ProgramTest.clickLink "Settings" "/settings/models"
+        |> ProgramTest.clickLink "Settings" "/settings/general"
+        |> ProgramTest.clickLink "Models" "/settings/models"
         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
         |> ProgramTest.clickLink "Studio" "/studio"
@@ -1987,7 +2002,8 @@ readyToTag : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 readyToTag =
     start { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-        |> ProgramTest.clickLink "Settings" "/settings/models"
+        |> ProgramTest.clickLink "Settings" "/settings/general"
+        |> ProgramTest.clickLink "Models" "/settings/models"
         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
         |> ProgramTest.clickLink "Studio" "/studio"
