@@ -13,6 +13,7 @@ module Stylist exposing
     , Style(..)
     , Turn
     , canUndo
+    , checks
     , conversation
     , init
     , isBusy
@@ -29,7 +30,7 @@ module Stylist exposing
     )
 
 import Data.Prompt as Prompt
-import Pipeline exposing (Message(..))
+import Pipeline exposing (Draft(..), Message(..), Validation)
 
 
 
@@ -41,6 +42,8 @@ type alias Model =
     , downloaded : Bool
     , written : Maybe Written
     , message : Maybe Message
+    , fading : Maybe Message
+    , needsIdea : Bool
     }
 
 
@@ -119,6 +122,8 @@ init stored =
     , downloaded = stored == Just modelId
     , written = Nothing
     , message = Nothing
+    , fading = Nothing
+    , needsIdea = False
     }
 
 
@@ -253,14 +258,23 @@ type Handover
 
 update : Msg -> Model -> ( Model, Maybe Command, Maybe Handover )
 update msg model =
+    let
+        ( next, command, handover ) =
+            step msg model
+    in
+    ( Pipeline.fade model next, command, handover )
+
+
+step : Msg -> Model -> ( Model, Maybe Command, Maybe Handover )
+step msg model =
     case msg of
         StyleChosen style frame prompt ->
             case Prompt.parse prompt of
                 Nothing ->
-                    ( { model | message = Just (Problem "Describe the picture first.") }, Nothing, Nothing )
+                    ( { model | message = Nothing, needsIdea = True }, Nothing, Nothing )
 
                 Just _ ->
-                    start { style = style, frame = frame, idea = ideaOf prompt model } { model | message = Nothing }
+                    start { style = style, frame = frame, idea = ideaOf prompt model } { model | message = Nothing, needsIdea = False }
 
         StopClicked ->
             case model.state of
@@ -294,6 +308,23 @@ update msg model =
 
         Happened event ->
             happened event model
+
+
+checks : Draft -> Model -> List Validation
+checks draft model =
+    [ { field = "prompt"
+      , problem = "Write an idea for AI Style to rewrite."
+      , failing =
+            model.needsIdea
+                && (case draft of
+                        Editing text ->
+                            Prompt.parse text == Nothing
+
+                        Styling ->
+                            False
+                   )
+      }
+    ]
 
 
 ideaOf : String -> Model -> String
@@ -370,7 +401,7 @@ happened event model =
                 ( { model | state = Awake, written = Just { idea = job.idea, prompt = prompt } }, Nothing, Just (Gave prompt) )
 
             else
-                ( { model | state = Awake, message = Just (Problem "That didn't come out right. Try again.") }, Nothing, Just (Gave job.idea) )
+                ( { model | state = Awake, message = Just (Problem "AI Style returned an incomplete prompt. Try again.") }, Nothing, Just (Gave job.idea) )
 
         ( Finished _, Stopping job ) ->
             ( { model | state = Awake }, Nothing, Just (Gave job.idea) )

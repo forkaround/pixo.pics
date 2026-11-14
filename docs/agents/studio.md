@@ -62,6 +62,19 @@ no part.
   made in the worker would not outlive it.
 - WebGPU is asked for inside the worker: a browser that has it only on the page can't
   make pictures.
+- The prompt, steps and seed are checked in Elm, not by the browser: the form is
+  `novalidate` and no input has `type="number"`, `min` or `max`. `Pipeline.checks`
+  (`Stylist.checks`) derive each problem from the current values, so each one hides as
+  soon as its value is right. Steps and seed are checked as they are typed; an empty
+  prompt is where every picture starts, so it is named only once Generate (or AI Style)
+  is pressed without one, which sets `checked` (`needsIdea`). A picture (or rewrite)
+  that starts resets it.
+- The prompt card shows those problems and the `Pipeline` and `Stylist` messages in one
+  band, each line opening and closing with its own transition. A cleared message stays
+  in `fading` (set by `Pipeline.fade` at the end of each `update`), so its line collapses
+  with its words still in it. A closed line is `inert` and drops its `role="alert"`, and
+  an open one is a new node, so a screen reader hears it each time it opens: a test that
+  a problem went away looks for it under `inert`.
 - A random seed is drawn in Elm from the `entropy` flag, with no `Effect`: a test fixes
   it through the flags.
 - `client/bonsai.d.ts` types the library, which ships no types: keep it to what the

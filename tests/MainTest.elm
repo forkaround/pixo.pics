@@ -1107,7 +1107,9 @@ suite =
             , test "takes the steps typed" <|
                 \() ->
                     ready
-                        |> ProgramTest.ensureViewHas [ id "steps", attribute (Html.Attributes.type_ "number"), attribute (Html.Attributes.value "4") ]
+                        |> ProgramTest.ensureViewHas [ id "steps", attribute (Html.Attributes.attribute "inputmode" "numeric"), attribute (Html.Attributes.value "4") ]
+                        |> ProgramTest.ensureViewHasNot [ id "steps", attribute (Html.Attributes.type_ "number") ]
+                        |> ProgramTest.ensureViewHas [ tag "form", attribute (Html.Attributes.novalidate True) ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.fillIn "steps" "Steps" "8"
                         |> ProgramTest.clickButton "Generate"
@@ -1170,7 +1172,7 @@ suite =
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.fillIn "steps" "Steps" "80"
                         |> ProgramTest.clickButton "Generate"
-                        |> ProgramTest.ensureViewHas [ text "Steps are a whole number from 1 to 50." ]
+                        |> ProgramTest.ensureViewHas [ text "Steps must be a whole number from 1 to 50." ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             generation
                             (List.filterMap identity >> Expect.equal [])
@@ -1198,10 +1200,30 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Download and generate"
-                        |> ProgramTest.ensureViewHas [ text "Describe the picture first." ]
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "role" "alert"), containing [ text "Write a prompt to generate a picture." ] ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu" ])
+            , test "says what is wrong with the steps as they are typed" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.fillIn "steps" "Steps" "80"
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "role" "alert"), containing [ text "Steps must be a whole number from 1 to 50." ] ]
+                        |> ProgramTest.ensureViewHas [ id "steps", attribute (Html.Attributes.attribute "aria-invalid" "true") ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "role" "alert"), containing [ text "Write a prompt to generate a picture." ] ]
+                        |> ProgramTest.fillIn "steps" "Steps" "8"
+                        |> ProgramTest.expectViewHasNot [ attribute (Html.Attributes.attribute "role" "alert") ]
+            , test "hides the prompt problem once a prompt is typed" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.attribute "aria-invalid" "true") ]
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.attribute "aria-invalid" "false") ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "role" "alert") ]
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "inert" ""), containing [ text "Write a prompt to generate a picture." ] ]
             , test "says why the model did not load" <|
                 \() ->
                     start defaultFlags
@@ -1211,7 +1233,7 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "HTTP 404 for model_index.json")
                         |> ProgramTest.ensureViewHas [ text "HTTP 404 for model_index.json" ]
                         |> ProgramTest.clickButton "Download and generate"
-                        |> ProgramTest.expectViewHasNot [ text "HTTP 404 for model_index.json" ]
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "inert" ""), containing [ text "HTTP 404 for model_index.json" ] ]
             , test "stops a picture when asked, and is ready for the next" <|
                 \() ->
                     ready
@@ -1482,7 +1504,9 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Photo"
-                        |> ProgramTest.ensureViewHas [ text "Describe the picture first." ]
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "role" "alert"), containing [ text "Write an idea for AI Style to rewrite." ] ]
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a fox"
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "role" "alert") ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu" ])
@@ -1651,7 +1675,7 @@ suite =
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten "\"Cozy\"")
-                        |> ProgramTest.ensureViewHas [ text "That didn't come out right. Try again." ]
+                        |> ProgramTest.ensureViewHas [ text "AI Style returned an incomplete prompt. Try again." ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
             , test "shows why the prompt model failed, and keeps the idea" <|
                 \() ->

@@ -19,11 +19,14 @@ module Pipeline exposing
     , Settings
     , Stage(..)
     , Storage(..)
+    , Validation
     , Weights(..)
     , canPrompt
+    , checks
     , current
     , engineOf
     , enter
+    , fade
     , frameBudget
     , guidance
     , inMemory
@@ -60,6 +63,8 @@ type alias Model =
     { device : Device
     , settings : Settings
     , message : Maybe Message
+    , fading : Maybe Message
+    , checked : Bool
     , pictures : List Picture
     , viewing : Maybe String
     , zoomed : Bool
@@ -111,6 +116,13 @@ type Stage
 type Message
     = Problem String
     | Info String
+
+
+type alias Validation =
+    { field : String
+    , problem : String
+    , failing : Bool
+    }
 
 
 type Weights
@@ -200,6 +212,8 @@ init entropy webGpu downloaded =
         , seeding = RandomSeed
         }
     , message = Nothing
+    , fading = Nothing
+    , checked = False
     , pictures = []
     , viewing = Nothing
     , zoomed = False
@@ -459,6 +473,20 @@ enter model =
 
 update : Msg -> Model -> ( Model, Maybe Command )
 update msg model =
+    Tuple.mapFirst (fade model) (step msg model)
+
+
+fade : { a | message : Maybe Message, fading : Maybe Message } -> { a | message : Maybe Message, fading : Maybe Message } -> { a | message : Maybe Message, fading : Maybe Message }
+fade before after =
+    if after.message == Nothing && before.message /= Nothing then
+        { after | fading = before.message }
+
+    else
+        after
+
+
+step : Msg -> Model -> ( Model, Maybe Command )
+step msg model =
     case msg of
         WeightsChosen chosen ->
             ( edit (\settings -> { settings | weights = chosen }) model, Nothing )
@@ -560,11 +588,11 @@ update msg model =
 
                     else
                         case plan prompt model of
-                            Ok ( job, random ) ->
-                                start { weights = model.settings.weights, job = Just job } { model | random = random }
+                            Just ( job, random ) ->
+                                start { weights = model.settings.weights, job = Just job } { model | random = random, checked = False }
 
-                            Err problem ->
-                                ( { model | message = Just (Problem problem) }, Nothing )
+                            Nothing ->
+                                ( { model | checked = True, message = Nothing }, Nothing )
 
         Happened event ->
             happened event model
@@ -769,28 +797,49 @@ explain failure =
         failure.message
 
 
-plan : String -> Model -> Result String ( Job, Random.Seed )
+plan : String -> Model -> Maybe ( Job, Random.Seed )
 plan text { settings, random } =
-    case ( Prompt.parse text, Steps.fromString settings.steps, draw settings.seeding random ) of
-        ( Nothing, _, _ ) ->
-            Err "Describe the picture first."
+    Maybe.map3
+        (\prompt steps ( seed, next ) ->
+            ( { prompt = prompt
+              , width = settings.width
+              , height = settings.height
+              , steps = steps
+              , seed = seed
+              }
+            , next
+            )
+        )
+        (Prompt.parse text)
+        (Steps.fromString settings.steps)
+        (draw settings.seeding random)
 
-        ( _, Nothing, _ ) ->
-            Err ("Steps are a whole number from " ++ String.fromInt Steps.fewest ++ " to " ++ String.fromInt Steps.most ++ ".")
 
-        ( _, _, Nothing ) ->
-            Err ("The seed is a whole number from 0 to " ++ String.fromInt Seed.largest ++ ".")
+checks : Model -> List Validation
+checks { settings, random, checked } =
+    let
+        check field problem live valid =
+            { field = field, problem = problem, failing = (live || checked) && not valid }
+    in
+    [ check "prompt"
+        "Write a prompt to generate a picture."
+        False
+        (case settings.prompt of
+            Editing text ->
+                Prompt.parse text /= Nothing
 
-        ( Just prompt, Just steps, Just ( seed, next ) ) ->
-            Ok
-                ( { prompt = prompt
-                  , width = settings.width
-                  , height = settings.height
-                  , steps = steps
-                  , seed = seed
-                  }
-                , next
-                )
+            Styling ->
+                True
+        )
+    , check "steps"
+        ("Steps must be a whole number from " ++ String.fromInt Steps.fewest ++ " to " ++ String.fromInt Steps.most ++ ".")
+        True
+        (Steps.fromString settings.steps /= Nothing)
+    , check "seed"
+        ("Seed must be a whole number from 0 to " ++ String.fromInt Seed.largest ++ ".")
+        True
+        (draw settings.seeding random /= Nothing)
+    ]
 
 
 draw : Seeding -> Random.Seed -> Maybe ( Seed, Random.Seed )

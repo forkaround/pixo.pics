@@ -5,8 +5,9 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Html exposing (Html, button, div, figcaption, figure, form, img, label, p, span, text)
-import Html.Attributes exposing (alt, attribute, class, disabled, download, for, height, href, id, name, placeholder, readonly, src, style, title, type_, value, width)
+import Html.Attributes exposing (alt, attribute, class, disabled, download, for, height, href, id, name, novalidate, placeholder, readonly, src, style, title, type_, value, width)
 import Html.Events exposing (onClick, onInput, onSubmit)
+import Html.Keyed as Keyed
 import Library
 import Lightbox
 import Overlay exposing (glass, solid)
@@ -32,26 +33,39 @@ import UI.Textarea as Textarea
 
 controls : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> Html msg
 controls toMsg stylist model =
+    let
+        checks =
+            Stylist.checks model.settings.prompt stylist ++ Pipeline.checks model
+    in
     div [ class "sticky bottom-0 z-10 px-1.5 pb-[max(--spacing(1.5),env(safe-area-inset-bottom))] md:px-8" ]
-        [ form [ onSubmit (toMsg.pipeline GenerateClicked), class "mx-auto w-full md:max-w-2xl" ]
+        [ form [ onSubmit (toMsg.pipeline GenerateClicked), novalidate True, class "mx-auto w-full md:max-w-2xl" ]
             [ Html.fieldset [ disabled (not (Pipeline.isSupported model.device)), class "min-w-0" ]
                 [ Card.new
                     |> Card.small
                     |> Card.content [ class "flex flex-col gap-2" ]
-                        (viewPrompt toMsg stylist model
-                            ++ [ message stylist.message
-                               , message model.message
-                               ]
+                        (viewPrompt toMsg checks stylist model
+                            ++ [ notices (List.map fromCheck checks ++ fromMessage stylist ++ fromMessage model) ]
                         )
-                    |> Card.footer [ class "min-h-13 flex-wrap gap-2" ] (viewFooter toMsg stylist model)
+                    |> Card.footer [ class "min-h-13 flex-wrap gap-2" ] (viewFooter toMsg checks stylist model)
                     |> Card.toHtml [ class "shadow-lg [&_:not([popover],[popover]_*)]:text-[length:inherit]! [&_:not([popover],[popover]_*)]:leading-[inherit]! has-[#prompt:focus-visible]:ring-ring/50 has-[#prompt:focus-visible]:ring-2" ]
                 ]
             ]
         ]
 
 
-viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> List (Html msg)
-viewPrompt toMsg stylist model =
+invalid : List Pipeline.Validation -> String -> Html.Attribute msg
+invalid checks field =
+    attribute "aria-invalid"
+        (if List.any (\check -> check.field == field && check.failing) checks then
+            "true"
+
+         else
+            "false"
+        )
+
+
+viewPrompt : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> List Pipeline.Validation -> Stylist.Model -> Model -> List (Html msg)
+viewPrompt toMsg checks stylist model =
     let
         settings =
             model.settings
@@ -72,6 +86,7 @@ viewPrompt toMsg stylist model =
         , value shown
         , onInput (PromptChanged >> toMsg.pipeline)
         , disabled (isLocked model)
+        , invalid checks "prompt"
         , attribute "aria-busy"
             (if styling then
                 "true"
@@ -79,7 +94,7 @@ viewPrompt toMsg stylist model =
              else
                 "false"
             )
-        , class "max-h-[calc(2lh+--spacing(2))] min-h-[calc(2lh+--spacing(2))]! resize-none overflow-y-auto rounded-none! border-0! bg-transparent! px-0! py-1! transition-[max-height]! duration-300 ease-out focus:max-h-[30svh] focus-visible:ring-0! aria-busy:max-h-[30svh] motion-reduce:transition-none! dark:bg-transparent!"
+        , class "max-h-[calc(2lh+--spacing(2))] min-h-[calc(2lh+--spacing(2))]! resize-none overflow-y-auto rounded-none! border-0! bg-transparent! px-0! py-1! transition-[max-height]! duration-300 ease-out focus:max-h-[30svh] focus-visible:ring-0! aria-invalid:ring-0! aria-busy:max-h-[30svh] motion-reduce:transition-none! dark:bg-transparent!"
         ]
     , div [ class "flex min-h-8 flex-wrap items-center gap-2" ]
         (List.map (Html.map toMsg.stylist) (viewStyle (isLocked model) model.device stylist settings)
@@ -215,11 +230,11 @@ viewWeights model =
         ]
 
 
-viewFooter : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> Stylist.Model -> Model -> List (Html msg)
-viewFooter toMsg stylist model =
+viewFooter : { pipeline : Msg -> msg, stylist : Stylist.Msg -> msg } -> List Pipeline.Validation -> Stylist.Model -> Model -> List (Html msg)
+viewFooter toMsg checks stylist model =
     case ( viewWork model, viewPromptModel stylist ) of
         ( Nothing, Nothing ) ->
-            List.map (Html.map toMsg.pipeline) (viewSettings (isLocked model) model.settings (viewGenerate model))
+            List.map (Html.map toMsg.pipeline) (viewSettings (isLocked model) checks model.settings (viewGenerate model))
 
         ( work, promptModel ) ->
             List.filterMap identity
@@ -333,28 +348,26 @@ viewWork model =
             Nothing
 
 
-viewSettings : Bool -> Pipeline.Settings -> Html Msg -> List (Html Msg)
-viewSettings locked settings generate =
+viewSettings : Bool -> List Pipeline.Validation -> Pipeline.Settings -> Html Msg -> List (Html Msg)
+viewSettings locked checks settings generate =
     [ div [ class "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 md:flex md:flex-wrap md:items-center" ]
         [ viewSize locked settings
-        , viewSeed locked settings.seeding
-        , viewSteps locked settings
+        , viewSeed locked (invalid checks "seed") settings.seeding
+        , viewSteps locked (invalid checks "steps") settings
         , generate
         ]
     ]
 
 
-viewSteps : Bool -> Pipeline.Settings -> Html Msg
-viewSteps locked settings =
+viewSteps : Bool -> Html.Attribute Msg -> Pipeline.Settings -> Html Msg
+viewSteps locked validity settings =
     InputGroup.view [ InputGroup.small, class "w-auto!" ]
         [ InputGroup.start [] [ label [ for "steps" ] [ text "Steps" ] ]
         , InputGroup.input
             [ id "steps"
             , name "steps"
-            , type_ "number"
-            , Html.Attributes.min (String.fromInt Steps.fewest)
-            , Html.Attributes.max (String.fromInt Steps.most)
             , attribute "inputmode" "numeric"
+            , validity
             , value settings.steps
             , onInput StepsChanged
             , disabled locked
@@ -438,8 +451,8 @@ size across down =
     String.fromInt (Dimension.toInt across) ++ " × " ++ String.fromInt (Dimension.toInt down)
 
 
-viewSeed : Bool -> Seeding -> Html Msg
-viewSeed locked seeding =
+viewSeed : Bool -> Html.Attribute Msg -> Seeding -> Html Msg
+viewSeed locked validity seeding =
     let
         ( typed, random ) =
             case seeding of
@@ -455,6 +468,7 @@ viewSeed locked seeding =
             [ id "seed"
             , name "seed"
             , attribute "inputmode" "numeric"
+            , validity
             , placeholder "Random"
             , value typed
             , onInput SeedChanged
@@ -539,6 +553,108 @@ message shown =
 
         Nothing ->
             text ""
+
+
+type alias Notice =
+    { open : Bool
+    , message : Message
+    }
+
+
+fromCheck : Pipeline.Validation -> Notice
+fromCheck check =
+    { open = check.failing, message = Problem check.problem }
+
+
+fromMessage : { a | message : Maybe Message, fading : Maybe Message } -> List Notice
+fromMessage source =
+    case ( source.message, source.fading ) of
+        ( Just current, _ ) ->
+            [ { open = True, message = current } ]
+
+        ( Nothing, Just faded ) ->
+            [ { open = False, message = faded } ]
+
+        ( Nothing, Nothing ) ->
+            []
+
+
+notices : List Notice -> Html msg
+notices lines =
+    let
+        open =
+            List.any .open lines
+    in
+    collapsible open
+        [ class "-mx-(--card-spacing) -mt-2 transition-[grid-template-rows,margin-bottom,opacity]"
+        , if open then
+            class "-mb-(--card-spacing)"
+
+          else
+            class ""
+        ]
+        ( "band"
+        , div [ class "mt-3 border-t px-(--card-spacing) py-1.75" ]
+            (List.map viewNotice lines)
+        )
+
+
+viewNotice : Notice -> Html msg
+viewNotice line =
+    collapsible line.open
+        [ class "transition-[grid-template-rows,opacity]" ]
+        ( if line.open then
+            "shown"
+
+          else
+            "hidden"
+        , div [ class "py-0.75" ] [ notice line.open line.message ]
+        )
+
+
+collapsible : Bool -> List (Html.Attribute msg) -> ( String, Html msg ) -> Html msg
+collapsible open attributes ( key, child ) =
+    Keyed.node "div"
+        ([ class "grid duration-200 ease-out motion-reduce:transition-none"
+         , if open then
+            class "grid-rows-[1fr] opacity-100"
+
+           else
+            class "grid-rows-[0fr] opacity-0"
+         ]
+            ++ attributes
+            ++ (if open then
+                    []
+
+                else
+                    [ attribute "aria-hidden" "true", attribute "inert" "" ]
+               )
+        )
+        [ ( key, div [ class "min-h-0 overflow-hidden" ] [ child ] ) ]
+
+
+notice : Bool -> Message -> Html msg
+notice live shown =
+    let
+        role name =
+            if live then
+                [ attribute "role" name ]
+
+            else
+                []
+    in
+    case shown of
+        Problem reason ->
+            div (class "flex items-start gap-2 text-sm text-destructive" :: role "alert")
+                [ Phosphor.warning Bold |> Phosphor.withClass "mt-0.5 size-4 shrink-0" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+                , span [] [ text reason ]
+                ]
+
+        Info note ->
+            p (class "flex items-start gap-2 text-sm text-muted-foreground" :: role "status")
+                [ Phosphor.info Bold |> Phosphor.withClass "mt-0.5 size-4 shrink-0" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+                , span [] [ text note ]
+                ]
 
 
 loading : Pipeline.Weights -> List Pipeline.Download -> Html msg

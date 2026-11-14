@@ -42,10 +42,10 @@ suite =
                     List.map
                         (\steps ->
                             Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", StepsChanged steps ] ready)
-                                |> Tuple.mapFirst .message
+                                |> Tuple.mapFirst failing
                         )
                         [ "", "0", "51", "4.5", "four" ]
-                        |> Expect.equal (List.repeat 5 ( Just (Problem "Steps are a whole number from 1 to 50."), Nothing ))
+                        |> Expect.equal (List.repeat 5 ( [ "Steps must be a whole number from 1 to 50." ], Nothing ))
             , test "start a fixed seed from the last picture's" <|
                 \() ->
                     run
@@ -229,8 +229,54 @@ suite =
             , test "asks for a prompt before it loads anything" <|
                 \() ->
                     Pipeline.update GenerateClicked supported
-                        |> Tuple.mapFirst .message
-                        |> Expect.equal ( Just (Problem "Describe the picture first."), Nothing )
+                        |> Tuple.mapFirst failing
+                        |> Expect.equal ( [ "Write a prompt to generate a picture." ], Nothing )
+            , test "names every value it can't take at once" <|
+                \() ->
+                    run [ StepsChanged "0", RandomSeedToggled False, SeedChanged "-1", GenerateClicked ] ready
+                        |> failing
+                        |> Expect.equal
+                            [ "Write a prompt to generate a picture."
+                            , "Steps must be a whole number from 1 to 50."
+                            , "Seed must be a whole number from 0 to 4294967295."
+                            ]
+            , test "drops each problem as its value is put right" <|
+                \() ->
+                    run [ StepsChanged "0", GenerateClicked ] ready
+                        |> (\refused ->
+                                [ failing refused
+                                , failing (run [ PromptChanged "a bonsai" ] refused)
+                                , failing (run [ PromptChanged "a bonsai", StepsChanged "8" ] refused)
+                                ]
+                           )
+                        |> Expect.equal
+                            [ [ "Write a prompt to generate a picture.", "Steps must be a whole number from 1 to 50." ]
+                            , [ "Steps must be a whole number from 1 to 50." ]
+                            , []
+                            ]
+            , test "waits for Generate to ask for a prompt" <|
+                \() ->
+                    failing ready
+                        |> Expect.equal []
+            , test "names the steps and the seed as they are typed" <|
+                \() ->
+                    [ run [ StepsChanged "0" ] ready
+                    , run [ StepsChanged "0", StepsChanged "8" ] ready
+                    , run [ SeedChanged "seven" ] ready
+                    , run [ SeedChanged "seven", SeedChanged "7" ] ready
+                    ]
+                        |> List.map failing
+                        |> Expect.equal
+                            [ [ "Steps must be a whole number from 1 to 50." ]
+                            , []
+                            , [ "Seed must be a whole number from 0 to 4294967295." ]
+                            , []
+                            ]
+            , test "names no problem again once a picture starts" <|
+                \() ->
+                    run [ GenerateClicked, PromptChanged "a bonsai", GenerateClicked, PromptChanged "" ] ready
+                        |> failing
+                        |> Expect.equal []
             , test "refuses a seed that is not a whole number in range" <|
                 \() ->
                     List.map
@@ -394,6 +440,13 @@ suite =
                         |> Expect.equal [ False, False, False, True, False ]
             ]
         ]
+
+
+failing : Pipeline.Model -> List String
+failing model =
+    Pipeline.checks model
+        |> List.filter .failing
+        |> List.map .problem
 
 
 supported : Pipeline.Model
