@@ -57,7 +57,7 @@ banner invitation =
                 [ h2 [ class "text-4xl leading-none font-semibold tracking-tight text-balance sm:text-5xl lg:text-7xl" ]
                     [ text "Unplug the cloud." ]
                 , p [ class "max-w-xl text-pretty text-white/80 md:text-lg" ]
-                    [ span [ class "block" ] [ text "No tokens, no credits, no one watching." ]
+                    [ span [ class "block" ] [ text "No tokens, no credits, no ads, no one watching." ]
                     , span [ class "block" ] [ text "Unlimited local & private AI image generation." ]
                     ]
                 ]
