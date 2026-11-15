@@ -24,7 +24,7 @@ no part.
 - An event is applied only in the state that waits for it, so one that arrives late
   changes nothing. The library runs one job at a time: a cancel waits for it to stop
   (`PipelineFailed` named `AbortError`), in `Cancelling` for a download and `Stopping`
-  for a picture, and only then shows no message. A graphics card that drops the device
+  for a picture, and only then shows no toast. A graphics card that drops the device
   mid-picture rejects with the same name, and that one is shown: the model in memory is
   then unusable until released and loaded again. A model that finishes loading as its
   download is cancelled is kept, and its picture is not made.
@@ -81,10 +81,9 @@ no part.
   prompt is where every picture starts, so it is named only once Generate (or AI Style)
   is pressed without one, which sets `checked` (`needsIdea`). A picture (or rewrite)
   that starts resets it.
-- The prompt card shows those problems and the `Pipeline` and `Stylist` messages in one
-  band, each line opening and closing with its own transition. A cleared message stays
-  in `fading` (set by `Pipeline.fade` at the end of each `update`), so its line collapses
-  with its words still in it. A closed line is `inert` and drops its `role="alert"`, and
+- The prompt card shows those problems in one band, each line opening and closing with
+  its own transition. The outcomes of `Pipeline` and `Stylist` (downloads, pictures,
+  removals, AI Style) are toasts, not lines in the card. A closed line is `inert` and drops its `role="alert"`, and
   an open one is a new node, so a screen reader hears it each time it opens: a test that
   a problem went away looks for it under `inert`.
 - An empty seed field is the random seed (placeholder "-1"): typing a number fixes

@@ -194,11 +194,21 @@ open url opened =
 runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect Msg )
 runPipeline model ( pipeline, command ) =
     ( { model
-        | pipeline = pipeline
+        | pipeline = { pipeline | notice = Nothing }
       }
     , Batch
         (List.filterMap identity
             [ Maybe.map (Interop.RunPipeline >> SendToJs) command
+            , Maybe.map (Notice.map GotPipeline >> Notify) pipeline.notice
+            , case command of
+                Just (Pipeline.Load _) ->
+                    Just (Dismiss Pipeline.toast)
+
+                Just (Pipeline.Generate _) ->
+                    Just (Dismiss Pipeline.toast)
+
+                _ ->
+                    Nothing
             , if pipeline.downloaded == model.pipeline.downloaded then
                 Nothing
 
@@ -230,11 +240,21 @@ runStylist model ( stylist, command, handover ) =
                 Nothing ->
                     ( model, NoEffect )
     in
-    ( { written | stylist = stylist }
+    ( { written | stylist = { stylist | notice = Nothing } }
     , Batch
         (List.filterMap identity
             [ Just effect
             , Maybe.map (Interop.RunStylist >> SendToJs) command
+            , Maybe.map (Notice.map GotStylist >> Notify) stylist.notice
+            , case command of
+                Just Stylist.Load ->
+                    Just (Dismiss Stylist.toast)
+
+                Just (Stylist.Write _) ->
+                    Just (Dismiss Stylist.toast)
+
+                _ ->
+                    Nothing
             , if stylist.downloaded == model.stylist.downloaded then
                 Nothing
 
@@ -259,8 +279,11 @@ runStylist model ( stylist, command, handover ) =
 
 runLibrary : Model -> ( Library.Model, List Library.Command ) -> ( Model, Effect Msg )
 runLibrary model ( library, commands ) =
-    ( { model | library = library }
-    , Batch (List.map (Interop.RunLibrary >> SendToJs) commands)
+    ( { model | library = { library | notice = Nothing } }
+    , Batch
+        (List.map (Interop.RunLibrary >> SendToJs) commands
+            ++ List.filterMap identity [ Maybe.map (Notice.map GotLibrary >> Notify) library.notice ]
+        )
     )
 
 
@@ -745,10 +768,32 @@ view model =
             , attribute "style" ("--sidebar-progress: " ++ String.fromFloat model.sidebarProgress)
             ]
             [ viewBody model
-            , Toast.view GotToast model.toaster
+            , if lightboxOpen model then
+                text ""
+
+              else
+                viewToasts model
             ]
         ]
     }
+
+
+lightboxOpen : Model -> Bool
+lightboxOpen model =
+    case model.page of
+        Studio ->
+            StudioView.lightboxOpen model.pipeline
+
+        Library ->
+            LibraryView.lightboxOpen model.library
+
+        _ ->
+            False
+
+
+viewToasts : Model -> Html Msg
+viewToasts model =
+    Toast.view GotToast model.toaster
 
 
 title : Page -> String
@@ -798,7 +843,7 @@ viewBody model =
                 [ viewContent
                     [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
                     , StudioView.controls { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline
-                    , StudioView.lightbox { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
+                    , StudioView.lightbox { pipeline = GotPipeline, library = GotLibrary } (viewToasts model) model.library model.pipeline
                     ]
                 ]
 
@@ -807,7 +852,7 @@ viewBody model =
                 "Library"
                 [ Html.map GotLibrary (LibraryView.search model.library) ]
                 [ viewAside "md:w-56 md:pt-6" [ Html.map GotLibrary (LibraryView.filters model.library) ]
-                , viewContent [ Html.map GotLibrary (LibraryView.view model.library) ]
+                , viewContent [ Html.map GotLibrary (LibraryView.view model.library), LibraryView.lightbox GotLibrary (viewToasts model) model.library ]
                 ]
 
         Explore ->

@@ -5,7 +5,8 @@ import Expect
 import Idb
 import Json.Decode as Decode
 import Json.Encode as Encode exposing (Value)
-import Library exposing (Command(..), Event(..), Msg(..), Notice(..), Save(..))
+import Library exposing (Command(..), Event(..), Msg(..), Pictures(..), Save(..))
+import Notice
 import Pipeline
 import Share
 import Test exposing (Test, describe, test)
@@ -26,6 +27,14 @@ suite =
                         |> Library.enter
                         |> Tuple.second
                         |> Expect.equal [ getAll ]
+            , test "keep the skeleton and offer to read again after they could not be read" <|
+                \() ->
+                    let
+                        failedToLoad =
+                            run [ failed "The database is blocked." ] opening
+                    in
+                    ( failedToLoad.pictures, Maybe.map .retry failedToLoad.notice, Library.update LoadRetried failedToLoad |> Tuple.second )
+                        |> Expect.equal ( Unavailable, Just (Notice.Retry LoadRetried), [ getAll ] )
             , test "come newest first" <|
                 \() ->
                     Library.visible loaded
@@ -141,10 +150,10 @@ suite =
                     List.map
                         (\picture ->
                             run [ SaveClicked picture, failed "The disk is full." ] loaded
-                                |> (\model -> ( Library.saveOf picture.url model, model.notice ))
+                                |> (\model -> ( Library.saveOf picture.url model, Maybe.andThen .description model.notice ))
                         )
                         made
-                        |> Expect.equal [ ( Unsaved, Just (Problem "The disk is full.") ) ]
+                        |> Expect.equal [ ( Unsaved, Just "The disk is full." ) ]
             , test "reads the pictures again when one is saved while they load" <|
                 \() ->
                     Library.update (added "blob:studio" fox) opening
@@ -310,8 +319,8 @@ suite =
             , test "keeps a picture whose row could not be deleted" <|
                 \() ->
                     run [ DeleteConfirmed 2, failed "The database is blocked." ] loaded
-                        |> (\model -> ( List.map .id (Library.visible model), model.notice ))
-                        |> Expect.equal ( [ 3, 2, 1 ], Just (Problem "The database is blocked.") )
+                        |> (\model -> ( List.map .id (Library.visible model), Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( [ 3, 2, 1 ], Just "The database is blocked." )
             , test "closes the picture that is open once it is gone" <|
                 \() ->
                     run [ Opened 1, deleted 1 ] loaded
@@ -365,7 +374,8 @@ suite =
                 \() ->
                     run [ Happened Copied ] loaded
                         |> .notice
-                        |> Expect.equal (Just (Info "Picture copied."))
+                        |> Maybe.map .title
+                        |> Expect.equal (Just "Picture copied")
             , test "says nothing when the share sheet is closed" <|
                 \() ->
                     run [ Happened (ShareFailed "AbortError") ] loaded
@@ -375,7 +385,8 @@ suite =
                 \() ->
                     run [ Happened (ShareFailed "NotAllowedError") ] loaded
                         |> .notice
-                        |> Expect.equal (Just (Problem "Couldn't share the picture. Download it instead."))
+                        |> Maybe.map (\notice -> ( notice.title, notice.description ))
+                        |> Expect.equal (Just ( "Couldn't share the picture", Just "Download it instead." ))
             ]
         ]
 

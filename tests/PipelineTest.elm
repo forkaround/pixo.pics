@@ -5,7 +5,8 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Component(..), Device(..), Draft(..), Engine(..), Event(..), Message(..), Msg(..), NumberField(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
+import Notice
+import Pipeline exposing (Command(..), Component(..), Device(..), Draft(..), Engine(..), Event(..), Msg(..), NumberField(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -82,8 +83,8 @@ suite =
                 \() ->
                     Pipeline.init 1 False [ Binary ]
                         |> run [ ClearClicked, Happened CacheCleared ]
-                        |> (\model -> ( model.device, model.downloaded, model.message ))
-                        |> Expect.equal ( Unsupported Kept, [], Just (Info "Downloaded models removed.") )
+                        |> (\model -> ( model.device, model.downloaded, Maybe.map .title model.notice ))
+                        |> Expect.equal ( Unsupported Kept, [], Just "Downloaded models removed" )
             , test "are not removed through a worker that failed" <|
                 \() ->
                     Pipeline.init 1 True [ Binary ]
@@ -96,8 +97,8 @@ suite =
                     Pipeline.init 1 False [ Binary ]
                         |> run [ Happened (Failed { name = "Error", message = "Worker unable to start" }) ]
                         |> Pipeline.update ClearClicked
-                        |> Tuple.mapFirst (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( ( Unsupported Unreachable, Just (Problem "Worker unable to start") ), Nothing )
+                        |> Tuple.mapFirst (\model -> ( model.device, Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( ( Unsupported Unreachable, Just "Worker unable to start" ), Nothing )
             , test "stay when removing them fails without WebGPU" <|
                 \() ->
                     Pipeline.init 1 False [ Binary ]
@@ -107,7 +108,7 @@ suite =
             , test "say they are cancelling until the download stops, quietly" <|
                 \() ->
                     run [ DownloadClicked Binary, CancelClicked ] supported
-                        |> (\cancelling -> ( cancelling.device, run [ Happened (Failed { name = "AbortError", message = "" }) ] cancelling |> .message ))
+                        |> (\cancelling -> ( cancelling.device, run [ Happened (Failed { name = "AbortError", message = "" }) ] cancelling |> .notice ))
                         |> Expect.equal ( Supported CanPrompt (Cancelling Binary []), Nothing )
             , test "keep a model that finished loading as the download was cancelled, and make no picture with it" <|
                 \() ->
@@ -117,8 +118,8 @@ suite =
             , test "say why a download stopped that nobody cancelled" <|
                 \() ->
                     run [ DownloadClicked Binary, Happened (Failed { name = "AbortError", message = "The device was lost." }) ] supported
-                        |> (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( Supported CanPrompt Empty, Just (Problem "The device was lost.") )
+                        |> (\model -> ( model.device, Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( Supported CanPrompt Empty, Just "The device was lost." )
             , test "are not remembered when the download stops halfway" <|
                 \() ->
                     run [ DownloadClicked Binary, CancelClicked, Happened (Failed { name = "AbortError", message = "" }) ] supported
@@ -168,8 +169,8 @@ suite =
                         |> Pipeline.update (Happened (Failed { name = "Error", message = "Worker unable to start" }))
                         |> Tuple.first
                         |> Pipeline.enter
-                        |> Tuple.mapFirst (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( ( Unsupported Unreachable, Just (Problem "Worker unable to start") ), Nothing )
+                        |> Tuple.mapFirst (\model -> ( model.device, Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( ( Unsupported Unreachable, Just "Worker unable to start" ), Nothing )
             , test "never checks a browser without the WebGPU API" <|
                 \() ->
                     Pipeline.enter (Pipeline.init 1 False [])
@@ -300,7 +301,7 @@ suite =
             , test "makes no picture while AI Style writes the prompt" <|
                 \() ->
                     Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", StylingStarted ] ready)
-                        |> Tuple.mapFirst (\model -> ( model.settings.prompt, model.message ))
+                        |> Tuple.mapFirst (\model -> ( model.settings.prompt, Maybe.andThen .description model.notice ))
                         |> Expect.equal ( ( Styling, Nothing ), Nothing )
             , test "keeps what is typed out of the prompt AI Style writes" <|
                 \() ->
@@ -327,8 +328,8 @@ suite =
                         , Happened (Failed { name = "Error", message = "Out of memory" })
                         ]
                         ready
-                        |> (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Just (Problem "Out of memory") )
+                        |> (\model -> ( model.device, Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Just "Out of memory" )
             , test "says so when a picture is aborted and nobody asked" <|
                 \() ->
                     run
@@ -337,8 +338,8 @@ suite =
                         , Happened (Failed { name = "AbortError", message = "Device was lost before MapAsync completed." })
                         ]
                         ready
-                        |> (\model -> ( model.device, model.message ))
-                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Just (Problem "Device was lost before MapAsync completed.") )
+                        |> (\model -> ( model.device, Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( Supported CanPrompt (Ready Ternary), Just "Device was lost before MapAsync completed." )
             , test "says nothing when a picture is aborted on request" <|
                 \() ->
                     run
@@ -348,13 +349,26 @@ suite =
                         , Happened (Failed { name = "AbortError", message = "The operation was aborted." })
                         ]
                         ready
-                        |> (\model -> ( model.device, model.message ))
+                        |> (\model -> ( model.device, Maybe.andThen .description model.notice ))
                         |> Expect.equal ( Supported CanPrompt (Ready Ternary), Nothing )
+            , test "offers to download again when a download fails" <|
+                \() ->
+                    run [ DownloadClicked Binary, Happened (Failed { name = "Error", message = "HTTP 404" }) ] supported
+                        |> .notice
+                        |> Maybe.map (\notice -> ( notice.title, notice.retry ))
+                        |> Expect.equal (Just ( "Couldn't download the model", Notice.Retry (DownloadClicked Binary) ))
+            , test "offers to generate again when a picture fails" <|
+                \() ->
+                    run [ PromptChanged "a bonsai", GenerateClicked, Happened (Failed { name = "Error", message = "Out of memory" }) ] ready
+                        |> .notice
+                        |> Maybe.map (\notice -> ( notice.title, notice.retry ))
+                        |> Expect.equal (Just ( "Couldn't generate the picture", Notice.Retry GenerateClicked ))
             , test "names a failure that says nothing" <|
                 \() ->
                     run [ DownloadClicked Ternary, Happened (Failed { name = "OperationError", message = "" }) ] supported
-                        |> .message
-                        |> Expect.equal (Just (Problem "Something went wrong: OperationError."))
+                        |> .notice
+                        |> Maybe.andThen .description
+                        |> Expect.equal (Just "Something went wrong: OperationError.")
             , test "keeps the picture that arrives after a cancel" <|
                 \() ->
                     run

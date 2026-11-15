@@ -1,7 +1,7 @@
 module StylistTest exposing (suite)
 
 import Expect
-import Pipeline exposing (Message(..))
+import Notice
 import Stylist exposing (Command(..), Event(..), Handover(..), Msg(..), Role(..), State(..), Style(..))
 import Test exposing (Test, describe, test)
 
@@ -147,8 +147,15 @@ suite =
                 \() ->
                     run [ StyleChosen Photo square "a fox", Happened (Failed { name = "Error", message = "No WebGPU." }) ] asleep
                         |> .model
-                        |> (\model -> ( model.state, model.message ))
-                        |> Expect.equal ( Asleep, Just (Problem "No WebGPU.") )
+                        |> (\model -> ( model.state, Maybe.andThen .description model.notice ))
+                        |> Expect.equal ( Asleep, Just "No WebGPU." )
+            , test "offers to ask AI Style again when it fails while writing" <|
+                \() ->
+                    run [ StyleChosen Photo square "a fox", Happened Loaded, Happened (Failed { name = "Error", message = "Out of memory" }) ] asleep
+                        |> .model
+                        |> .notice
+                        |> Maybe.map .retry
+                        |> Expect.equal (Just (Notice.Retry (StyleChosen Photo square "a fox")))
             , test "shows nothing when its own stop ends the writing" <|
                 \() ->
                     run
@@ -158,7 +165,7 @@ suite =
                         , Happened (Failed { name = "AbortError", message = "Aborted." })
                         ]
                         asleep
-                        |> (\result -> ( result.model.message, result.prompts ))
+                        |> (\result -> ( result.model.notice, result.prompts ))
                         |> Expect.equal ( Nothing, [ "a fox" ] )
             , test "can't undo while it writes" <|
                 \() ->

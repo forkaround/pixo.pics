@@ -1,4 +1,4 @@
-module LibraryView exposing (filters, search, view)
+module LibraryView exposing (filters, lightbox, lightboxOpen, search, view)
 
 import Data.Dimension as Dimension
 import Data.Prompt as Prompt
@@ -84,9 +84,6 @@ filters model =
                             else
                                 []
                            )
-
-                Unavailable _ ->
-                    [ viewFilter [] (chosen == Nothing) Nothing Nothing "All pictures" Nothing ]
 
                 _ ->
                     viewFilter [] True Nothing Nothing "All pictures" Nothing
@@ -224,12 +221,8 @@ view model =
             Loading ->
                 viewLoading
 
-            Unavailable reason ->
-                Empty.new
-                    |> Empty.icon (Phosphor.warning Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                    |> Empty.title [ text "Can't open the library" ]
-                    |> Empty.description [ text reason ]
-                    |> Empty.toHtml []
+            Unavailable ->
+                viewLoading
 
             Loaded [] ->
                 Empty.new
@@ -256,13 +249,6 @@ view model =
                     found ->
                         div [ class "columns-2 gap-4 p-4 md:columns-3 xl:columns-4 2xl:columns-5" ]
                             (List.map (viewTile model) found)
-        , viewDialog model
-        , if model.zoomed then
-            text ""
-
-          else
-            div [ class "pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4" ]
-                [ viewNotice model.notice ]
         ]
 
 
@@ -409,17 +395,38 @@ logo network =
             Phosphor.redditLogo
 
 
-viewDialog : Model -> Html Msg
-viewDialog model =
+lightboxOpen : Model -> Bool
+lightboxOpen model =
+    model.zoomed && Maybe.andThen (\viewed -> Library.find viewed model) model.viewing /= Nothing
+
+
+lightbox : (Msg -> msg) -> Html msg -> Model -> Html msg
+lightbox toMsg toasts model =
     Lightbox.view
         { id = "picture"
-        , open = model.zoomed
+        , open = lightboxOpen model
         , detailed = model.detailed
-        , onClose = Closed
-        , onToggle = DetailsToggled
-        , onStep = Stepped
+        , onClose = toMsg Closed
+        , onToggle = toMsg DetailsToggled
+        , onStep = toMsg << Stepped
+        , toasts = toasts
         }
-        (Maybe.map (viewZoomed model) (Maybe.andThen (\viewed -> Library.find viewed model) model.viewing))
+        (model.viewing
+            |> Maybe.andThen (\viewed -> Library.find viewed model)
+            |> Maybe.map
+                (\picture ->
+                    let
+                        shown =
+                            viewZoomed model picture
+                    in
+                    { url = shown.url
+                    , job = shown.job
+                    , model = shown.model
+                    , pinned = shown.pinned
+                    , actions = List.map (Html.map toMsg) shown.actions
+                    }
+                )
+        )
 
 
 viewZoomed : Model -> Picture -> Lightbox.Shown Msg
@@ -431,8 +438,7 @@ viewZoomed model picture =
     { url = picture.url
     , job = picture.job
     , model = Library.modelName picture
-    , pinned = confirming || model.notice /= Nothing
-    , notice = viewNotice model.notice
+    , pinned = confirming
     , actions =
         if confirming then
             [ span [ class "basis-full text-sm font-medium" ] [ text "Delete this picture?" ]
@@ -464,29 +470,3 @@ viewZoomed model picture =
                 |> Button.toHtml [ onClick (DeleteRequested picture.id), red, class "ms-auto" ]
             ]
     }
-
-
-viewNotice : Maybe Library.Notice -> Html Msg
-viewNotice notice =
-    case notice of
-        Nothing ->
-            text ""
-
-        Just shown ->
-            div
-                [ class "pointer-events-auto flex items-center gap-2 rounded-lg bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10"
-                , attribute "role" "status"
-                ]
-                [ case shown of
-                    Library.Info note ->
-                        span [] [ text note ]
-
-                    Library.Problem reason ->
-                        span [ class "text-destructive" ] [ text reason ]
-                , Button.new
-                    |> Button.icon (icon Phosphor.x)
-                    |> Button.label "Dismiss"
-                    |> Button.ghost
-                    |> Button.extraSmall
-                    |> Button.toHtml [ onClick NoticeDismissed ]
-                ]

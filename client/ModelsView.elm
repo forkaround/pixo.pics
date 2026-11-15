@@ -65,8 +65,7 @@ inMemoryHint device =
 storage : Model -> Html Msg
 storage model =
     div [ class "flex flex-col gap-6" ]
-        [ StudioView.message model.message
-        , Card.new
+        [ Card.new
             |> Card.title [ Html.h3 [] [ text "Model storage" ] ]
             |> Card.description [ text "Downloaded models are kept in this browser." ]
             |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]
@@ -280,7 +279,6 @@ stylist device model =
 
               else
                 text ""
-            , StudioView.message model.message
             ]
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
 

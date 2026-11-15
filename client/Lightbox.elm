@@ -22,6 +22,7 @@ type alias Config msg =
     , onClose : msg
     , onToggle : msg
     , onStep : Int -> msg
+    , toasts : Html msg
     }
 
 
@@ -30,7 +31,6 @@ type alias Shown msg =
     , job : Pipeline.Job
     , model : String
     , pinned : Bool
-    , notice : Html msg
     , actions : List (Html msg)
     }
 
@@ -80,6 +80,13 @@ viewDialog config shown =
         |> Dialog.label "Picture"
         |> Dialog.hideCloseButton
         |> Dialog.content (Maybe.withDefault [] (Maybe.map (viewPicture config) shown))
+        |> Dialog.layer
+            (if config.open && shown /= Nothing then
+                [ config.toasts ]
+
+             else
+                []
+            )
         |> Dialog.toHtml [ class "w-fit! max-w-none! gap-0! overflow-hidden bg-black! p-0!" ]
 
 
@@ -161,7 +168,6 @@ viewPicture config shown =
                             ]
                         )
                     ]
-                , div [ class "pointer-events-auto shrink-0 empty:hidden" ] [ shown.notice ]
                 , div [ class "pointer-events-auto flex shrink-0 flex-wrap items-center gap-1.5" ] shown.actions
                 ]
             ]

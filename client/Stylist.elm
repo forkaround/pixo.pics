@@ -25,12 +25,14 @@ module Stylist exposing
     , styleName
     , styles
     , tidy
+    , toast
     , update
     , withoutThinking
     )
 
 import Data.Prompt as Prompt
-import Pipeline exposing (Draft(..), Message(..), Validation)
+import Notice exposing (Notice)
+import Pipeline exposing (Draft(..), Validation)
 
 
 
@@ -41,8 +43,7 @@ type alias Model =
     { state : State
     , downloaded : Bool
     , written : Maybe Written
-    , message : Maybe Message
-    , fading : Maybe Message
+    , notice : Maybe (Notice Msg)
     , needsIdea : Bool
     }
 
@@ -121,8 +122,7 @@ init stored =
     { state = Asleep
     , downloaded = stored == Just modelId
     , written = Nothing
-    , message = Nothing
-    , fading = Nothing
+    , notice = Nothing
     , needsIdea = False
     }
 
@@ -258,11 +258,7 @@ type Handover
 
 update : Msg -> Model -> ( Model, Maybe Command, Maybe Handover )
 update msg model =
-    let
-        ( next, command, handover ) =
-            step msg model
-    in
-    ( Pipeline.fade model next, command, handover )
+    step msg model
 
 
 step : Msg -> Model -> ( Model, Maybe Command, Maybe Handover )
@@ -271,10 +267,10 @@ step msg model =
         StyleChosen style frame prompt ->
             case Prompt.parse prompt of
                 Nothing ->
-                    ( { model | message = Nothing, needsIdea = True }, Nothing, Nothing )
+                    ( { model | needsIdea = True }, Nothing, Nothing )
 
                 Just _ ->
-                    start { style = style, frame = frame, idea = ideaOf prompt model } { model | message = Nothing, needsIdea = False }
+                    start { style = style, frame = frame, idea = ideaOf prompt model } { model | needsIdea = False }
 
         StopClicked ->
             case model.state of
@@ -290,7 +286,7 @@ step msg model =
         UndoClicked ->
             case ( model.written, isBusy model ) of
                 ( Just written, False ) ->
-                    ( { model | written = Nothing, message = Nothing }, Nothing, Just (Gave written.idea) )
+                    ( { model | written = Nothing }, Nothing, Just (Gave written.idea) )
 
                 _ ->
                     ( model, Nothing, Nothing )
@@ -365,7 +361,7 @@ write job model =
 remove : Model -> ( Model, Maybe Command, Maybe Handover )
 remove model =
     if model.downloaded then
-        ( { model | state = Removing, message = Nothing }, Just Remove, Nothing )
+        ( { model | state = Removing }, Just Remove, Nothing )
 
     else
         ( model, Nothing, Nothing )
@@ -401,13 +397,13 @@ happened event model =
                 ( { model | state = Awake, written = Just { idea = job.idea, prompt = prompt } }, Nothing, Just (Gave prompt) )
 
             else
-                ( { model | state = Awake, message = Just (Problem "AI Style returned an incomplete prompt. Try again.") }, Nothing, Just (Gave job.idea) )
+                ( { model | state = Awake, notice = noticed Notice.Problem "AI Style returned an incomplete prompt" Nothing (again job) }, Nothing, Just (Gave job.idea) )
 
         ( Finished _, Stopping job ) ->
             ( { model | state = Awake }, Nothing, Just (Gave job.idea) )
 
         ( Removed, Removing ) ->
-            ( { model | state = Asleep, downloaded = False, message = Just (Info "Prompt model removed.") }, Nothing, Nothing )
+            ( { model | state = Asleep, downloaded = False, notice = noticed Notice.Success "Prompt model removed" Nothing Notice.NoRetry }, Nothing, Nothing )
 
         ( Failed failure, state ) ->
             failed failure state model
@@ -416,24 +412,35 @@ happened event model =
             ( model, Nothing, Nothing )
 
 
+toast : String
+toast =
+    "stylist"
+
+
+noticed : Notice.Tone -> String -> Maybe String -> Notice.Retry Msg -> Maybe (Notice Msg)
+noticed tone title description retry =
+    Just { id = toast, tone = tone, title = title, description = description, retry = retry }
+
+
+again : Job -> Notice.Retry Msg
+again job =
+    Notice.Retry (StyleChosen job.style job.frame job.idea)
+
+
 failed : Failure -> State -> Model -> ( Model, Maybe Command, Maybe Handover )
 failed failure state model =
-    let
-        problem =
-            Just (Problem (explain failure))
-    in
     case state of
         Loading _ waiting ->
-            ( { model | state = Asleep, message = problem }, Nothing, Maybe.map (.idea >> Gave) waiting )
+            ( { model | state = Asleep, notice = noticed Notice.Problem "Couldn't load AI Style" (Just (explain failure)) (Maybe.withDefault Notice.NoRetry (Maybe.map again waiting)) }, Nothing, Maybe.map (.idea >> Gave) waiting )
 
         Writing job _ ->
-            ( { model | state = Awake, message = problem }, Nothing, Just (Gave job.idea) )
+            ( { model | state = Awake, notice = noticed Notice.Problem "AI Style couldn't write a prompt" (Just (explain failure)) (again job) }, Nothing, Just (Gave job.idea) )
 
         Stopping job ->
             ( { model | state = Awake }, Nothing, Just (Gave job.idea) )
 
         Removing ->
-            ( { model | state = Asleep, message = problem }, Nothing, Nothing )
+            ( { model | state = Asleep, notice = noticed Notice.Problem "Couldn't remove the prompt model" (Just (explain failure)) Notice.NoRetry }, Nothing, Nothing )
 
         _ ->
             ( model, Nothing, Nothing )

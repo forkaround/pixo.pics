@@ -8,7 +8,6 @@ module Pipeline exposing
     , Event(..)
     , Failure
     , Job
-    , Message(..)
     , Model
     , Msg(..)
     , NumberField(..)
@@ -27,7 +26,6 @@ module Pipeline exposing
     , current
     , engineOf
     , enter
-    , fade
     , frameBudget
     , guidance
     , inMemory
@@ -38,6 +36,7 @@ module Pipeline exposing
     , prompting
     , remember
     , remembered
+    , toast
     , update
     , weights
     , weightsFromId
@@ -53,6 +52,7 @@ import Data.Seed as Seed exposing (Seed)
 import Data.Steps as Steps exposing (Steps)
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Notice exposing (Notice)
 import Random
 
 
@@ -63,8 +63,7 @@ import Random
 type alias Model =
     { device : Device
     , settings : Settings
-    , message : Maybe Message
-    , fading : Maybe Message
+    , notice : Maybe (Notice Msg)
     , checked : Bool
     , pictures : List Picture
     , viewing : Maybe String
@@ -112,11 +111,6 @@ type alias Pending =
 type Stage
     = Denoising Int
     | Stopping
-
-
-type Message
-    = Problem String
-    | Info String
 
 
 type alias Validation =
@@ -219,8 +213,7 @@ init entropy webGpu downloaded =
         , seeding = RandomSeed
         , unreadable = []
         }
-    , message = Nothing
-    , fading = Nothing
+    , notice = Nothing
     , checked = False
     , pictures = []
     , viewing = Nothing
@@ -481,16 +474,7 @@ enter model =
 
 update : Msg -> Model -> ( Model, Maybe Command )
 update msg model =
-    Tuple.mapFirst (fade model) (step msg model)
-
-
-fade : { a | message : Maybe Message, fading : Maybe Message } -> { a | message : Maybe Message, fading : Maybe Message } -> { a | message : Maybe Message, fading : Maybe Message }
-fade before after =
-    if after.message == Nothing && before.message /= Nothing then
-        { after | fading = before.message }
-
-    else
-        after
+    step msg model
 
 
 step : Msg -> Model -> ( Model, Maybe Command )
@@ -580,7 +564,7 @@ step msg model =
         ReleaseClicked ->
             case model.device of
                 Supported _ (Ready _) ->
-                    ( setEngine (Releasing Nothing) { model | message = Nothing }, Just Release )
+                    ( setEngine (Releasing Nothing) model, Just Release )
 
                 _ ->
                     ( model, Nothing )
@@ -588,10 +572,10 @@ step msg model =
         ClearClicked ->
             case model.device of
                 Supported _ Empty ->
-                    ( setEngine Clearing { model | message = Nothing }, Just ClearCache )
+                    ( setEngine Clearing model, Just ClearCache )
 
                 Unsupported Kept ->
-                    ( { model | device = Unsupported Emptying, message = Nothing }, Just ClearCache )
+                    ( { model | device = Unsupported Emptying }, Just ClearCache )
 
                 _ ->
                     ( model, Nothing )
@@ -611,7 +595,7 @@ step msg model =
                                 start { weights = model.settings.weights, job = Just job } { model | random = random, checked = False }
 
                             Nothing ->
-                                ( { model | checked = True, message = Nothing }, Nothing )
+                                ( { model | checked = True }, Nothing )
 
         Happened event ->
             happened event model
@@ -625,7 +609,7 @@ start pending model =
 
         Supported _ (Ready loaded) ->
             if loaded /= pending.weights then
-                ( setEngine (Releasing (Just pending)) { model | message = Nothing }, Just Release )
+                ( setEngine (Releasing (Just pending)) model, Just Release )
 
             else
                 case pending.job of
@@ -641,14 +625,14 @@ start pending model =
 
 load : Pending -> Model -> ( Model, Maybe Command )
 load pending model =
-    ( setEngine (Loading pending.weights [] pending.job) { model | message = Nothing }
+    ( setEngine (Loading pending.weights [] pending.job) model
     , Just (Load pending.weights)
     )
 
 
 generate : Weights -> Job -> Model -> ( Model, Maybe Command )
 generate loaded job model =
-    ( setEngine (Generating loaded job (Denoising 0)) { model | message = Nothing }, Just (Generate job) )
+    ( setEngine (Generating loaded job (Denoising 0)) model, Just (Generate job) )
 
 
 happened : Event -> Model -> ( Model, Maybe Command )
@@ -661,7 +645,7 @@ happened event model =
             ( { model
                 | device = Unsupported Kept
                 , downloaded = []
-                , message = Just (Info "Downloaded models removed.")
+                , notice = Just removed
               }
             , Nothing
             )
@@ -720,7 +704,7 @@ happened event model =
             ( setEngine Empty
                 { model
                     | downloaded = []
-                    , message = Just (Info "Downloaded models removed.")
+                    , notice = Just removed
                 }
             , Nothing
             )
@@ -730,12 +714,12 @@ happened event model =
                 Just device ->
                     ( { model
                         | device = device
-                        , message =
+                        , notice =
                             if failure.name == "AbortError" && isCancellable model.device then
                                 Nothing
 
                             else
-                                Just (Problem (explain failure))
+                                Just (failedNotice model.device failure)
                       }
                     , Nothing
                     )
@@ -745,6 +729,67 @@ happened event model =
 
         _ ->
             ( model, Nothing )
+
+
+toast : String
+toast =
+    "pipeline"
+
+
+removed : Notice Msg
+removed =
+    { id = toast, tone = Notice.Success, title = "Downloaded models removed", description = Nothing, retry = Notice.NoRetry }
+
+
+failedNotice : Device -> Failure -> Notice Msg
+failedNotice device failure =
+    { id = toast
+    , tone = Notice.Problem
+    , title = failedTitle device
+    , description = Just (explain failure)
+    , retry = failedRetry device
+    }
+
+
+failedTitle : Device -> String
+failedTitle device =
+    case device of
+        Supported _ (Loading _ _ _) ->
+            "Couldn't download the model"
+
+        Supported _ (Cancelling _ _) ->
+            "Couldn't download the model"
+
+        Supported _ (Generating _ _ _) ->
+            "Couldn't generate the picture"
+
+        Supported _ Clearing ->
+            "Couldn't remove the downloaded models"
+
+        Unsupported Emptying ->
+            "Couldn't remove the downloaded models"
+
+        Supported _ (Releasing _) ->
+            "Couldn't release the model"
+
+        _ ->
+            "Couldn't start the studio"
+
+
+failedRetry : Device -> Notice.Retry Msg
+failedRetry device =
+    case device of
+        Supported _ (Loading chosen _ Nothing) ->
+            Notice.Retry (DownloadClicked chosen)
+
+        Supported _ (Loading _ _ (Just _)) ->
+            Notice.Retry GenerateClicked
+
+        Supported _ (Generating _ _ (Denoising _)) ->
+            Notice.Retry GenerateClicked
+
+        _ ->
+            Notice.NoRetry
 
 
 isCancellable : Device -> Bool

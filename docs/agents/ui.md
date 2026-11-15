@@ -17,11 +17,13 @@ mv -n src/UI/* client/UI/ && ls src/UI
 - The registry installs into `src/UI/`. `mv -n` keeps existing (maybe edited) components;
   whatever `ls` still lists, merge by hand, then delete `src/`. `--diff` can't see
   `client/UI/`.
-- `UI.Sidebar`, `UI.Select`, `UI.DropdownMenu`, `UI.Empty`, `UI.Slider` and `UI.InputGroup` (its `small` size, and a disabled group dims once like a button, with no fill of its own) are changed from the registry's: adding
+- `UI.Sidebar`, `UI.Select`, `UI.DropdownMenu`, `UI.Empty`, `UI.Slider`, `UI.Dialog` (its `layer`) and `UI.InputGroup` (its `small` size, and a disabled group dims once like a button, with no fill of its own) are changed from the registry's: adding
   them again would undo it, so merge by hand. `DropdownMenu.minHeight` adds up
   `itemHeight`, `menuPadding` and `separatorHeight`: change them together.
 - `UI.Toast` is the registry's. `Main` keeps the one `Toast.Toaster` and renders it once;
-  pages show toasts through `Effect.Notify` (see client/AGENTS.md, "Toasts").
+  pages show toasts through `Effect.Notify` (see client/AGENTS.md, "Toasts"). A modal
+  dialog makes the rest of the page inert: while the lightbox is open, `Main` renders the
+  toaster in its `layer`, and nowhere else.
 - Follow the CLI's notes: some items need an Elm package (`elm install` at the root) or
   a script import in `client/main.ts`. Strip their comments, keeping the `-- SECTION`
   headings.

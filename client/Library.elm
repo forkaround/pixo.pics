@@ -3,7 +3,6 @@ module Library exposing
     , Event(..)
     , Model
     , Msg(..)
-    , Notice(..)
     , Picture
     , Pictures(..)
     , Save(..)
@@ -32,6 +31,7 @@ import Dict
 import Idb
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode exposing (Value)
+import Notice exposing (Notice)
 import Pipeline
 import Share
 
@@ -51,7 +51,7 @@ type alias Model =
     , detailed : Bool
     , confirming : Maybe Int
     , saves : List ( String, Save )
-    , notice : Maybe Notice
+    , notice : Maybe (Notice Msg)
     , canShare : Bool
     }
 
@@ -60,7 +60,7 @@ type Pictures
     = NotLoaded
     | Loading
     | Loaded (List Picture)
-    | Unavailable String
+    | Unavailable
 
 
 type alias Picture =
@@ -88,11 +88,6 @@ type Save
     = Unsaved
     | Saving
     | Saved
-
-
-type Notice
-    = Info String
-    | Problem String
 
 
 init : Bool -> Model
@@ -374,7 +369,7 @@ type Msg
     | ShareClicked Int
     | CopyClicked Int
     | PostClicked Share.Network Int
-    | NoticeDismissed
+    | LoadRetried
     | Happened Event
 
 
@@ -397,7 +392,7 @@ enter model =
         NotLoaded ->
             ( { model | pictures = Loading }, [ load ] )
 
-        Unavailable _ ->
+        Unavailable ->
             ( { model | pictures = Loading }, [ load ] )
 
         _ ->
@@ -417,7 +412,7 @@ update msg model =
             ( { model | allTags = not model.allTags }, [] )
 
         Opened id ->
-            ( { model | viewing = Just id, zoomed = True, detailed = False, confirming = Nothing, notice = Nothing }, [] )
+            ( { model | viewing = Just id, zoomed = True, detailed = False, confirming = Nothing }, [] )
 
         Closed ->
             ( { model | zoomed = False, confirming = Nothing }, [] )
@@ -426,7 +421,7 @@ update msg model =
             case Maybe.andThen (\viewed -> neighbour offset viewed (List.map .id (visible model))) model.viewing of
                 Just id ->
                     if model.zoomed then
-                        ( { model | viewing = Just id, confirming = Nothing, notice = Nothing }, [] )
+                        ( { model | viewing = Just id, confirming = Nothing }, [] )
 
                     else
                         ( model, [] )
@@ -448,7 +443,7 @@ update msg model =
 
         SaveClicked picture ->
             if saveOf picture.url model == Unsaved then
-                ( { model | saves = ( picture.url, Saving ) :: model.saves, notice = Nothing }, [ save picture ] )
+                ( { model | saves = ( picture.url, Saving ) :: model.saves }, [ save picture ] )
 
             else
                 ( model, [] )
@@ -484,20 +479,20 @@ update msg model =
             )
 
         ShareClicked id ->
-            ( { model | notice = Nothing }, with id model Share )
+            ( model, with id model Share )
 
         CopyClicked id ->
-            ( { model | notice = Nothing }, with id model Copy )
+            ( model, with id model Copy )
 
         PostClicked network id ->
-            ( { model | notice = Nothing }
+            ( model
             , List.concatMap
                 (\picture -> [ Copy picture, Open (Share.compose network (Prompt.toString picture.job.prompt)) ])
                 (List.filterMap identity [ find id model ])
             )
 
-        NoticeDismissed ->
-            ( { model | notice = Nothing }, [] )
+        LoadRetried ->
+            enter model
 
         Happened event ->
             happened event model
@@ -567,33 +562,47 @@ happened event model =
             if label == tagging then
                 ( model, [] )
 
+            else if model.pictures == Loading then
+                ( { model
+                    | pictures = Unavailable
+                    , saves = List.filter (\( _, state ) -> state /= Saving) model.saves
+                    , notice = Just (storageNotice "Can't open the library" message (Notice.Retry LoadRetried))
+                  }
+                , []
+                )
+
             else
                 ( { model
-                    | pictures =
-                        if model.pictures == Loading then
-                            Unavailable message
-
-                        else
-                            model.pictures
-                    , saves = List.filter (\( _, state ) -> state /= Saving) model.saves
+                    | saves = List.filter (\( _, state ) -> state /= Saving) model.saves
                     , notice =
-                        if model.pictures == Loading then
-                            Nothing
+                        Just
+                            (storageNotice
+                                (if List.member ( label, Saving ) model.saves then
+                                    "Couldn't save the picture"
 
-                        else
-                            Just (Problem message)
+                                 else
+                                    "Couldn't delete the picture"
+                                )
+                                message
+                                Notice.NoRetry
+                            )
                   }
                 , []
                 )
 
         Copied ->
-            ( { model | notice = Just (Info "Picture copied.") }, [] )
+            ( { model | notice = Just { id = "share", tone = Notice.Success, title = "Picture copied", description = Nothing, retry = Notice.NoRetry } }, [] )
 
         ShareFailed "AbortError" ->
             ( model, [] )
 
         ShareFailed _ ->
-            ( { model | notice = Just (Problem "Couldn't share the picture. Download it instead.") }, [] )
+            ( { model | notice = Just { id = "share", tone = Notice.Problem, title = "Couldn't share the picture", description = Just "Download it instead.", retry = Notice.NoRetry } }, [] )
+
+
+storageNotice : String -> String -> Notice.Retry Msg -> Notice Msg
+storageNotice title message retry =
+    { id = "library", tone = Notice.Problem, title = title, description = Just message, retry = retry }
 
 
 shelve : List Picture -> Model -> Model

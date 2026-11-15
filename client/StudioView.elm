@@ -1,4 +1,4 @@
-module StudioView exposing (canvas, controls, lightbox, loading, message)
+module StudioView exposing (canvas, controls, lightbox, lightboxOpen, loading)
 
 import Data.Dimension as Dimension exposing (Dimension)
 import Data.Prompt as Prompt
@@ -14,7 +14,7 @@ import Lightbox
 import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
-import Pipeline exposing (Component(..), Device(..), Draft(..), Engine(..), Message(..), Model, Msg(..), NumberField(..), Seeding(..), Stage(..))
+import Pipeline exposing (Component(..), Device(..), Draft(..), Engine(..), Model, Msg(..), NumberField(..), Seeding(..), Stage(..))
 import Stylist
 import SupportView
 import UI.Button as Button
@@ -45,7 +45,7 @@ controls toMsg stylist model =
                     |> Card.small
                     |> Card.content [ class "flex flex-col gap-2" ]
                         (viewPrompt toMsg checks stylist model
-                            ++ [ notices (List.map fromCheck checks ++ fromMessage stylist ++ fromMessage model) ]
+                            ++ [ notices (List.map fromCheck checks) ]
                         )
                     |> Card.footer [ class "min-h-13 flex-wrap gap-2" ] (viewFooter toMsg checks stylist model)
                     |> Card.toHtml [ class "shadow-lg [&_:not([popover],[popover]_*)]:text-[length:inherit]! [&_:not([popover],[popover]_*)]:leading-[inherit]! has-[#prompt:focus-visible]:ring-ring/50 has-[#prompt:focus-visible]:ring-2" ]
@@ -567,44 +567,18 @@ stepLabel done steps =
         "Finishing…"
 
 
-message : Maybe Message -> Html msg
-message shown =
-    case shown of
-        Just (Problem reason) ->
-            Field.error [] [ text reason ]
-
-        Just (Info note) ->
-            p [ class "text-sm text-muted-foreground", attribute "role" "status" ] [ text note ]
-
-        Nothing ->
-            text ""
-
-
-type alias Notice =
+type alias Line =
     { open : Bool
-    , message : Message
+    , problem : String
     }
 
 
-fromCheck : Pipeline.Validation -> Notice
+fromCheck : Pipeline.Validation -> Line
 fromCheck check =
-    { open = check.failing, message = Problem check.problem }
+    { open = check.failing, problem = check.problem }
 
 
-fromMessage : { a | message : Maybe Message, fading : Maybe Message } -> List Notice
-fromMessage source =
-    case ( source.message, source.fading ) of
-        ( Just current, _ ) ->
-            [ { open = True, message = current } ]
-
-        ( Nothing, Just faded ) ->
-            [ { open = False, message = faded } ]
-
-        ( Nothing, Nothing ) ->
-            []
-
-
-notices : List Notice -> Html msg
+notices : List Line -> Html msg
 notices lines =
     let
         open =
@@ -624,7 +598,7 @@ notices lines =
         )
 
 
-viewNotice : Notice -> Html msg
+viewNotice : Line -> Html msg
 viewNotice line =
     collapsible line.open
         [ class "transition-[grid-template-rows,opacity]" ]
@@ -633,7 +607,7 @@ viewNotice line =
 
           else
             "hidden"
-        , div [ class "py-0.75" ] [ notice line.open line.message ]
+        , div [ class "py-0.75" ] [ notice line.open line.problem ]
         )
 
 
@@ -658,28 +632,20 @@ collapsible open attributes ( key, child ) =
         [ ( key, div [ class "min-h-0 overflow-hidden" ] [ child ] ) ]
 
 
-notice : Bool -> Message -> Html msg
-notice live shown =
-    let
-        role name =
-            if live then
-                [ attribute "role" name ]
+notice : Bool -> String -> Html msg
+notice live reason =
+    div
+        (class "flex items-start gap-2 text-sm text-destructive"
+            :: (if live then
+                    [ attribute "role" "alert" ]
 
-            else
-                []
-    in
-    case shown of
-        Problem reason ->
-            div (class "flex items-start gap-2 text-sm text-destructive" :: role "alert")
-                [ Phosphor.warning Bold |> Phosphor.withClass "mt-0.5 size-4 shrink-0" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
-                , span [] [ text reason ]
-                ]
-
-        Info note ->
-            p (class "flex items-start gap-2 text-sm text-muted-foreground" :: role "status")
-                [ Phosphor.info Bold |> Phosphor.withClass "mt-0.5 size-4 shrink-0" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
-                , span [] [ text note ]
-                ]
+                else
+                    []
+               )
+        )
+        [ Phosphor.warning Bold |> Phosphor.withClass "mt-0.5 size-4 shrink-0" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+        , span [] [ text reason ]
+        ]
 
 
 loading : Pipeline.Weights -> List Pipeline.Download -> Html msg
@@ -878,15 +844,21 @@ actions toMsg library picture =
     ]
 
 
-lightbox : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Model -> Html msg
-lightbox toMsg library model =
+lightboxOpen : Model -> Bool
+lightboxOpen model =
+    model.zoomed && List.any (\picture -> Just picture.url == model.viewing) model.pictures
+
+
+lightbox : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Html msg -> Library.Model -> Model -> Html msg
+lightbox toMsg toasts library model =
     Lightbox.view
         { id = "studio-picture"
-        , open = model.zoomed
+        , open = lightboxOpen model
         , detailed = model.detailed
         , onClose = toMsg.pipeline Closed
         , onToggle = toMsg.pipeline DetailsToggled
         , onStep = toMsg.pipeline << Stepped
+        , toasts = toasts
         }
         (model.viewing
             |> Maybe.andThen (\url -> List.head (List.filter (\picture -> picture.url == url) model.pictures))
@@ -896,7 +868,6 @@ lightbox toMsg library model =
                     , job = picture.job
                     , model = Pipeline.weightsName picture.weights
                     , pinned = False
-                    , notice = text ""
                     , actions = actions toMsg library picture
                     }
                 )

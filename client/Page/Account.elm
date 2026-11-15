@@ -111,6 +111,9 @@ update session msg model =
         GotPasskeys (Ok found) ->
             ( { model | passkeys = Loaded found }, Batch [ ReadTime GotTime, Dismiss passkeysToast ] )
 
+        GotPasskeys (Err (ApiClient.Unauthorized _)) ->
+            ( model, NoEffect )
+
         GotPasskeys (Err error) ->
             ( model
             , Effect.failure { id = passkeysToast, title = "Can't load your passkeys", retry = Just PasskeysRetried } error

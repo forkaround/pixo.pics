@@ -9,6 +9,7 @@ module UI.Dialog exposing
     , hideCloseButton
     , id
     , label
+    , layer
     , modal
     , new
     , open
@@ -35,6 +36,7 @@ type Dialog id state msg
         , closeButton : Bool
         , modal : Bool
         , label : Maybe String
+        , layer : List (Html msg)
         }
 
 
@@ -67,6 +69,7 @@ new =
         , closeButton = True
         , modal = False
         , label = Nothing
+        , layer = []
         }
 
 
@@ -120,6 +123,11 @@ modal (Dialog config) =
 label : String -> Dialog id state msg -> Dialog id state msg
 label name (Dialog config) =
     Dialog { config | label = Just name }
+
+
+layer : List (Html msg) -> Dialog id state msg -> Dialog id state msg
+layer children (Dialog config) =
+    Dialog { config | layer = children }
 
 
 hideCloseButton : Dialog id state msg -> Dialog id state msg
@@ -182,7 +190,7 @@ toHtml attrs (Dialog config) =
                    )
                 ++ List.concatMap closeRequests onClose
             )
-            [ Html.div
+            ([ Html.div
                 ([ attribute "data-slot" "dialog-overlay"
                  , attribute "aria-hidden" "true"
                  , class "absolute inset-0 select-none not-supports-[-webkit-touch-callout:none]:bg-black/10"
@@ -197,7 +205,7 @@ toHtml attrs (Dialog config) =
                        )
                 )
                 []
-            , Html.div
+             , Html.div
                 ([ attribute "data-slot" "dialog-content"
                  , class "relative grid w-full max-h-full gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 outline-none sm:max-w-(--dialog-width) [--dialog-width:var(--container-sm)]"
                  , class "opacity-0 [scale:0.95] transition-[opacity,scale] duration-300 ease-[ease] [elmcn-dialog[open]>dialog>&]:opacity-100 [elmcn-dialog[open]>dialog>&]:[scale:1] starting:[elmcn-dialog[open]>dialog>&]:opacity-0 starting:[elmcn-dialog[open]>dialog>&]:[scale:0.95]"
@@ -253,7 +261,9 @@ toHtml attrs (Dialog config) =
                             Nothing
                         ]
                 )
-            ]
+             ]
+                ++ config.layer
+            )
         ]
 
 

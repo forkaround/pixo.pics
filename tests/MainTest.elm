@@ -307,7 +307,14 @@ suite =
                         |> ProgramTest.expectViewHasNot [ text "Manage your account and how you sign in." ]
             ]
         , describe "Account"
-            [ test "deletes the account only after confirmation and returns home signed out" <|
+            [ test "says nothing about the passkeys of a signed-out visitor" <|
+                \() ->
+                    startAt "/settings/account" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/passkeys" notSignedIn
+                        |> ProgramTest.ensureViewHas [ text "Not logged in" ]
+                        |> ProgramTest.expectViewHasNot [ text "Can't load your passkeys" ]
+            , test "deletes the account only after confirmation and returns home signed out" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
@@ -1548,7 +1555,7 @@ suite =
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (List.member "RemoveStylist" >> Expect.equal False)
-                        |> ProgramTest.expectViewHasNot [ text "Prompt model removed." ]
+                        |> ProgramTest.expectViewHasNot [ text "Prompt model removed" ]
             , test "opens a new picture bigger, with everything that made it" <|
                 \() ->
                     ready
@@ -1810,7 +1817,7 @@ suite =
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten "\"Cozy\"")
-                        |> ProgramTest.ensureViewHas [ text "AI Style returned an incomplete prompt. Try again." ]
+                        |> ProgramTest.ensureViewHas [ text "AI Style returned an incomplete prompt" ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
             , test "shows why the prompt model failed, and keeps the idea" <|
                 \() ->
@@ -1906,7 +1913,7 @@ suite =
                             (Decode.map2 Tuple.pair (Decode.field "tag" Decode.string) (Decode.maybe (Decode.at [ "data", "model" ] Decode.string)))
                             (List.reverse >> List.head >> Expect.equal (Just ( "RemoveStylist", Just "Qwen3-1.7B-q4f16_1-MLC" )))
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistRemoved")
-                        |> ProgramTest.ensureViewHas [ text "Prompt model removed." ]
+                        |> ProgramTest.ensureViewHas [ text "Prompt model removed" ]
                         |> ProgramTest.ensureViewHas [ text "Qwen3 1.7B, 984 MB download" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.maybe localStorageWrite)
@@ -1970,6 +1977,16 @@ suite =
                             (List.filterMap (Maybe.map .value)
                                 >> Expect.equal [ """["prism-ml/bonsai-image-ternary-4B-mlx-2bit"]""" ]
                             )
+            , test "downloads again from the failure's toast" <|
+                \() ->
+                    startAt "/settings/models" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
+                        |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "HTTP 404 for model_index.json")
+                        |> inToast "Couldn't download the model" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "CheckWebGpu", "LoadModel", "LoadModel" ])
             , test "says why the model did not download" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
@@ -1978,7 +1995,11 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "HTTP 404 for model_index.json")
                         |> ProgramTest.ensureViewHas [ text "HTTP 404 for model_index.json" ]
                         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
-                        |> ProgramTest.expectViewHasNot [ text "HTTP 404 for model_index.json" ]
+                        |> ProgramTest.expectViewHas
+                            [ attribute (Html.Attributes.attribute "data-slot" "toast")
+                            , attribute (Html.Attributes.attribute "data-ending-style" "")
+                            , containing [ text "HTTP 404 for model_index.json" ]
+                            ]
             , test "stops a download when asked, without a complaint" <|
                 \() ->
                     startAt "/settings/models" defaultFlags
@@ -2008,7 +2029,7 @@ suite =
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu", "LoadModel", "WriteToLocalStorage", "ReleaseModel", "ClearModelCache" ])
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelCacheCleared")
-                        |> ProgramTest.ensureViewHas [ text "Downloaded models removed." ]
+                        |> ProgramTest.ensureViewHas [ text "Downloaded models removed" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             localStorageWrite
                             (Expect.equal [ { tag = "WriteToLocalStorage", key = "models", value = "[]" } ])
@@ -2019,7 +2040,7 @@ suite =
                         |> ProgramTest.clickButton "Remove downloaded models"
                         |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Removing…" ] ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelCacheCleared")
-                        |> ProgramTest.ensureViewHas [ text "Downloaded models removed." ]
+                        |> ProgramTest.ensureViewHas [ text "Downloaded models removed" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu", "ClearModelCache", "WriteToLocalStorage" ])
@@ -2080,8 +2101,36 @@ suite =
                 \() ->
                     startAt "/library" defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryFailed "The database is blocked.")
+                        |> ProgramTest.ensureViewHasNot [ text "No pictures yet" ]
                         |> ProgramTest.ensureViewHas [ text "Can't open the library" ]
                         |> ProgramTest.expectViewHas [ text "The database is blocked." ]
+            , test "keeps the skeleton and reads the pictures again on request" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (libraryFailed "The database is blocked.")
+                        |> inToast "Can't open the library" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "IdbGetAll", "IdbGetAll" ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
+                        |> ProgramTest.expectViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
+            , test "shows a toast over the open picture" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
+                        |> ProgramTest.clickButton "Open a red fox in the snow"
+                        |> ProgramTest.within (Query.find [ tag "elmcn-dialog", id "picture" ]) (ProgramTest.clickButton "Copy picture")
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "PictureCopied")
+                        |> ProgramTest.expectView
+                            (Expect.all
+                                [ Query.find [ tag "elmcn-dialog", id "picture" ]
+                                    >> Query.has [ attribute (Html.Attributes.attribute "data-slot" "toast-viewport") ]
+                                , Query.findAll [ attribute (Html.Attributes.attribute "data-slot" "toast-viewport") ]
+                                    >> Query.count (Expect.equal 1)
+                                ]
+                            )
             , test "finds pictures by their prompt" <|
                 \() ->
                     library
@@ -2268,9 +2317,13 @@ suite =
                                 ]
                             )
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "PictureCopied")
-                        |> ProgramTest.ensureViewHas [ text "Picture copied." ]
-                        |> ProgramTest.clickButton "Dismiss"
-                        |> ProgramTest.expectViewHasNot [ text "Picture copied." ]
+                        |> ProgramTest.ensureViewHas [ text "Picture copied" ]
+                        |> ProgramTest.clickButton "Close toast"
+                        |> ProgramTest.expectViewHas
+                            [ attribute (Html.Attributes.attribute "data-slot" "toast")
+                            , attribute (Html.Attributes.attribute "data-ending-style" "")
+                            , containing [ text "Picture copied" ]
+                            ]
             , test "says so when the browser won't hand the picture over" <|
                 \() ->
                     startAt "/library" defaultFlags
@@ -2279,7 +2332,8 @@ suite =
                         |> ProgramTest.clickButton "Copy picture"
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (Encode.object [ ( "tag", Encode.string "ShareFailed" ), ( "name", Encode.string "NotAllowedError" ) ])
-                        |> ProgramTest.expectViewHas [ text "Couldn't share the picture. Download it instead." ]
+                        |> ProgramTest.ensureViewHas [ text "Couldn't share the picture" ]
+                        |> ProgramTest.expectViewHas [ text "Download it instead." ]
             , test "offers the device's share sheet where there is one" <|
                 \() ->
                     startAt "/library" { defaultFlags | canShare = True }
