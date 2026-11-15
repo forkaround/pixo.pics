@@ -1,4 +1,4 @@
-module Page.Verify exposing (Model, Msg, Outcome(..), init, outcome, update, view)
+module Page.Verify exposing (Model, Msg, Outcome(..), init, outcome, toasts, update, view)
 
 import Api
 import ApiClient
@@ -35,15 +35,54 @@ init : Maybe LinkToken -> ( Model, Effect Msg )
 init link =
     case link of
         Just token ->
-            ( Looking token
-            , Request
-                (ApiClient.request Api.verification () GotVerification
-                    |> ApiClient.withToken token
-                )
-            )
+            ( Looking token, lookup token )
 
         Nothing ->
             ( Refused missingToken, NoEffect )
+
+
+toasts : List String
+toasts =
+    [ lookupToast, acceptToast ]
+
+
+lookupToast : String
+lookupToast =
+    "link-check"
+
+
+acceptToast : String
+acceptToast =
+    "link-accept"
+
+
+lookup : LinkToken -> Effect Msg
+lookup token =
+    Request (ApiClient.request Api.verification () GotVerification |> ApiClient.withToken token)
+
+
+accept : LinkToken -> Effect Msg
+accept token =
+    Request (ApiClient.request Api.verify () GotAccount |> ApiClient.withToken token)
+
+
+lookupFailure : ApiClient.Error -> Effect Msg
+lookupFailure =
+    Effect.failure { id = lookupToast, title = "Can't check your link", retry = Just LookupRetried }
+
+
+acceptFailure : Api.Verification -> Msg -> ApiClient.Error -> Effect Msg
+acceptFailure found retry =
+    Effect.failure
+        { id = acceptToast
+        , title =
+            if found.newAccount then
+                "Couldn't create your account"
+
+            else
+                "Couldn't log in"
+        , retry = Just retry
+        }
 
 
 missingToken : String
@@ -57,7 +96,9 @@ missingToken =
 
 type Msg
     = GotVerification (Result ApiClient.Error Api.Verification)
+    | LookupRetried
     | Accepted
+    | AcceptRetried
     | GotAccount (Result ApiClient.Error Api.Account)
     | GotPasskeyCheck (Result ApiClient.Error (List Api.Passkey))
 
@@ -84,21 +125,38 @@ update msg model =
             ( Found token found Asking, NoEffect )
 
         ( GotVerification (Err error), Looking _ ) ->
-            ( Refused (ApiClient.errorToString error), NoEffect )
+            case error of
+                ApiClient.Throttled _ _ ->
+                    ( model, lookupFailure error )
+
+                ApiClient.Failed _ ->
+                    ( model, lookupFailure error )
+
+                _ ->
+                    ( Refused (ApiClient.errorToString error), NoEffect )
+
+        ( LookupRetried, Looking token ) ->
+            ( model, lookup token )
 
         ( Accepted, Found token found Asking ) ->
-            ( Found token found Accepting
-            , Request
-                (ApiClient.request Api.verify () GotAccount
-                    |> ApiClient.withToken token
-                )
-            )
+            ( Found token found Accepting, accept token )
+
+        ( AcceptRetried, Found token _ Accepting ) ->
+            ( model, accept token )
 
         ( GotAccount (Ok _), Found _ _ Accepting ) ->
             ( model, Request (ApiClient.request Api.passkeys () GotPasskeyCheck) )
 
-        ( GotAccount (Err error), Found _ _ Accepting ) ->
-            ( Refused (ApiClient.errorToString error), NoEffect )
+        ( GotAccount (Err error), Found token found Accepting ) ->
+            case error of
+                ApiClient.Throttled _ _ ->
+                    ( model, acceptFailure found AcceptRetried error )
+
+                ApiClient.Failed _ ->
+                    ( Found token found Asking, acceptFailure found Accepted error )
+
+                _ ->
+                    ( Refused (ApiClient.errorToString error), NoEffect )
 
         ( GotPasskeyCheck result, Found _ _ Accepting ) ->
             ( model

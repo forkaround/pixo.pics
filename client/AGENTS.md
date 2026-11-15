@@ -55,6 +55,10 @@ A page with state of its own is a module in `client/Page/`. A new one is:
 - `Notify` and `Dismiss` reach the toaster in `Main` as `GotToast` messages; `Sleep` waits;
   `Toaster` carries the toaster's own commands, which tests drop. In tests a toast never
   closes: assert what it says and what its action does, never that it is gone.
+- A page lists its toasts' ids in `toasts`, and `Main` closes them when the page is left. A
+  retry after a 429 fires only from the pending state the page kept ("Sending the link…",
+  "Waiting for your device…"); "Try again" starts over from the resting state, and does
+  nothing once the page has moved on.
 
 ## UI
 

@@ -1,4 +1,4 @@
-module Page.General exposing (Model, Msg, load, update, view)
+module Page.General exposing (Model, Msg, load, toasts, update, view)
 
 import Api
 import ApiClient
@@ -17,7 +17,6 @@ import UI.Spinner as Spinner
 type Model
     = Checking
     | Checked Api.Health
-    | Unreachable String
 
 
 load : ( Model, Effect Msg )
@@ -31,16 +30,37 @@ load =
 
 type Msg
     = GotHealth (Result ApiClient.Error Api.Health)
+    | Retried
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
-update msg _ =
+update msg model =
     case msg of
         GotHealth (Ok health) ->
             ( Checked health, NoEffect )
 
         GotHealth (Err error) ->
-            ( Unreachable (ApiClient.errorToString error), NoEffect )
+            ( Checking
+            , Effect.failure { id = toast, title = "Can't check health status", retry = Just Retried } error
+            )
+
+        Retried ->
+            case model of
+                Checking ->
+                    load
+
+                Checked _ ->
+                    ( model, NoEffect )
+
+
+toasts : List String
+toasts =
+    [ toast ]
+
+
+toast : String
+toast =
+    "health"
 
 
 
@@ -73,9 +93,6 @@ view model =
 
                         Checking ->
                             []
-
-                        Unreachable _ ->
-                            []
                    )
             )
         |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
@@ -100,9 +117,6 @@ indicator model =
 
                 Api.Fail ->
                     status (dot "bg-red-500") (Maybe.withDefault "Down" health.database.output)
-
-        Unreachable message ->
-            status (dot "bg-red-500") message
 
 
 status : Html msg -> String -> Html msg

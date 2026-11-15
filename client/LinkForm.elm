@@ -1,4 +1,4 @@
-module LinkForm exposing (Attempt(..), State(..), emailField, problem, sent, submit, submitLabel)
+module LinkForm exposing (Attempt(..), State(..), emailField, sent, submit, submitLabel)
 
 import Html exposing (Html, text)
 import Html.Attributes exposing (attribute, autocomplete, class, disabled, for, id, name, required, type_, value)
@@ -16,7 +16,7 @@ type State
 
 
 type Attempt
-    = Editing (Maybe String)
+    = Editing
     | Submitting
 
 
@@ -46,16 +46,6 @@ emailField email toMsg =
         ]
 
 
-problem : Attempt -> Html msg
-problem attempt =
-    case attempt of
-        Editing (Just reason) ->
-            Field.error [] [ text reason ]
-
-        _ ->
-            text ""
-
-
 submit : Attempt -> Html msg
 submit attempt =
     Button.new
@@ -69,5 +59,5 @@ submitLabel attempt =
         Submitting ->
             "Sending the link…"
 
-        Editing _ ->
+        Editing ->
             "Email me a link"

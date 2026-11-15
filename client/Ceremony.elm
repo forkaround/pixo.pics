@@ -1,19 +1,6 @@
-module Ceremony exposing (Ceremony(..), problem)
-
-import Html exposing (Html, text)
-import UI.Field as Field
+module Ceremony exposing (Ceremony(..))
 
 
 type Ceremony
-    = Resting (Maybe String)
+    = Resting
     | Waiting
-
-
-problem : Ceremony -> Html msg
-problem ceremony =
-    case ceremony of
-        Resting (Just reason) ->
-            Field.error [] [ text reason ]
-
-        _ ->
-            text ""

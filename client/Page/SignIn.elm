@@ -1,4 +1,4 @@
-module Page.SignIn exposing (Model, Msg, Outcome(..), init, outcome, passkeyFailed, passkeyUsed, update, view)
+module Page.SignIn exposing (Model, Msg, Outcome(..), init, outcome, passkeyFailed, passkeyUsed, toasts, update, view)
 
 import Api
 import ApiClient
@@ -9,6 +9,7 @@ import Html.Attributes exposing (attribute, class, disabled, type_)
 import Html.Events exposing (onClick, onSubmit)
 import InteropDefinitions as Interop
 import LinkForm exposing (Attempt(..), State(..))
+import Notice exposing (Notice)
 import Path
 import Phosphor exposing (IconWeight(..))
 import Plain
@@ -29,7 +30,7 @@ type alias Model =
 
 init : Model
 init =
-    { email = "", state = Open (Editing Nothing), ceremony = Resting Nothing }
+    { email = "", state = Open Editing, ceremony = Resting }
 
 
 
@@ -39,8 +40,10 @@ init =
 type Msg
     = EmailChanged String
     | Submitted
+    | Resubmitted
     | GotSignIn (Result ApiClient.Error ())
     | PasskeyRequested
+    | PasskeyRetried
     | GotOptions (Result ApiClient.Error Api.SignInOptions)
     | PasskeyUsed Api.Assertion
     | PasskeyFailed String
@@ -79,34 +82,49 @@ update msg model =
             ( { model | email = email }, NoEffect )
 
         Submitted ->
-            if model.state == Open Submitting then
-                ( model, NoEffect )
+            if model.state == Open Editing then
+                ( { model | state = Open Submitting }, sendLink model.email )
 
             else
-                ( { model | state = Open Submitting }
-                , Request (ApiClient.request Api.signIn { email = model.email } GotSignIn)
-                )
+                ( model, NoEffect )
+
+        Resubmitted ->
+            if model.state == Open Submitting then
+                ( model, sendLink model.email )
+
+            else
+                ( model, NoEffect )
 
         GotSignIn (Ok ()) ->
-            ( { model | state = Sent }, NoEffect )
+            ( { model | state = Sent }, Dismiss linkToast )
 
         GotSignIn (Err error) ->
-            ( { model | state = Open (Editing (Just (ApiClient.errorToString error))) }, NoEffect )
+            case error of
+                ApiClient.Throttled _ _ ->
+                    ( model, linkFailure Resubmitted error )
+
+                _ ->
+                    ( { model | state = Open Editing }, linkFailure Submitted error )
 
         PasskeyRequested ->
             if model.ceremony == Waiting then
                 ( model, NoEffect )
 
             else
-                ( { model | ceremony = Waiting }
-                , Request (ApiClient.request Api.passkeySignInOptions () GotOptions)
-                )
+                ( { model | ceremony = Waiting }, askOptions )
+
+        PasskeyRetried ->
+            if model.ceremony == Waiting then
+                ( model, askOptions )
+
+            else
+                ( model, NoEffect )
 
         GotOptions (Ok options) ->
             ( model, SendToJs (Interop.GetPasskey options) )
 
         GotOptions (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
+            passkeyFailure error model
 
         PasskeyUsed assertion ->
             if model.ceremony == Waiting then
@@ -116,13 +134,75 @@ update msg model =
                 ( model, NoEffect )
 
         PasskeyFailed name ->
-            ( { model | ceremony = Resting (Just (signInProblem name)) }, NoEffect )
+            ( { model | ceremony = Resting }, Notify (passkeyProblem name) )
 
         GotPasskeySignIn (Ok _) ->
             ( model, PushUrl (Path.toString Path.Explore) )
 
         GotPasskeySignIn (Err error) ->
-            ( { model | ceremony = Resting (Just (ApiClient.errorToString error)) }, NoEffect )
+            passkeyFailure error model
+
+
+toasts : List String
+toasts =
+    [ linkToast, passkeyToast ]
+
+
+linkToast : String
+linkToast =
+    "sign-in-link"
+
+
+passkeyToast : String
+passkeyToast =
+    "passkey-sign-in"
+
+
+passkeyTitle : String
+passkeyTitle =
+    "Couldn't log in with a passkey"
+
+
+sendLink : String -> Effect Msg
+sendLink email =
+    Request (ApiClient.request Api.signIn { email = email } GotSignIn)
+
+
+linkFailure : Msg -> ApiClient.Error -> Effect Msg
+linkFailure retry =
+    Effect.failure { id = linkToast, title = "Couldn't send the link", retry = Just retry }
+
+
+askOptions : Effect Msg
+askOptions =
+    Request (ApiClient.request Api.passkeySignInOptions () GotOptions)
+
+
+passkeyFailure : ApiClient.Error -> Model -> ( Model, Effect Msg )
+passkeyFailure error model =
+    case error of
+        ApiClient.Throttled _ _ ->
+            ( model, Effect.failure { id = passkeyToast, title = passkeyTitle, retry = Just PasskeyRetried } error )
+
+        _ ->
+            ( { model | ceremony = Resting }
+            , Effect.failure { id = passkeyToast, title = passkeyTitle, retry = Just PasskeyRequested } error
+            )
+
+
+passkeyProblem : String -> Notice Msg
+passkeyProblem name =
+    { id = passkeyToast
+    , tone = Notice.Problem
+    , title = passkeyTitle
+    , description = Just (signInProblem name)
+    , retry =
+        if name == "NotSupportedError" then
+            Notice.NoRetry
+
+        else
+            Notice.Retry PasskeyRequested
+    }
 
 
 signInProblem : String -> String
@@ -152,8 +232,7 @@ view { email, state, ceremony } =
             [ Plain.lead "Log in to your account" "Use your passkey, or get a link by email."
             , form [ onSubmit Submitted ]
                 [ Field.group []
-                    [ Ceremony.problem ceremony
-                    , Button.new
+                    [ Button.new
                         |> Button.text
                             (if ceremony == Waiting then
                                 "Waiting for your device…"
@@ -170,7 +249,6 @@ view { email, state, ceremony } =
                             ]
                     , Field.separator [] [ text "or" ]
                     , LinkForm.emailField email EmailChanged
-                    , LinkForm.problem attempt
                     , Button.new
                         |> Button.text (LinkForm.submitLabel attempt)
                         |> Button.outline

@@ -1,4 +1,4 @@
-module Page.Account exposing (Model, Msg, Outcome(..), enrolment, init, load, outcome, update, view)
+module Page.Account exposing (Model, Msg, Outcome(..), enrolment, init, load, outcome, toasts, update, view)
 
 import Api
 import ApiClient
@@ -18,7 +18,6 @@ import UI.AlertDialog as AlertDialog
 import UI.Button as Button
 import UI.Card as Card
 import UI.Empty as Empty
-import UI.Field as Field
 import UI.Item as Item
 import UI.Skeleton as Skeleton
 
@@ -30,13 +29,11 @@ import UI.Skeleton as Skeleton
 type Passkeys
     = Loading
     | Loaded (List Api.Passkey)
-    | NotLoaded String
 
 
 type alias Model =
     { passkeys : Passkeys
     , confirming : Maybe CredentialId
-    , removalProblem : Maybe String
     , deletion : AccountDeletion
     , now : Maybe Time.Posix
     , ceremony : Ceremony
@@ -45,18 +42,18 @@ type alias Model =
 
 type AccountDeletion
     = KeepAccount
-    | ConfirmDeletion (Maybe String)
+    | ConfirmDeletion
     | DeletingAccount
+    | WaitingToDelete
 
 
 init : Model
 init =
     { passkeys = Loading
     , confirming = Nothing
-    , removalProblem = Nothing
     , deletion = KeepAccount
     , now = Nothing
-    , ceremony = Resting Nothing
+    , ceremony = Resting
     }
 
 
@@ -71,6 +68,7 @@ load model =
 
 type Msg
     = GotPasskeys (Result ApiClient.Error (List Api.Passkey))
+    | PasskeysRetried
     | GotTime Time.Posix
     | GotEnrolment Enrolment.Msg
     | RemoveRequested CredentialId
@@ -80,6 +78,7 @@ type Msg
     | DeleteRequested
     | DeleteCancelled
     | DeleteConfirmed
+    | DeleteRetried
     | GotDeleted (Result ApiClient.Error ())
 
 
@@ -110,10 +109,19 @@ update : Session -> Msg -> Model -> ( Model, Effect Msg )
 update session msg model =
     case msg of
         GotPasskeys (Ok found) ->
-            ( { model | passkeys = Loaded found }, ReadTime GotTime )
+            ( { model | passkeys = Loaded found }, Batch [ ReadTime GotTime, Dismiss passkeysToast ] )
 
         GotPasskeys (Err error) ->
-            ( { model | passkeys = NotLoaded (ApiClient.errorToString error) }, NoEffect )
+            ( model
+            , Effect.failure { id = passkeysToast, title = "Can't load your passkeys", retry = Just PasskeysRetried } error
+            )
+
+        PasskeysRetried ->
+            if model.passkeys == Loading then
+                load model
+
+            else
+                ( model, NoEffect )
 
         GotTime now ->
             ( { model | now = Just now }, NoEffect )
@@ -135,7 +143,7 @@ update session msg model =
                                 _ ->
                                     model.passkeys
                       }
-                    , ReadTime GotTime
+                    , Batch [ Effect.map GotEnrolment effect, ReadTime GotTime ]
                     )
 
                 Enrolment.Pending ->
@@ -148,7 +156,7 @@ update session msg model =
             ( { model | confirming = Nothing }, NoEffect )
 
         RemoveConfirmed id ->
-            ( { model | confirming = Nothing, removalProblem = Nothing }
+            ( { model | confirming = Nothing }
             , Request (ApiClient.request (Api.deletePasskey id) () (GotRemoved id))
             )
 
@@ -162,37 +170,84 @@ update session msg model =
             , NoEffect
             )
 
-        GotRemoved _ (Err error) ->
-            ( { model | removalProblem = Just (ApiClient.errorToString error) }, NoEffect )
+        GotRemoved id (Err error) ->
+            ( model
+            , Effect.failure { id = removalToast, title = "Couldn't remove the passkey", retry = Just (RemoveConfirmed id) } error
+            )
 
         DeleteRequested ->
-            ( { model | deletion = ConfirmDeletion Nothing }, NoEffect )
-
-        DeleteCancelled ->
-            if model.deletion == DeletingAccount then
-                ( model, NoEffect )
+            if model.deletion == KeepAccount then
+                ( { model | deletion = ConfirmDeletion }, NoEffect )
 
             else
+                ( model, NoEffect )
+
+        DeleteCancelled ->
+            if model.deletion == ConfirmDeletion then
                 ( { model | deletion = KeepAccount }, NoEffect )
+
+            else
+                ( model, NoEffect )
 
         DeleteConfirmed ->
             case ( session, model.deletion ) of
-                ( Session.SignedIn _, ConfirmDeletion _ ) ->
-                    ( { model | deletion = DeletingAccount }
-                    , Request (ApiClient.request Api.deleteAccount () GotDeleted)
-                    )
+                ( Session.SignedIn _, ConfirmDeletion ) ->
+                    ( { model | deletion = DeletingAccount }, deleteAccount )
+
+                _ ->
+                    ( model, NoEffect )
+
+        DeleteRetried ->
+            case ( session, model.deletion ) of
+                ( Session.SignedIn _, WaitingToDelete ) ->
+                    ( model, deleteAccount )
 
                 _ ->
                     ( model, NoEffect )
 
         GotDeleted (Ok ()) ->
-            ( { model | ceremony = Resting Nothing }, PushUrl (Path.toString Path.Explore) )
+            ( { model | ceremony = Resting }, PushUrl (Path.toString Path.Explore) )
 
         GotDeleted (Err (ApiClient.Unauthorized _)) ->
-            ( { model | ceremony = Resting Nothing }, PushUrl (Path.toString Path.SignIn) )
+            ( { model | ceremony = Resting }, PushUrl (Path.toString Path.SignIn) )
 
         GotDeleted (Err error) ->
-            ( { model | deletion = ConfirmDeletion (Just (ApiClient.errorToString error)) }, NoEffect )
+            case error of
+                ApiClient.Throttled _ _ ->
+                    ( { model | deletion = WaitingToDelete }, deletionFailure DeleteRetried error )
+
+                _ ->
+                    ( { model | deletion = KeepAccount }, deletionFailure DeleteRequested error )
+
+
+toasts : List String
+toasts =
+    [ passkeysToast, removalToast, deletionToast, Enrolment.toast ]
+
+
+passkeysToast : String
+passkeysToast =
+    "passkeys"
+
+
+removalToast : String
+removalToast =
+    "passkey-removal"
+
+
+deletionToast : String
+deletionToast =
+    "account-deletion"
+
+
+deleteAccount : Effect Msg
+deleteAccount =
+    Request (ApiClient.request Api.deleteAccount () GotDeleted)
+
+
+deletionFailure : Msg -> ApiClient.Error -> Effect Msg
+deletionFailure retry =
+    Effect.failure { id = deletionToast, title = "Couldn't delete your account", retry = Just retry }
 
 
 
@@ -206,7 +261,7 @@ view session account =
             [ viewPasskeys session account.ceremony account, viewDeleteAccount (Just account.deletion) ]
 
         Session.Unknown ->
-            [ viewPasskeys session (Resting Nothing) { account | passkeys = Loading, removalProblem = Nothing }
+            [ viewPasskeys session Resting { account | passkeys = Loading }
             , viewDeleteAccount Nothing
             ]
 
@@ -235,7 +290,13 @@ viewDeleteAccount deletion =
                 [ p [ class "text-sm text-muted-foreground" ] [ text "Images saved in this browser will remain." ] ]
             |> Card.footer [ class "justify-end" ]
                 [ Button.new
-                    |> Button.text "Delete account"
+                    |> Button.text
+                        (if deletion == Just DeletingAccount || deletion == Just WaitingToDelete then
+                            "Deleting account…"
+
+                         else
+                            "Delete account"
+                        )
                     |> Button.destructive
                     |> Button.small
                     |> Button.startIcon (Phosphor.trash Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
@@ -243,7 +304,7 @@ viewDeleteAccount deletion =
                             viewButtonSkeleton []
 
                         else
-                            Button.toHtml [ onClick DeleteRequested, disabled (deletion == Just DeletingAccount) ]
+                            Button.toHtml [ onClick DeleteRequested, disabled (deletion == Just DeletingAccount || deletion == Just WaitingToDelete) ]
                        )
                 ]
             |> Card.toHtml [ class "w-full ring-destructive/40! [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
@@ -255,21 +316,14 @@ viewDeleteAccountDialog : Maybe AccountDeletion -> Html Msg
 viewDeleteAccountDialog deletion =
     AlertDialog.new
         |> AlertDialog.id "delete-account"
-        |> AlertDialog.open (deletion /= Nothing && deletion /= Just KeepAccount) DeleteCancelled
+        |> AlertDialog.open (deletion == Just ConfirmDeletion || deletion == Just DeletingAccount) DeleteCancelled
         |> AlertDialog.busy (deletion == Just DeletingAccount)
         |> AlertDialog.small
         |> AlertDialog.media [ class "bg-destructive/10 text-destructive dark:bg-destructive/20" ]
             [ Phosphor.trash Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ] ]
         |> AlertDialog.title [ text "Are you sure?" ]
         |> AlertDialog.description
-            [ text "This will permanently delete your account and cannot be undone."
-            , case deletion of
-                Just (ConfirmDeletion (Just reason)) ->
-                    span [ class "mt-3 block text-destructive", attribute "role" "alert" ] [ text reason ]
-
-                _ ->
-                    text ""
-            ]
+            [ text "This will permanently delete your account and cannot be undone." ]
         |> AlertDialog.cancel
             (Button.new
                 |> Button.text "Cancel"
@@ -292,7 +346,7 @@ viewDeleteAccountDialog deletion =
 
 
 viewPasskeys : Session -> Ceremony -> Model -> Html Msg
-viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
+viewPasskeys session ceremony { passkeys, confirming, now } =
     Card.new
         |> Card.title [ Html.h3 [] [ text "Passkeys" ] ]
         |> Card.description [ text "Sign in with your fingerprint, face or screen lock." ]
@@ -324,17 +378,7 @@ viewPasskeys session ceremony { passkeys, confirming, removalProblem, now } =
 
                         Loaded found ->
                             ul [ class "flex flex-col gap-2" ] (List.map (viewPasskey now confirming) found)
-
-                        NotLoaded message ->
-                            p [ class "text-sm text-muted-foreground" ] [ text message ]
                     ]
-                , Ceremony.problem ceremony
-                , case removalProblem of
-                    Just reason ->
-                        Field.error [] [ text reason ]
-
-                    Nothing ->
-                        text ""
                 ]
             ]
         |> Card.footer [ class "flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between" ]

@@ -311,6 +311,7 @@ type Msg
     | GotVerify Page.Verify.Msg
     | GotSession (Result ApiClient.Error Api.Account)
     | SessionRetried
+    | SessionRechecked
     | GotSignIn Page.SignIn.Msg
     | SignOutClicked
     | GotSignOut (Result ApiClient.Error ())
@@ -507,6 +508,7 @@ step msg model =
 
         UrlChanged url ->
             open url model
+                |> Tuple.mapSecond (\effect -> Batch (effect :: List.map Dismiss (pageToasts model.page)))
 
         GotSignUp pageMsg ->
             case model.page of
@@ -558,10 +560,19 @@ step msg model =
                     , Effect.failure
                         { id = "session"
                         , title = "Can't check who is signed in"
-                        , retry = Just SessionRetried
+                        , retry =
+                            case error of
+                                ApiClient.Throttled _ _ ->
+                                    Just SessionRechecked
+
+                                _ ->
+                                    Just SessionRetried
                         }
                         error
                     )
+
+        SessionRechecked ->
+            ( { model | session = Unknown }, Request (ApiClient.request Api.session () GotSession) )
 
         SessionRetried ->
             case model.page of
@@ -881,6 +892,43 @@ viewBody model =
                     , div [ class "flex min-h-10 gap-4" ] (notFoundOptions model.session)
                     ]
                 ]
+
+
+pageToasts : Page -> List String
+pageToasts page =
+    case page of
+        SignUp _ ->
+            Page.SignUp.toasts
+
+        SignIn _ ->
+            Page.SignIn.toasts
+
+        Verify _ ->
+            Page.Verify.toasts
+
+        Passkey _ ->
+            Page.Passkey.toasts
+
+        Settings (General _) ->
+            Page.General.toasts
+
+        Settings (Account _) ->
+            Page.Account.toasts
+
+        Settings Models ->
+            []
+
+        Explore ->
+            []
+
+        Studio ->
+            []
+
+        Library ->
+            []
+
+        NotFound ->
+            []
 
 
 viewSettingsPage : String -> Html Msg -> List (Html Msg) -> Html Msg

@@ -4,6 +4,7 @@ import Ceremony exposing (Ceremony(..))
 import Effect exposing (Effect(..))
 import Enrolment
 import Expect
+import Notice
 import Test exposing (Test, describe, test)
 
 
@@ -20,8 +21,8 @@ suite =
                         Expect.fail "Expected nothing to happen."
         , test "saves no passkey the browser made unasked" <|
             \() ->
-                case Enrolment.update (Enrolment.created attestation) (Resting Nothing) of
-                    ( Resting Nothing, NoEffect, Enrolment.Pending ) ->
+                case Enrolment.update (Enrolment.created attestation) Resting of
+                    ( Resting, NoEffect, Enrolment.Pending ) ->
                         Expect.pass
 
                     _ ->
@@ -38,9 +39,9 @@ suite =
         , test "words why the browser made none" <|
             \() ->
                 case Enrolment.update (Enrolment.failed "InvalidStateError") Waiting of
-                    ( Resting (Just reason), NoEffect, Enrolment.Pending ) ->
-                        reason
-                            |> Expect.equal "This device already has a passkey for this account."
+                    ( Resting, Notify notice, Enrolment.Pending ) ->
+                        ( notice.description, notice.retry )
+                            |> Expect.equal ( Just "This device already has a passkey for this account.", Notice.NoRetry )
 
                     _ ->
                         Expect.fail "Expected a reason."

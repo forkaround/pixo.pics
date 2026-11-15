@@ -1,4 +1,4 @@
-module Page.SignUp exposing (Model, Msg, init, update, view)
+module Page.SignUp exposing (Model, Msg, init, toasts, update, view)
 
 import Api
 import ApiClient
@@ -26,7 +26,7 @@ type alias Model =
 
 init : Model
 init =
-    { email = "", username = "", state = Open (Editing Nothing) }
+    { email = "", username = "", state = Open Editing }
 
 
 
@@ -37,6 +37,7 @@ type Msg
     = EmailChanged String
     | UsernameChanged String
     | Submitted
+    | Resubmitted
     | GotSignUp (Result ApiClient.Error ())
 
 
@@ -50,23 +51,53 @@ update msg model =
             ( { model | username = username }, NoEffect )
 
         Submitted ->
-            if model.state == Open Submitting then
-                ( model, NoEffect )
+            if model.state == Open Editing then
+                ( { model | state = Open Submitting }, sendLink model )
 
             else
-                ( { model | state = Open Submitting }
-                , Request
-                    (ApiClient.request Api.signUp
-                        { email = model.email, username = model.username }
-                        GotSignUp
-                    )
-                )
+                ( model, NoEffect )
+
+        Resubmitted ->
+            if model.state == Open Submitting then
+                ( model, sendLink model )
+
+            else
+                ( model, NoEffect )
 
         GotSignUp (Ok ()) ->
-            ( { model | state = Sent }, NoEffect )
+            ( { model | state = Sent }, Dismiss linkToast )
 
         GotSignUp (Err error) ->
-            ( { model | state = Open (Editing (Just (ApiClient.errorToString error))) }, NoEffect )
+            case error of
+                ApiClient.Throttled _ _ ->
+                    ( model, failure Resubmitted error )
+
+                _ ->
+                    ( { model | state = Open Editing }, failure Submitted error )
+
+
+toasts : List String
+toasts =
+    [ linkToast ]
+
+
+linkToast : String
+linkToast =
+    "sign-up-link"
+
+
+sendLink : Model -> Effect Msg
+sendLink model =
+    Request
+        (ApiClient.request Api.signUp
+            { email = model.email, username = model.username }
+            GotSignUp
+        )
+
+
+failure : Msg -> ApiClient.Error -> Effect Msg
+failure retry error =
+    Effect.failure { id = linkToast, title = "Couldn't send the link", retry = Just retry } error
 
 
 
@@ -102,7 +133,6 @@ view model =
                             ]
                         , Field.description [] [ text "3 to 20 letters, digits or underscores." ]
                         ]
-                    , LinkForm.problem attempt
                     , LinkForm.submit attempt
                     ]
                 ]

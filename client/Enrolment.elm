@@ -1,14 +1,16 @@
-module Enrolment exposing (Msg, Outcome(..), created, failed, requested, update)
+module Enrolment exposing (Msg, Outcome(..), created, failed, requested, toast, update)
 
 import Api
 import ApiClient
 import Ceremony exposing (Ceremony(..))
 import Effect exposing (Effect(..))
 import InteropDefinitions as Interop
+import Notice exposing (Notice)
 
 
 type Msg
     = Requested
+    | Retried
     | GotOptions (Result ApiClient.Error Api.PasskeyOptions)
     | Created Api.Attestation
     | Failed String
@@ -43,13 +45,20 @@ update msg ceremony =
                 ( ceremony, NoEffect, Pending )
 
             else
-                ( Waiting, Request (ApiClient.request Api.passkeyOptions () GotOptions), Pending )
+                ( Waiting, askOptions, Pending )
+
+        Retried ->
+            if ceremony == Waiting then
+                ( ceremony, askOptions, Pending )
+
+            else
+                ( ceremony, NoEffect, Pending )
 
         GotOptions (Ok options) ->
             ( ceremony, SendToJs (Interop.CreatePasskey options), Pending )
 
         GotOptions (Err error) ->
-            ( Resting (Just (ApiClient.errorToString error)), NoEffect, Pending )
+            refused error ceremony
 
         Created attestation ->
             if ceremony == Waiting then
@@ -59,17 +68,61 @@ update msg ceremony =
                 ( ceremony, NoEffect, Pending )
 
         Failed name ->
-            ( Resting (Just (problem name)), NoEffect, Pending )
+            ( Resting, Notify (problem name), Pending )
 
         GotPasskey (Ok passkey) ->
-            ( Resting Nothing, NoEffect, Enrolled passkey )
+            ( Resting, Dismiss toast, Enrolled passkey )
 
         GotPasskey (Err error) ->
-            ( Resting (Just (ApiClient.errorToString error)), NoEffect, Pending )
+            refused error ceremony
 
 
-problem : String -> String
+toast : String
+toast =
+    "passkey-creation"
+
+
+title : String
+title =
+    "Couldn't create a passkey"
+
+
+askOptions : Effect Msg
+askOptions =
+    Request (ApiClient.request Api.passkeyOptions () GotOptions)
+
+
+refused : ApiClient.Error -> Ceremony -> ( Ceremony, Effect Msg, Outcome )
+refused error ceremony =
+    case error of
+        ApiClient.Throttled _ _ ->
+            ( ceremony, Effect.failure { id = toast, title = title, retry = Just Retried } error, Pending )
+
+        _ ->
+            ( Resting, Effect.failure { id = toast, title = title, retry = Just Requested } error, Pending )
+
+
+problem : String -> Notice Msg
 problem name =
+    { id = toast
+    , tone = Notice.Problem
+    , title = title
+    , description = Just (reason name)
+    , retry =
+        case name of
+            "InvalidStateError" ->
+                Notice.NoRetry
+
+            "NotSupportedError" ->
+                Notice.NoRetry
+
+            _ ->
+                Notice.Retry Requested
+    }
+
+
+reason : String -> String
+reason name =
     case name of
         "NotAllowedError" ->
             "The passkey was not created."

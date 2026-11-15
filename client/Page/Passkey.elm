@@ -1,4 +1,4 @@
-module Page.Passkey exposing (Model, Msg, enrolment, init, update, view)
+module Page.Passkey exposing (Model, Msg, enrolment, init, toasts, update, view)
 
 import Ceremony exposing (Ceremony(..))
 import Effect exposing (Effect(..))
@@ -22,7 +22,12 @@ type alias Model =
 
 init : Model
 init =
-    Resting Nothing
+    Resting
+
+
+toasts : List String
+toasts =
+    [ Enrolment.toast ]
 
 
 
@@ -61,8 +66,7 @@ view ceremony =
     [ Plain.lead "Create your passkey"
         "A passkey signs you in with your fingerprint, face or screen lock, with no email to wait for."
     , div [ class "flex flex-col gap-4" ]
-        [ Ceremony.problem ceremony
-        , Button.new
+        [ Button.new
             |> Button.text
                 (if ceremony == Waiting then
                     "Waiting for your device…"

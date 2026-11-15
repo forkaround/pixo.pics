@@ -168,6 +168,51 @@ suite =
                             (response 401 """{"error":"This passkey could not be verified. Try again, or sign in with an emailed link."}""")
                         |> ProgramTest.expectViewHas
                             [ text "This passkey could not be verified. Try again, or sign in with an emailed link." ]
+            , test "sends the link again by itself after a 429" <|
+                \() ->
+                    startAt "/login" defaultFlags
+                        |> ProgramTest.fillIn "email" "Email" "ada@example.com"
+                        |> ProgramTest.clickButton "Email me a link"
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin" (throttled 30)
+                        |> ProgramTest.ensureViewHas [ text "Too many attempts. Trying again in 30 seconds." ]
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Sending the link…" ], attribute (Html.Attributes.disabled True) ]
+                        |> ProgramTest.advanceTime 30000
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "/api/auth/signin"
+                            (.body >> Expect.equal """{"email":"ada@example.com"}""")
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin" (response 202 "{}")
+                        |> ProgramTest.expectViewHas
+                            [ text "If ada@example.com has an account, we sent it a link. It expires in 15 minutes." ]
+            , test "offers to send the link again when the server can't be reached" <|
+                \() ->
+                    startAt "/login" defaultFlags
+                        |> ProgramTest.fillIn "email" "Email" "ada@example.com"
+                        |> ProgramTest.clickButton "Email me a link"
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin" Test.Http.networkError
+                        |> ProgramTest.ensureViewHas [ text "Network offline" ]
+                        |> inToast "Couldn't send the link" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/signin"
+            , test "closes its toasts when the page is left" <|
+                \() ->
+                    startAt "/login" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.fillIn "email" "Email" "ada@example.com"
+                        |> ProgramTest.clickButton "Email me a link"
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin" Test.Http.networkError
+                        |> ProgramTest.ensureViewHas [ text "Couldn't send the link" ]
+                        |> ProgramTest.within (Query.find [ id "auth" ]) (ProgramTest.clickButton "Create an account")
+                        |> ProgramTest.expectViewHas
+                            [ attribute (Html.Attributes.attribute "data-slot" "toast")
+                            , attribute (Html.Attributes.attribute "data-ending-style" "")
+                            , containing [ text "Couldn't send the link" ]
+                            ]
+            , test "starts the passkey over by itself after a 429" <|
+                \() ->
+                    startAt "/login" defaultFlags
+                        |> ProgramTest.clickButton "Log in with a passkey"
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin/passkey/options" (throttled 10)
+                        |> ProgramTest.advanceTime 10000
+                        |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/signin/passkey/options"
             , test "has a tab to sign up, and one back" <|
                 \() ->
                     startAt "/login" defaultFlags
@@ -318,10 +363,31 @@ suite =
                                 { statusCode = 503, headers = [], body = "{\"error\":\"Please try again.\"}" }
                             )
                         |> ProgramTest.ensureViewHas [ text "Please try again." ]
+                        |> ProgramTest.ensureViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "id" "delete-account"), attribute (Html.Attributes.attribute "open" "") ]
                         |> ProgramTest.ensureViewHas [ text "Signed in as ada (ada@example.com)" ]
-                        |> ProgramTest.within (Query.find [ attribute (Html.Attributes.attribute "role" "alertdialog") ]) (ProgramTest.clickButton "Delete")
+                        |> inToast "Couldn't delete your account" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.within (Query.find [ id "delete-account" ]) (ProgramTest.clickButton "Delete")
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
                         |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/")
+            , test "deletes the account by itself once a 429's wait is over" <|
+                \() ->
+                    startAt "/settings/account" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.clickButton "Delete account"
+                        |> ProgramTest.within (Query.find [ id "delete-account" ]) (ProgramTest.clickButton "Delete")
+                        |> ProgramTest.simulateHttpResponse "DELETE" "/api/auth/account" (throttled 20)
+                        |> ProgramTest.ensureViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "id" "delete-account"), attribute (Html.Attributes.attribute "open" "") ]
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Deleting account…" ], attribute (Html.Attributes.disabled True) ]
+                        |> ProgramTest.advanceTime 20000
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
+                        |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/")
+            , test "re-checks only the session after a 429" <|
+                \() ->
+                    startAt "/settings/account" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" (throttled 2)
+                        |> ProgramTest.advanceTime 2000
+                        |> ProgramTest.ensureHttpRequestWasMade "GET" "/api/auth/session"
+                        |> ProgramTest.expectHttpRequests "GET" "/api/auth/passkeys" (List.length >> Expect.equal 1)
             , test "returns to login when the session expired before deletion" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -391,7 +457,19 @@ suite =
                         |> ProgramTest.expectViewHas [ text "Apple Passwords" ]
             ]
         , describe "Passkeys"
-            [ test "formats the added time once when the passkeys are shown" <|
+            [ test "keeps the skeleton and loads the passkeys again on request" <|
+                \() ->
+                    startAt "/settings/account" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateHttpResponse "GET"
+                            "/api/auth/passkeys"
+                            (response 503 """{"error":"Please try again."}""")
+                        |> ProgramTest.ensureViewHas [ text "Can't load your passkeys" ]
+                        |> ProgramTest.ensureViewHasNot [ text "No passkeys yet." ]
+                        |> inToast "Can't load your passkeys" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
+                        |> ProgramTest.expectViewHas [ text "Apple Passwords" ]
+            , test "formats the added time once when the passkeys are shown" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
@@ -654,6 +732,15 @@ suite =
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/passkeys" Test.Http.networkError
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/")
                         |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
+            , test "keeps checking the link and asks again on request" <|
+                \() ->
+                    startAt "/verify#Zm9vYmFy" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/verify" Test.Http.networkError
+                        |> ProgramTest.ensureViewHas [ text "Checking your link" ]
+                        |> ProgramTest.ensureViewHasNot [ text "This link didn't work" ]
+                        |> inToast "Can't check your link" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/verify" newAccount
+                        |> ProgramTest.expectViewHas [ text "Create this account?" ]
             , test "says so when the link is not valid any more" <|
                 \() ->
                     startAt "/verify#Zm9vYmFy" defaultFlags
@@ -1783,6 +1870,14 @@ suite =
                                 >> Query.has [ containing [ text "Database timed out after 5000 ms" ] ]
                             )
                         |> ProgramTest.expectViewHasNot [ text "Region" ]
+            , test "keeps checking and asks again on request" <|
+                \() ->
+                    startAt "/settings/general" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/health" Test.Http.networkError
+                        |> ProgramTest.ensureViewHas [ text "Checking health status" ]
+                        |> inToast "Can't check health status" (ProgramTest.clickButton "Try again")
+                        |> ProgramTest.simulateHttpOk "GET" "/api/health" health
+                        |> ProgramTest.expectViewHas [ text "Healthy" ]
             , test "says when the server can't be reached" <|
                 \() ->
                     startAt "/settings/general" defaultFlags
