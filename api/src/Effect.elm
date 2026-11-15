@@ -6,6 +6,7 @@ import Json.Encode as Encode
 import Response exposing (Response)
 import Services.Neon as Neon
 import Task exposing (Task)
+import Time
 
 
 type Effect msg
@@ -15,6 +16,7 @@ type Effect msg
     | Database (Neon.Request (Int -> Result Failure msg))
     | Http (HttpRequest msg)
     | Succeed msg
+    | Clock (Time.Posix -> msg)
 
 
 type alias Failure =
@@ -68,6 +70,9 @@ map toMsg effect =
 
         Succeed msg ->
             Succeed (toMsg msg)
+
+        Clock gotTime ->
+            Clock (gotTime >> toMsg)
 
 
 query : Neon.Connection -> Interop.Resolver -> String -> Neon.Query a -> (a -> msg) -> Effect msg

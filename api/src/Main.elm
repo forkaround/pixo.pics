@@ -13,6 +13,7 @@ import Flow.Session
 import InteropDefinitions as Interop
 import InteropPorts
 import Json.Decode as Decode
+import RateLimit
 import Reply exposing (Reply(..))
 import Request exposing (Request)
 import Response exposing (Response)
@@ -44,7 +45,7 @@ main =
 
 
 type Model
-    = Running Server
+    = Running Server RateLimit.Limits
     | Broken { problem : String, release : Api.Release }
 
 
@@ -75,7 +76,7 @@ init flags =
             in
             case ( Origin.parse config.origin, Db.connect config, mailer ) of
                 ( Ok origin, Ok db, Ok ( chosen, notice ) ) ->
-                    ( Running { db = db, mailer = chosen, origin = origin, release = release }
+                    ( Running { db = db, mailer = chosen, origin = origin, release = release } RateLimit.empty
                     , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice ]
                     )
 
@@ -109,6 +110,7 @@ init flags =
 
 type Msg
     = GotInterop (Result Decode.Error Interop.ToElm)
+    | Arrived Interop.Resolver Request Time.Posix
     | DatabaseFailed Effect.Failure
     | Health Flow.Health.Msg
     | MagicLink Flow.MagicLink.Msg
@@ -119,14 +121,13 @@ type Msg
 
 update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
-    ( model
-    , case model of
-        Running server ->
-            running server msg
+    case model of
+        Running server limits ->
+            running server limits msg
+                |> Tuple.mapFirst (Running server)
 
         Broken broken ->
-            whenBroken broken msg
-    )
+            ( model, whenBroken broken msg )
 
 
 whenBroken : { problem : String, release : Api.Release } -> Msg -> Effect Msg
@@ -192,48 +193,64 @@ brokenAnswer { problem, release } found =
             Response.unavailable
 
 
-reply : Interop.Resolver -> Reply Msg -> Effect Msg
-reply resolver answer =
+reply : Time.Posix -> Interop.Resolver -> Reply Msg -> RateLimit.Limits -> ( RateLimit.Limits, Effect Msg )
+reply time resolver answer limits =
     case answer of
         Now response ->
-            respond resolver response
+            ( limits, respond resolver response )
 
         Later toEffect ->
-            toEffect resolver
+            ( limits, toEffect resolver )
+
+        Limit policies next ->
+            case RateLimit.check time policies limits of
+                Ok counted ->
+                    reply time resolver next counted
+
+                Err seconds ->
+                    ( limits, respond resolver (Response.tooManyRequests seconds) )
 
 
-running : Server -> Msg -> Effect Msg
-running server msg =
+running : Server -> RateLimit.Limits -> Msg -> ( RateLimit.Limits, Effect Msg )
+running server limits msg =
     case msg of
         GotInterop (Ok (Interop.GotRequest resolver request)) ->
-            reply resolver (route server request)
+            ( limits, Clock (Arrived resolver request) )
+
+        Arrived resolver request time ->
+            reply time
+                resolver
+                (Limit [ RateLimit.requests (Request.clientAddress request) ] (route server request))
+                (RateLimit.sweep time limits)
 
         Health flowMsg ->
-            Effect.map Health (Flow.Health.update server flowMsg)
+            ( limits, Effect.map Health (Flow.Health.update server flowMsg) )
 
         MagicLink flowMsg ->
-            Effect.map MagicLink (Flow.MagicLink.update server flowMsg)
+            ( limits, Effect.map MagicLink (Flow.MagicLink.update server flowMsg) )
 
         Session flowMsg ->
-            Effect.map Session (Flow.Session.update server flowMsg)
+            ( limits, Effect.map Session (Flow.Session.update server flowMsg) )
 
         Passkeys flowMsg ->
-            Effect.map Passkeys (Flow.Passkeys.update server flowMsg)
+            ( limits, Effect.map Passkeys (Flow.Passkeys.update server flowMsg) )
 
         GotInterop (Ok (Interop.SignatureChecked resolver signIn valid)) ->
-            Effect.map PasskeySignIn (Flow.PasskeySignIn.signatureChecked server resolver signIn valid)
+            ( limits, Effect.map PasskeySignIn (Flow.PasskeySignIn.signatureChecked server resolver signIn valid) )
 
         PasskeySignIn flowMsg ->
-            Effect.map PasskeySignIn (Flow.PasskeySignIn.update server flowMsg)
+            ( limits, Effect.map PasskeySignIn (Flow.PasskeySignIn.update server flowMsg) )
 
         DatabaseFailed { resolver, step, problem } ->
-            Batch
+            ( limits
+            , Batch
                 [ respond resolver Response.unavailable
                 , log Interop.Error (step ++ ": " ++ Neon.errorToString problem)
                 ]
+            )
 
         GotInterop (Err _) ->
-            NoEffect
+            ( limits, NoEffect )
 
 
 
@@ -274,6 +291,9 @@ perform effect =
         Succeed msg ->
             Task.succeed msg
                 |> Task.perform identity
+
+        Clock gotTime ->
+            Task.perform gotTime Time.now
 
 
 

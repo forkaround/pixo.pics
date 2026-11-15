@@ -60,40 +60,22 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> request "first" "GET" [ "api", "health" ]
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"allowed":true,"remaining":59,"retry_after":0}]},{"rows":[{"exempt":true}],"rowCount":1}]}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"exempt":true}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, responses values ))
                             ( [ "info", "error" ]
                             , [ health "first" 503 (failed "Database sent an unexpected result") ]
                             )
-            , test "limits by address before it checks the database" <|
+            , test "answers the 11th check in a minute from one address with 429, without the database or a log" <|
                 \() ->
                     start (Just databaseUrl)
-                        |> requestWith
-                            { resolve = "first"
-                            , method = "GET"
-                            , path = [ "api", "health" ]
-                            , headers = [ ( "x-real-ip", "203.0.113.7" ) ]
-                            , body = ""
-                            }
-                        |> ProgramTest.expectHttpRequest "POST"
-                            endpoint
-                            (Test.Http.expectJsonBody
-                                (Decode.field "queries" (Decode.list (Decode.field "params" (Decode.list Decode.string))))
-                                (Expect.equal [ [ "health:ip:203.0.113.7", "60", "60" ], [] ])
-                            )
-            , test "answers 429 without a word in the log when the address asks too often" <|
-                \() ->
-                    start (Just databaseUrl)
-                        |> request "first" "GET" [ "api", "health" ]
-                        |> ProgramTest.advanceTime 1500
-                        |> ProgramTest.simulateHttpOk "POST"
-                            endpoint
-                            """{"results":[{"rows":[{"allowed":false,"remaining":0,"retry_after":2}]},{"rows":[{"exempt":false}],"rowCount":1}]}"""
+                        |> repeat 10 (healthFrom "203.0.113.7")
+                        |> healthFrom "203.0.113.7" "11"
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 10)
                         |> expectSent (\values -> ( levels values, responses values ))
                             ( [ "info" ]
-                            , [ { resolve = "first"
+                            , [ { resolve = "11"
                                 , status = 429
-                                , headers = ( "retry-after", "2" ) :: jsonHeaders
+                                , headers = ( "retry-after", "6" ) :: jsonHeaders
                                 , body = """{"error":"Too many attempts, try again later"}"""
                                 }
                               ]
@@ -135,30 +117,14 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
                         |> expectResponses
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
-            , test "limits by address, then by the cleaned email" <|
-                \() ->
-                    start (Just databaseUrl)
-                        |> signUp """{"email":" Ada@Example.com ","username":"Ada"}"""
-                        |> ProgramTest.expectHttpRequest "POST"
-                            endpoint
-                            (Test.Http.expectJsonBody
-                                (Decode.field "queries" (Decode.list (Decode.field "params" (Decode.list Decode.string))))
-                                (Expect.equal
-                                    [ [ "magic-link:ip:203.0.113.7", "10", "900" ]
-                                    , [ "magic-link:email:ada@example.com", "3", "900" ]
-                                    ]
-                                )
-                            )
             , test "asks for a link that lasts 15 minutes" <|
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":" Ada@Example.com ","username":"Ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.expectHttpRequest "POST"
                             endpoint
                             (Test.Http.expectJsonBody
@@ -169,7 +135,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.expectHttpRequest "POST"
                             BrevoMailer.endpoint
@@ -190,7 +155,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-in")
                         |> ProgramTest.ensureHttpRequest "POST"
                             BrevoMailer.endpoint
@@ -211,7 +175,6 @@ suite =
                 \() ->
                     startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectSent
@@ -225,7 +188,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"username-taken","token":null}],"rowCount":1}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -234,19 +196,51 @@ suite =
                               , body = """{"error":"That username is taken."}"""
                               }
                             ]
-            , test "answers 429 with the longest wait when a limit is reached" <|
+            , test "answers 429 to a 4th link for one cleaned email within the hour" <|
                 \() ->
                     start (Just databaseUrl)
-                        |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST"
-                            endpoint
-                            """{"results":[{"rows":[{"allowed":true,"remaining":9,"retry_after":0}]},{"rows":[{"allowed":false,"remaining":0,"retry_after":240}]}]}"""
+                        |> signUpAs "1" """{"email":" Ada@Example.com ","username":"ada"}"""
+                        |> signUpAs "2" """{"email":"ada@example.com","username":"ada"}"""
+                        |> signUpAs "3" """{"email":" Ada@Example.com ","username":"ada"}"""
+                        |> signUpAs "4" """{"email":"ada@example.com","username":"ada"}"""
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 3)
                         |> expectResponses
-                            [ { resolve = "first"
+                            [ { resolve = "4"
                               , status = 429
-                              , headers = ( "retry-after", "240" ) :: jsonHeaders
+                              , headers = ( "retry-after", "1200" ) :: jsonHeaders
                               , body = """{"error":"Too many attempts, try again later"}"""
                               }
+                            ]
+            , test "answers 429 to a 6th link from one address within 15 minutes" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> repeat 5 (\n -> signUpAs n ("{\"email\":\"ada" ++ n ++ "@example.com\",\"username\":\"ada" ++ n ++ "\"}"))
+                        |> signUpAs "6" """{"email":"ada6@example.com","username":"ada6"}"""
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 5)
+                        |> expectResponses
+                            [ { resolve = "6"
+                              , status = 429
+                              , headers = ( "retry-after", "180" ) :: jsonHeaders
+                              , body = """{"error":"Too many attempts, try again later"}"""
+                              }
+                            ]
+            , test "does not count a link refused for its email against the address" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> signUpAs "1" """{"email":"ada@example.com","username":"ada"}"""
+                        |> signUpAs "2" """{"email":"ada@example.com","username":"ada"}"""
+                        |> signUpAs "3" """{"email":"ada@example.com","username":"ada"}"""
+                        |> signUpAs "4" """{"email":"ada@example.com","username":"ada"}"""
+                        |> signUpAs "5" """{"email":"bob@example.com","username":"bob"}"""
+                        |> signUpAs "6" """{"email":"cyd@example.com","username":"cyd"}"""
+                        |> signUpAs "7" """{"email":"dan@example.com","username":"dan"}"""
+                        |> expectSent
+                            (responses
+                                >> List.filter (\{ status } -> status == 429)
+                                >> List.map (\{ resolve, headers } -> ( resolve, headers ))
+                            )
+                            [ ( "4", ( "retry-after", "1200" ) :: jsonHeaders )
+                            , ( "7", ( "retry-after", "180" ) :: jsonHeaders )
                             ]
             , test "answers 400 to a body that is not a sign-up" <|
                 \() ->
@@ -274,7 +268,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.simulateHttpResponse "POST"
                             BrevoMailer.endpoint
@@ -317,7 +310,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
                             ( [ "info", "error" ], [ 503 ] )
@@ -421,17 +413,6 @@ suite =
                         |> ProgramTest.ensureHttpRequest "POST"
                             endpoint
                             (Test.Http.expectJsonBody
-                                (Decode.field "queries" (Decode.list (Decode.field "params" (Decode.list Decode.string))))
-                                (Expect.equal
-                                    [ [ "magic-link:ip:203.0.113.7", "10", "900" ]
-                                    , [ "magic-link:email:ada@example.com", "3", "900" ]
-                                    ]
-                                )
-                            )
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
-                        |> ProgramTest.ensureHttpRequest "POST"
-                            endpoint
-                            (Test.Http.expectJsonBody
                                 (Decode.map2 Tuple.pair
                                     (Decode.field "query" Decode.string)
                                     (Decode.field "params" (Decode.list Decode.string))
@@ -462,7 +443,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signIn """{"email":"ada@example.com"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
                         |> expectResponses
@@ -493,7 +473,6 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> signIn """{"email":"ada@example.com"}"""
-                        |> ProgramTest.simulateHttpOk "POST" endpoint allowed
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
                             ( [ "info", "error" ], [ 503 ] )
@@ -866,7 +845,7 @@ suite =
                         |> expectSent (responses >> List.map .status) [ 401 ]
             ]
         , describe "POST /api/auth/signin/passkey/options"
-            [ test "answers with a challenge that lasts 5 minutes, limited by address" <|
+            [ test "answers with a challenge that lasts 5 minutes" <|
                 \() ->
                     start (Just databaseUrl)
                         |> signInOptions
@@ -877,13 +856,9 @@ suite =
                                     (Decode.field "query" Decode.string)
                                     (Decode.field "params" (Decode.list Decode.string))
                                 )
-                                (Expect.equal
-                                    ( "SELECT l.retry_after, CASE WHEN l.allowed THEN create_authentication_challenge($4) END AS challenge FROM rate_limit($1, $2, $3) AS l"
-                                    , [ "passkey:ip:203.0.113.7", "20", "900", "300" ]
-                                    )
-                                )
+                                (Expect.equal ( "SELECT create_authentication_challenge($1) AS challenge", [ "300" ] ))
                             )
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"retry_after":0,"challenge":"Y2hhbGxlbmdl"}],"rowCount":1}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"challenge":"Y2hhbGxlbmdl"}],"rowCount":1}"""
                         |> expectResponses
                             [ { resolve = "first"
                               , status = 200
@@ -891,15 +866,16 @@ suite =
                               , body = """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
                               }
                             ]
-            , test "answers 429 when the address asks too often" <|
+            , test "answers 429 to the 11th challenge in 15 minutes from one address, without the database" <|
                 \() ->
                     start (Just databaseUrl)
-                        |> signInOptions
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"retry_after":45,"challenge":null}],"rowCount":1}"""
+                        |> repeat 10 signInOptionsAs
+                        |> signInOptionsAs "11"
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 10)
                         |> expectResponses
-                            [ { resolve = "first"
+                            [ { resolve = "11"
                               , status = 429
-                              , headers = ( "retry-after", "45" ) :: jsonHeaders
+                              , headers = ( "retry-after", "90" ) :: jsonHeaders
                               , body = """{"error":"Too many attempts, try again later"}"""
                               }
                             ]
@@ -1071,6 +1047,33 @@ suite =
                         |> request "first" "GET" [ "api", "nowhere" ]
                         |> expectSent (responses >> List.map .status) [ 404 ]
             ]
+        , describe "every route"
+            [ test "answers 429 to the 31st request in a minute from one address, whatever it asks" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> repeat 30 (nowhereFrom "203.0.113.7")
+                        |> nowhereFrom "203.0.113.7" "31"
+                        |> expectSent (responses >> List.filter (\{ status } -> status == 429))
+                            [ { resolve = "31"
+                              , status = 429
+                              , headers = ( "retry-after", "2" ) :: jsonHeaders
+                              , body = """{"error":"Too many attempts, try again later"}"""
+                              }
+                            ]
+            , test "counts each address apart" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> repeat 30 (nowhereFrom "203.0.113.7")
+                        |> nowhereFrom "198.51.100.4" "31"
+                        |> expectSent (responses >> List.filter (\{ status } -> status == 429)) []
+            , test "lets an address in again once its wait is over" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> repeat 30 (nowhereFrom "203.0.113.7")
+                        |> ProgramTest.advanceTime 2000
+                        |> nowhereFrom "203.0.113.7" "31"
+                        |> expectSent (responses >> List.filter (\{ status } -> status == 429)) []
+            ]
         , describe "routing"
             [ test "answers 404 at an unknown path" <|
                 \() ->
@@ -1137,12 +1140,7 @@ endpoint =
 
 notExempt : String
 notExempt =
-    """{"results":[{"rows":[{"allowed":true,"remaining":59,"retry_after":0}]},{"rows":[{"exempt":false}],"rowCount":1}]}"""
-
-
-allowed : String
-allowed =
-    """{"results":[{"rows":[{"allowed":true,"remaining":9,"retry_after":0}]},{"rows":[{"allowed":true,"remaining":2,"retry_after":0}]}]}"""
+    """{"rows":[{"exempt":false}],"rowCount":1}"""
 
 
 linked : String -> String
@@ -1215,8 +1213,13 @@ session method headers =
 
 signInOptions : App -> App
 signInOptions =
+    signInOptionsAs "first"
+
+
+signInOptionsAs : String -> App -> App
+signInOptionsAs resolve =
     requestWith
-        { resolve = "first"
+        { resolve = resolve
         , method = "POST"
         , path = [ "api", "auth", "signin", "passkey", "options" ]
         , headers = [ ( "x-real-ip", "203.0.113.7" ) ]
@@ -1409,20 +1412,40 @@ startWith config =
             )
 
 
+repeat : Int -> (String -> App -> App) -> App -> App
+repeat times send app =
+    List.foldl (\n -> send (String.fromInt n)) app (List.range 1 times)
+
+
+nowhereFrom : String -> String -> App -> App
+nowhereFrom address resolve =
+    requestWith { resolve = resolve, method = "GET", path = [ "api", "nowhere" ], headers = [ ( "x-real-ip", address ) ], body = "" }
+
+
 request : String -> String -> List String -> App -> App
 request resolve method path =
     requestWith { resolve = resolve, method = method, path = path, headers = [], body = "" }
 
 
 signUp : String -> App -> App
-signUp body =
+signUp =
+    signUpAs "first"
+
+
+signUpAs : String -> String -> App -> App
+signUpAs resolve body =
     requestWith
-        { resolve = "first"
+        { resolve = resolve
         , method = "POST"
         , path = [ "api", "auth", "signup" ]
         , headers = [ ( "content-type", "application/json" ), ( "x-real-ip", "203.0.113.7" ) ]
         , body = body
         }
+
+
+healthFrom : String -> String -> App -> App
+healthFrom address resolve =
+    requestWith { resolve = resolve, method = "GET", path = [ "api", "health" ], headers = [ ( "x-real-ip", address ) ], body = "" }
 
 
 requestWith :
@@ -1613,6 +1636,9 @@ simulateEffects effect =
         Effect.Succeed msg ->
             SimulatedEffect.Task.succeed msg
                 |> SimulatedEffect.Task.perform identity
+
+        Effect.Clock gotTime ->
+            SimulatedEffect.Task.perform gotTime SimulatedEffect.Time.now
 
 
 simulateSubscriptions : Main.Model -> ProgramTest.SimulatedSub Main.Msg

@@ -1,6 +1,7 @@
 module Flow.PasskeySignIn exposing (Msg, authenticate, options, signatureChecked, update)
 
 import Api
+import Data.Challenge exposing (Challenge)
 import Data.CredentialId as CredentialId
 import Data.Origin as Origin
 import Db
@@ -17,24 +18,22 @@ import WebAuthn
 
 
 type Msg
-    = Started Interop.Resolver Db.SignInChallenge
+    = Started Interop.Resolver Challenge
     | KeyFound Interop.Resolver { signed : String, signature : String, signIn : Interop.SignIn } (Maybe String)
     | SignedIn Interop.Resolver Db.PasskeySignIn
 
 
 options : Server -> Request -> Reply Msg
 options server request =
-    Later
-        (\resolver ->
-            query server.db
-                resolver
-                "Passkey sign-in failed at its challenge"
-                (Db.signInChallenge
-                    { policy = RateLimit.passkeyChallenges (Request.clientAddress request)
-                    , ttlSeconds = WebAuthn.challengeSeconds
-                    }
-                )
-                (Started resolver)
+    Limit [ RateLimit.passkeyChallenges (Request.clientAddress request) ]
+        (Later
+            (\resolver ->
+                query server.db
+                    resolver
+                    "Passkey sign-in failed at its challenge"
+                    (Db.signInChallenge { ttlSeconds = WebAuthn.challengeSeconds })
+                    (Started resolver)
+            )
         )
 
 
@@ -96,12 +95,9 @@ signatureChecked server resolver signIn valid =
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
-        Started resolver (Db.SignInChallenge challenge) ->
+        Started resolver challenge ->
             respond resolver
                 (Response.json 200 (Api.encodeResponse Api.passkeySignInOptions { challenge = challenge, rpId = Origin.rpId server.origin }))
-
-        Started resolver (Db.TooManyChallenges limited) ->
-            respond resolver (Response.tooManyRequests limited.retryAfter)
 
         KeyFound resolver assertion (Just publicKey) ->
             case

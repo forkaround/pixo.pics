@@ -18,4 +18,3 @@ Read when touching `.env`, running the app or the database locally, or the proxy
   fails with "Control plane request failed".
 - The proxy holds connections open, so `bun db reset --erase` needs
   `docker stop neon-http-proxy` first.
-- `/api/health` runs `rate_limit`, so it fails until the database is migrated.

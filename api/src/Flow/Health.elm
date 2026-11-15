@@ -13,32 +13,27 @@ import Services.Neon as Neon
 
 
 type Msg
-    = Checked Interop.Resolver ( Int, Result Neon.Error RateLimit.Outcome )
+    = Checked Interop.Resolver ( Int, Result Neon.Error () )
 
 
 check : Server -> Request -> Reply Msg
 check server request =
-    Later
-        (\resolver ->
-            Database
-                (Neon.commit (Neon.withTimeout healthTimeout server.db)
-                    (Neon.transaction always
-                        |> Neon.with
-                            (Db.rateLimit (RateLimit.healthChecks (Request.clientAddress request)))
-                        |> Neon.with Db.ping
+    Limit [ RateLimit.healthChecks (Request.clientAddress request) ]
+        (Later
+            (\resolver ->
+                Database
+                    (Neon.run (Neon.withTimeout healthTimeout server.db)
+                        Db.ping
+                        (\result latency -> Ok (Checked resolver ( latency, result )))
                     )
-                    (\result latency -> Ok (Checked resolver ( latency, result )))
-                )
+            )
         )
 
 
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
-        Checked resolver ( _, Ok (RateLimit.Limited limited) ) ->
-            respond resolver (Response.tooManyRequests limited.retryAfter)
-
-        Checked resolver ( latency, Ok (RateLimit.Allowed _) ) ->
+        Checked resolver ( latency, Ok () ) ->
             if latency > slowAfter then
                 Batch
                     [ respond resolver

@@ -1,16 +1,17 @@
-module RateLimit exposing (Outcome(..), Policy, describe, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, retryAfter)
+module RateLimit exposing (Limits, Policy, check, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, requests, size, sweep)
 
 import Data.ClientAddress as ClientAddress exposing (ClientAddress)
 import Data.Email as Email exposing (Email)
+import Dict exposing (Dict)
+import Time
 
 
 type Policy
     = Policy { key : String, limit : Int, windowSeconds : Int }
 
 
-type Outcome
-    = Allowed { remaining : Int }
-    | Limited { retryAfter : Int }
+type Limits
+    = Limits { due : Dict String Int, sweptAt : Int }
 
 
 describe : Policy -> { key : String, limit : Int, windowSeconds : Int }
@@ -18,36 +19,82 @@ describe (Policy policy) =
     policy
 
 
+requests : ClientAddress -> Policy
+requests address =
+    Policy { key = "requests:ip:" ++ ClientAddress.toString address, limit = 30, windowSeconds = 60 }
+
+
 healthChecks : ClientAddress -> Policy
 healthChecks address =
-    Policy { key = "health:ip:" ++ ClientAddress.toString address, limit = 60, windowSeconds = 60 }
+    Policy { key = "health:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 60 }
 
 
 magicLinksByAddress : ClientAddress -> Policy
 magicLinksByAddress address =
-    Policy { key = "magic-link:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 900 }
+    Policy { key = "magic-link:ip:" ++ ClientAddress.toString address, limit = 5, windowSeconds = 900 }
 
 
 magicLinksByEmail : Email -> Policy
 magicLinksByEmail email =
-    Policy { key = "magic-link:email:" ++ Email.toString email, limit = 3, windowSeconds = 900 }
+    Policy { key = "magic-link:email:" ++ Email.toString email, limit = 3, windowSeconds = 3600 }
 
 
 passkeyChallenges : ClientAddress -> Policy
 passkeyChallenges address =
-    Policy { key = "passkey:ip:" ++ ClientAddress.toString address, limit = 20, windowSeconds = 900 }
+    Policy { key = "passkey:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 900 }
 
 
-retryAfter : List Outcome -> Maybe Int
-retryAfter outcomes =
-    outcomes
-        |> List.filterMap
-            (\outcome ->
-                case outcome of
-                    Allowed _ ->
-                        Nothing
+empty : Limits
+empty =
+    Limits { due = Dict.empty, sweptAt = 0 }
 
-                    Limited limited ->
-                        Just limited.retryAfter
-            )
-        |> List.maximum
+
+check : Time.Posix -> List Policy -> Limits -> Result Int Limits
+check time policies (Limits limits) =
+    let
+        ( waits, counted ) =
+            List.foldl (count (Time.posixToMillis time)) ( [], limits.due ) policies
+    in
+    case List.maximum waits of
+        Just wait ->
+            Err (max 1 ((wait + 999) // 1000))
+
+        Nothing ->
+            Ok (Limits { limits | due = counted })
+
+
+count : Int -> Policy -> ( List Int, Dict String Int ) -> ( List Int, Dict String Int )
+count now (Policy policy) ( waits, due ) =
+    let
+        interval =
+            max 1 ((policy.windowSeconds * 1000) // policy.limit)
+
+        burst =
+            interval * policy.limit
+
+        next =
+            max now (Maybe.withDefault now (Dict.get policy.key due)) + interval
+    in
+    if next - now <= burst then
+        ( waits, Dict.insert policy.key next due )
+
+    else
+        ( (next - burst - now) :: waits, due )
+
+
+sweep : Time.Posix -> Limits -> Limits
+sweep time (Limits limits) =
+    let
+        now =
+            Time.posixToMillis time
+    in
+    if now - limits.sweptAt < 60000 then
+        Limits limits
+
+    else
+        Limits { due = Dict.filter (\_ until -> until > now) limits.due, sweptAt = now }
+
+
+size : Limits -> Int
+size (Limits limits) =
+    Dict.size limits.due

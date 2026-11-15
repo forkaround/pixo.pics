@@ -6,7 +6,7 @@ import Data.LinkToken exposing (LinkToken)
 import Data.Origin as Origin
 import Data.SignUp as SignUp
 import Db
-import Effect exposing (Effect(..), log, query, respond, transact)
+import Effect exposing (Effect(..), log, query, respond)
 import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Path
@@ -19,13 +19,11 @@ import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
 import Services.Mailer.SignIn
 import Services.Mailer.SignUp
-import Services.Neon as Neon
 import SessionCookie
 
 
 type Msg
-    = LinkLimited Interop.Resolver Ask ( RateLimit.Outcome, RateLimit.Outcome )
-    | SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
+    = SignUpLinkCreated Interop.Resolver SignUp.SignUp Db.SignUpLink
     | SignInLinkCreated Interop.Resolver Email Db.SignInLink
     | LinkSent Interop.Resolver Mailer.Outcome
     | VerificationFound Interop.Resolver (Maybe Api.Verification)
@@ -94,32 +92,6 @@ verify server request =
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
-        LinkLimited resolver ask ( byAddress, byEmail ) ->
-            case RateLimit.retryAfter [ byAddress, byEmail ] of
-                Just seconds ->
-                    respond resolver (Response.tooManyRequests seconds)
-
-                Nothing ->
-                    case ask of
-                        SignUpAsked signUp ->
-                            query server.db
-                                resolver
-                                "Magic link failed at its link"
-                                (Db.createSignUpLink
-                                    { email = signUp.email
-                                    , username = signUp.username
-                                    , ttlSeconds = linkMinutes * 60
-                                    }
-                                )
-                                (SignUpLinkCreated resolver signUp)
-
-                        SignInAsked email ->
-                            query server.db
-                                resolver
-                                "Magic link failed at its link"
-                                (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
-                                (SignInLinkCreated resolver email)
-
         SignUpLinkCreated resolver signUp link ->
             case link of
                 Db.UsernameTaken ->
@@ -188,23 +160,38 @@ signInEmail server token =
         }
 
 
+createLink : Server -> Ask -> Interop.Resolver -> Effect Msg
+createLink server ask resolver =
+    case ask of
+        SignUpAsked signUp ->
+            query server.db
+                resolver
+                "Magic link failed at its link"
+                (Db.createSignUpLink
+                    { email = signUp.email
+                    , username = signUp.username
+                    , ttlSeconds = linkMinutes * 60
+                    }
+                )
+                (SignUpLinkCreated resolver signUp)
+
+        SignInAsked email ->
+            query server.db
+                resolver
+                "Magic link failed at its link"
+                (Db.createSignInLink { email = email, ttlSeconds = linkMinutes * 60 })
+                (SignInLinkCreated resolver email)
+
+
 askForLink : Server -> Request -> Result Response Ask -> Reply Msg
 askForLink server request parsed =
     case parsed of
         Ok ask ->
-            Later
-                (\resolver ->
-                    transact server.db
-                        resolver
-                        "Magic link failed at its rate limits"
-                        (Neon.transaction Tuple.pair
-                            |> Neon.with
-                                (Db.rateLimit (RateLimit.magicLinksByAddress (Request.clientAddress request)))
-                            |> Neon.with
-                                (Db.rateLimit (RateLimit.magicLinksByEmail (askedBy ask)))
-                        )
-                        (LinkLimited resolver ask)
-                )
+            Limit
+                [ RateLimit.magicLinksByAddress (Request.clientAddress request)
+                , RateLimit.magicLinksByEmail (askedBy ask)
+                ]
+                (Later (createLink server ask))
 
         Err response ->
             Now response

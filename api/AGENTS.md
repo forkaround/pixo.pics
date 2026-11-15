@@ -49,6 +49,21 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
 4. In `tests/ApiTest.elm`, which walks the routes with `next`: chain the new route after
    the last one.
 
+## Rate limiting
+
+- Limits live in `Main`'s model, never in the database: a burst must not become a burst
+  of writes. Fluid Compute keeps an instance, and the Elm program in it, between
+  requests, so the table catches bursts; a cold start, a deployment or another instance
+  starts empty, and that is accepted.
+- One policy per key, each a function in `api/src/RateLimit.elm` that takes what it limits
+  (`ClientAddress`, `Email`); a key is written nowhere else. Name it after what it limits
+  and whom, like `magic-link:email:<email>`.
+- `Main` counts every request against `RateLimit.requests` before routing it. A flow
+  limits its route further with `Reply.Limit policies next`: every policy is counted or
+  none is, and a refusal answers 429 with the longest wait, before any query.
+- The time comes from `Effect.Clock`, in epoch milliseconds: never `//` or `modBy` on
+  it, since Elm's integer division truncates to 32 bits.
+
 ## Queries
 
 - **SQL values are parameters**: never `++` a request value into SQL; pass `$n` with
@@ -61,14 +76,6 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   the same 202.
 - WebAuthn values are unpadded base64url text, as on the wire. `sign_count` is a `bigint`:
   it arrives as text.
-
-### Rate limiting
-
-- One policy per key, each a function in `api/src/RateLimit.elm` that takes what it limits
-  (`ClientAddress`, `Email`); a key is written nowhere else. Name it after what it limits
-  and whom, like `magic-link:email:<email>`. At most 512 bytes.
-- Several keys in one transaction (`Neon.commit`): always in the same order, or two
-  requests deadlock.
 
 ### Neon driver
 
@@ -90,7 +97,7 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
 
 - Server: the first argument of `request` stands for the Promise's `resolve` and comes
   back in the response. Neon and Brevo are the only HTTP calls: answer them with
-  `simulateHttpOk`. `advanceTime` moves the clock that latency is measured with.
+  `simulateHttpOk`. `advanceTime` moves the clock that latency and rate limits are measured with.
 - A `Neon.Request` and a mailer's `Http` effect are records: test `.body` and
   `.onResponse` with no program.
 - A new email template gets a test that its values reach the HTML and the text.
