@@ -900,7 +900,6 @@ suite =
             , test "keeps the form disabled until it knows the browser can run the model" <|
                 \() ->
                     start defaultFlags
-                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
                         |> ProgramTest.ensureViewHas [ text "Checking GPU support" ]
@@ -911,7 +910,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ class "invisible", containing [ text "Checking GPU support" ] ]
                         |> ProgramTest.ensureViewHasNot [ class "invisible", containing [ text "Nothing here yet" ] ]
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ text "AI Style" ] ]
-                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Generate" ] ]
             , test "makes pictures but writes no prompts without 16-bit shaders" <|
                 \() ->
                     start defaultFlags
@@ -919,7 +918,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ tag "fieldset", attribute (Html.Attributes.disabled False), containing [ id "seed" ] ]
                         |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "AI Style" ] ]
                         |> ProgramTest.ensureViewHas [ text "Needs 16-bit GPU shaders." ]
-                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Generate" ] ]
             , test "says nothing about 16-bit shaders when the GPU has them" <|
                 \() ->
                     start defaultFlags
@@ -959,7 +958,7 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "  a bonsai on a mountain "
                         |> ProgramTest.fillIn "seed" "Seed" "7"
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             modelLoad
                             (Expect.equal
@@ -1009,7 +1008,7 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu", "LoadModel" ])
@@ -1028,7 +1027,6 @@ suite =
                 \() ->
                     start { defaultFlags | models = Just """["prism-ml/bonsai-image-binary-4B-mlx-1bit"]""" }
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
@@ -1049,7 +1047,7 @@ suite =
                         |> ProgramTest.ensureViewHas
                             [ tag "button", id "weights", containing [ text "Binary, 1-bit" ] ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelReleased")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
@@ -1187,7 +1185,7 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (modelProgress "transformer" 599000000 1425271472 False)
                         |> ProgramTest.clickButton "Cancel"
                         |> ProgramTest.ensureViewHas
@@ -1197,7 +1195,7 @@ suite =
                             ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "AbortError" "")
                         |> ProgramTest.ensureViewHasNot [ text "Cancelling…" ]
-                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Download and generate" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Generate" ] ]
             , test "says how many steps it takes" <|
                 \() ->
                     ready
@@ -1231,7 +1229,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "role" "alert"), containing [ text "Write a prompt to generate a picture." ] ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
@@ -1250,7 +1248,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.attribute "aria-invalid" "true") ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.ensureViewHas [ id "prompt", attribute (Html.Attributes.attribute "aria-invalid" "false") ]
@@ -1261,10 +1259,10 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "HTTP 404 for model_index.json")
                         |> ProgramTest.ensureViewHas [ text "HTTP 404 for model_index.json" ]
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "inert" ""), containing [ text "HTTP 404 for model_index.json" ] ]
             , test "stops a picture when asked, and is ready for the next" <|
                 \() ->
@@ -1290,7 +1288,6 @@ suite =
                         |> ProgramTest.clickLink "Models" "/settings/models"
                         |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Release" ] ]
                         |> ProgramTest.clickLink "Studio" "/studio"
-                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [])
@@ -1593,17 +1590,16 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.fillIn "prompt" "Prompt" "a fox in the snow"
                         |> ProgramTest.clickButton "Photo"
-                        |> ProgramTest.ensureViewHasNot [ text "Download and generate" ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "Subject: a red fox")
-                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Download and generate" ] ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Generate" ] ]
                         |> ProgramTest.update (Main.GotPipeline Pipeline.GenerateClicked)
                         |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "role" "progressbar") ]
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (List.filter (\name -> name == "LoadModel" || name == "GenerateImage") >> Expect.equal [])
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten foxPrompt)
-                        |> ProgramTest.clickButton "Download and generate"
+                        |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "ModelLoaded")
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             generation

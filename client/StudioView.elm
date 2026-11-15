@@ -532,14 +532,7 @@ onReadableInput toMsg unreadable =
 
 viewStart : Model -> Html Msg
 viewStart model =
-    generateButton
-        (if Pipeline.isDownloaded model.settings.weights model || Pipeline.inMemory model.device == Just model.settings.weights then
-            "Generate"
-
-         else
-            "Download and generate"
-        )
-        [ disabled (model.settings.prompt == Styling) ]
+    generateButton "Generate" [ disabled (model.settings.prompt == Styling) ]
 
 
 generateButton : String -> List (Html.Attribute Msg) -> Html Msg
