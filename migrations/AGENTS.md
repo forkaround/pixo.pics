@@ -61,8 +61,6 @@ Migrations, the schema's conventions and row-level security. The SQL the server 
 - Postgres can't check a signature: `sign_in_with_passkey` trusts that the server did.
   It is the one function that takes no secret.
 - `delete_expired()` exists, and nothing schedules it yet.
-- `rate_limits` is a logged table on purpose: Neon drops unlogged tables when the compute
-  suspends, which would reset every window.
 
 ## Row-level security
 
@@ -77,8 +75,8 @@ Migrations, the schema's conventions and row-level security. The SQL the server 
 - Work before sign-in or across users is a function: `SECURITY DEFINER`,
   `SET search_path = public, pg_temp`, `REVOKE EXECUTE ... FROM PUBLIC`,
   `GRANT EXECUTE ... TO api`. It runs as the owner, past every policy, so it takes the
-  secret as an argument and filters by it. `api` can't read `sessions.token_hash`,
-  `magic_links` or `rate_limits`, nor execute `new_token()`: functions only.
+  secret as an argument and filters by it. `api` can't read `sessions.token_hash` or
+  `magic_links`, nor execute `new_token()`: functions only.
 - `migrations/check-rls.sql` runs after `migrate` and after `current.sql` and fails them
   over what it can see. It can't tell a grant that is too wide: read the grants in
   `migrations/schema.sql`'s diff.

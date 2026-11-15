@@ -4,8 +4,8 @@
 
 \restrict schema
 
--- Dumped from database version 18.6 (Postgres.app)
--- Dumped by pg_dump version 18.6 (Postgres.app)
+-- Dumped from database version 18.7 (Postgres.app)
+-- Dumped by pg_dump version 18.7 (Postgres.app)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -277,13 +277,6 @@ CREATE FUNCTION public.delete_expired() RETURNS void
     WHERE s.expires_at <= now()
     FOR UPDATE SKIP LOCKED
   );
-  DELETE FROM rate_limits
-  WHERE key IN (
-    SELECT r.key
-    FROM rate_limits AS r
-    WHERE r.tat <= now()
-    FOR UPDATE SKIP LOCKED
-  );
 $$;
 
 
@@ -331,79 +324,6 @@ CREATE FUNCTION public.passkey_public_key(p_credential_id text) RETURNS text
   SELECT p.public_key
   FROM passkeys AS p
   WHERE p.credential_id = p_credential_id;
-$$;
-
-
---
--- Name: rate_limit(text, integer, integer); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.rate_limit(p_key text, p_limit integer, p_window_seconds integer) RETURNS TABLE(allowed boolean, remaining integer, retry_after integer)
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-DECLARE
-  v_now timestamptz := clock_timestamp();
-  v_interval interval;
-  v_burst interval;
-  v_tat timestamptz;
-BEGIN
-  IF p_key IS NULL THEN
-    RAISE EXCEPTION 'rate_limit: key must not be null'
-      USING ERRCODE = 'invalid_parameter_value';
-  END IF;
-  IF octet_length(p_key) > 512 THEN
-    RAISE EXCEPTION 'rate_limit: key must be at most 512 bytes, got %', octet_length(p_key)
-      USING ERRCODE = 'invalid_parameter_value';
-  END IF;
-  IF p_limit IS NULL OR p_limit < 1 THEN
-    RAISE EXCEPTION 'rate_limit: limit must be at least 1, got %', p_limit
-      USING ERRCODE = 'invalid_parameter_value';
-  END IF;
-  IF p_window_seconds IS NULL OR p_window_seconds < 1 THEN
-    RAISE EXCEPTION 'rate_limit: window must be at least 1 second, got %', p_window_seconds
-      USING ERRCODE = 'invalid_parameter_value';
-  END IF;
-  IF p_limit > p_window_seconds::bigint * 1000000 THEN
-    RAISE EXCEPTION 'rate_limit: limit % exceeds one per microsecond over % s', p_limit, p_window_seconds
-      USING ERRCODE = 'invalid_parameter_value';
-  END IF;
-
-  v_interval := (p_window_seconds::bigint * 1000000 / p_limit) * interval '1 microsecond';
-  v_burst := v_interval * p_limit;
-
-  SELECT r.tat INTO v_tat FROM rate_limits AS r WHERE r.key = p_key;
-
-  IF NOT FOUND OR GREATEST(v_tat, v_now) + v_interval <= v_now + v_burst THEN
-    INSERT INTO rate_limits AS r (key, tat)
-    VALUES (p_key, v_now + v_interval)
-    ON CONFLICT (key) DO UPDATE
-      SET tat = GREATEST(r.tat, v_now) + v_interval
-      WHERE GREATEST(r.tat, v_now) + v_interval <= v_now + v_burst
-    RETURNING r.tat INTO v_tat;
-
-    IF FOUND THEN
-      allowed := true;
-      remaining := floor(
-        extract(epoch FROM v_now + v_burst - v_tat) / extract(epoch FROM v_interval)
-      )::integer;
-      retry_after := 0;
-      RETURN NEXT;
-      RETURN;
-    END IF;
-
-    SELECT r.tat INTO v_tat FROM rate_limits AS r WHERE r.key = p_key;
-  END IF;
-
-  allowed := false;
-  remaining := 0;
-  retry_after := GREATEST(
-    1,
-    ceil(extract(epoch FROM COALESCE(v_tat, v_now) + v_interval - v_burst - v_now))
-  )::integer;
-
-  RETURN NEXT;
-END;
 $$;
 
 
@@ -525,18 +445,6 @@ ALTER TABLE ONLY public.passkeys FORCE ROW LEVEL SECURITY;
 
 
 --
--- Name: rate_limits; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.rate_limits (
-    key text NOT NULL,
-    tat timestamp with time zone NOT NULL
-);
-
-ALTER TABLE ONLY public.rate_limits FORCE ROW LEVEL SECURITY;
-
-
---
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -600,14 +508,6 @@ ALTER TABLE ONLY public.magic_links
 
 ALTER TABLE ONLY public.passkeys
     ADD CONSTRAINT passkeys_pkey PRIMARY KEY (credential_id);
-
-
---
--- Name: rate_limits rate_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.rate_limits
-    ADD CONSTRAINT rate_limits_pkey PRIMARY KEY (key);
 
 
 --
@@ -772,12 +672,6 @@ CREATE POLICY own_rows ON public.webauthn_challenges USING ((user_id = ( SELECT 
 ALTER TABLE public.passkeys ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: rate_limits; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.rate_limits ENABLE ROW LEVEL SECURITY;
-
---
 -- Name: sessions; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -879,14 +773,6 @@ REVOKE ALL ON FUNCTION public.new_token() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION public.passkey_public_key(p_credential_id text) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.passkey_public_key(p_credential_id text) TO api;
-
-
---
--- Name: FUNCTION rate_limit(p_key text, p_limit integer, p_window_seconds integer); Type: ACL; Schema: public; Owner: -
---
-
-REVOKE ALL ON FUNCTION public.rate_limit(p_key text, p_limit integer, p_window_seconds integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION public.rate_limit(p_key text, p_limit integer, p_window_seconds integer) TO api;
 
 
 --
