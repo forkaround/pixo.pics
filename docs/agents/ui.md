@@ -51,5 +51,3 @@ mv -n src/UI/* client/UI/ && ls src/UI
   Elm frames would redraw the whole page for the minutes a picture takes. On `md` the
   glass follows `--sidebar-progress` by the X's 68.5-unit move, and the letters, which
   collapse onto the X's lines, fade out while it runs so they don't stay behind it.
-- The logo's tooltip names that work and has its own anchor (`logoTooltip` in `Main`),
-  since `Sidebar.tooltipClass` shows only while the sidebar is collapsed.

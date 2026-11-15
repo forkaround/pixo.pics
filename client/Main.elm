@@ -885,17 +885,9 @@ viewShell model page =
         |> Sidebar.width "15rem"
         |> Sidebar.header
             [ a
-                ([ href (Path.toString Path.Explore)
-                 , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
-                 , class logoTooltip
-                 ]
-                    ++ (if isWorking model then
-                            [ attribute "data-tooltip" (String.join " · " (work model)) ]
-
-                        else
-                            []
-                       )
-                )
+                [ href (Path.toString Path.Explore)
+                , class "flex h-8 items-center rounded-lg px-2 text-sidebar-foreground ring-sidebar-ring outline-hidden focus-visible:ring-2"
+                ]
                 [ span [ class "sidebar-logo flex h-4 shrink-0" ]
                     [ Logo.sidebar model.sidebarProgress
                         { running = isWorking model
@@ -948,11 +940,6 @@ work model =
 isWorking : Model -> Bool
 isWorking model =
     not (List.isEmpty (work model))
-
-
-logoTooltip : String
-logoTooltip =
-    "supports-[anchor-scope:all]:[anchor-name:--logo-tooltip] supports-[anchor-scope:all]:[anchor-scope:--logo-tooltip] supports-[anchor-scope:all]:after:[position-anchor:--logo-tooltip] supports-[anchor-scope:all]:after:pointer-events-none supports-[anchor-scope:all]:after:invisible supports-[anchor-scope:all]:after:fixed supports-[anchor-scope:all]:after:z-50 supports-[anchor-scope:all]:after:-translate-y-1/2 supports-[anchor-scope:all]:after:rounded-md supports-[anchor-scope:all]:after:bg-foreground supports-[anchor-scope:all]:after:px-3 supports-[anchor-scope:all]:after:py-1.5 supports-[anchor-scope:all]:after:text-xs supports-[anchor-scope:all]:after:font-medium supports-[anchor-scope:all]:after:whitespace-nowrap supports-[anchor-scope:all]:after:text-background supports-[anchor-scope:all]:after:opacity-0 supports-[anchor-scope:all]:after:transition-[opacity,visibility] supports-[anchor-scope:all]:after:duration-150 supports-[anchor-scope:all]:after:content-[attr(data-tooltip)] supports-[anchor-scope:all]:after:[top:anchor(center)] supports-[anchor-scope:all]:after:[inset-inline-start:calc(anchor(end)+8px)] supports-[anchor-scope:all]:data-[tooltip]:hover:after:visible supports-[anchor-scope:all]:data-[tooltip]:hover:after:opacity-100 supports-[anchor-scope:all]:data-[tooltip]:focus-visible:after:visible supports-[anchor-scope:all]:data-[tooltip]:focus-visible:after:opacity-100"
 
 
 isGenerating : Pipeline.Device -> Bool
