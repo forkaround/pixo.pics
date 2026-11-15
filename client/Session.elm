@@ -5,6 +5,5 @@ import Api
 
 type Session
     = Unknown
-    | Unavailable String
     | SignedOut
     | SignedIn Api.Account

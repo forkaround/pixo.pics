@@ -1,7 +1,8 @@
-module Effect exposing (Effect(..), map)
+module Effect exposing (Effect(..), failure, map)
 
 import ApiClient
 import InteropDefinitions as Interop
+import Notice exposing (Notice)
 import Time
 
 
@@ -14,6 +15,24 @@ type Effect msg
     | Load String
     | ReadTime (Time.Posix -> msg)
     | ScrollTo String
+    | Notify (Notice msg)
+    | Dismiss String
+    | Sleep Float msg
+    | Toaster (Cmd msg)
+
+
+failure : { id : String, title : String, retry : Maybe msg } -> ApiClient.Error -> Effect msg
+failure details error =
+    let
+        notice =
+            Notice.failure details error
+    in
+    case notice.retry of
+        Notice.RetryIn seconds again ->
+            Batch [ Notify notice, Sleep (toFloat (seconds * 1000)) again ]
+
+        _ ->
+            Notify notice
 
 
 map : (a -> b) -> Effect a -> Effect b
@@ -48,3 +67,15 @@ map toMsg effect =
 
         ScrollTo target ->
             ScrollTo target
+
+        Notify notice ->
+            Notify (Notice.map toMsg notice)
+
+        Dismiss id ->
+            Dismiss id
+
+        Sleep milliseconds msg ->
+            Sleep milliseconds (toMsg msg)
+
+        Toaster cmd ->
+            Toaster (Cmd.map toMsg cmd)

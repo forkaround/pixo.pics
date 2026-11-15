@@ -2,6 +2,7 @@ module ApiClient exposing (Error(..), Request, errorToString, request, send, wit
 
 import Api exposing (Endpoint)
 import Data.LinkToken as LinkToken exposing (LinkToken)
+import Dict exposing (Dict)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -18,6 +19,8 @@ type alias Request msg =
 
 type Error
     = Unauthorized String
+    | Throttled Int String
+    | Refused String
     | Failed String
 
 
@@ -25,6 +28,12 @@ errorToString : Error -> String
 errorToString error =
     case error of
         Unauthorized message ->
+            message
+
+        Throttled _ message ->
+            message
+
+        Refused message ->
             message
 
         Failed message ->
@@ -94,13 +103,13 @@ fromResponse decoder response =
         Http.BadStatus_ metadata body ->
             case Decode.decodeString Api.errorDecoder body of
                 Ok message ->
-                    Err (refusal metadata.statusCode message)
+                    Err (refusal metadata message)
 
                 Err _ ->
                     Decode.decodeString decoder body
                         |> Result.mapError
                             (\_ ->
-                                refusal metadata.statusCode ("Server error HTTP " ++ String.fromInt metadata.statusCode)
+                                refusal metadata ("Server error HTTP " ++ String.fromInt metadata.statusCode)
                             )
 
         Http.GoodStatus_ _ body ->
@@ -108,10 +117,30 @@ fromResponse decoder response =
                 |> Result.mapError (\_ -> Failed "Unexpected server response")
 
 
-refusal : Int -> String -> Error
-refusal status message =
-    if status == 401 then
+refusal : Http.Metadata -> String -> Error
+refusal metadata message =
+    if metadata.statusCode == 401 then
         Unauthorized message
+
+    else if metadata.statusCode == 429 then
+        case retryAfter metadata.headers of
+            Just seconds ->
+                Throttled seconds message
+
+            Nothing ->
+                Failed message
+
+    else if metadata.statusCode >= 400 && metadata.statusCode < 500 then
+        Refused message
 
     else
         Failed message
+
+
+retryAfter : Dict String String -> Maybe Int
+retryAfter headers =
+    Dict.toList headers
+        |> List.filter (\( name, _ ) -> String.toLower name == "retry-after")
+        |> List.head
+        |> Maybe.andThen (\( _, value ) -> String.toInt (String.trim value))
+        |> Maybe.map (max 0)

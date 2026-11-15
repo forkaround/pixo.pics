@@ -15,8 +15,8 @@ The Elm browser app in `client/`: pages, the session, ports and UI.
   other message for a page that is no longer open changes nothing and runs no effect.
 - `open` starts a page's model anew, which is also what ends an unfinished passkey
   ceremony.
-- A session check that fails other than with a 401 is `Unavailable`: the page says so and
-  offers "Try again", and sends nobody to `/login`.
+- A session check that fails other than with a 401 leaves the session `Unknown`: what
+  depends on it stays a skeleton, a toast says so, and nobody is sent to `/login`.
 - The server is called only through `ApiClient.request` with an `Api.Endpoint`. On an
   error status it decodes `Api.errorDecoder`, then the endpoint's own response: the
   health report comes with a 503.
@@ -40,6 +40,21 @@ A page with state of its own is a module in `client/Page/`. A new one is:
 
 - Port messages sent from one `update` reach TypeScript in the reverse of the order they
   were listed in, so no two may depend on their order.
+
+## Toasts
+
+- Outcomes of actions and failed requests are toasts, not text in the page: an effect
+  `Notify` with a `Notice`. Field validation stays by its field; what a page is about (an
+  empty state, a link that didn't work) stays in the page.
+- When fetching data fails, the loading skeleton stays and a toast says what failed.
+- `Effect.failure` turns a failed request into its toast: after a 429 with `retry-after`, the
+  request is sent again by itself after that wait, and the toast has no action and closes
+  then; after a network failure or a 5xx, the toast offers "Try again" and stays until it is
+  used or closed; after a 401 or another 4xx, it has no action and closes after 5 s.
+- A toast's id names the operation: a new outcome replaces the toast showing under it.
+- `Notify` and `Dismiss` reach the toaster in `Main` as `GotToast` messages; `Sleep` waits;
+  `Toaster` carries the toaster's own commands, which tests drop. In tests a toast never
+  closes: assert what it says and what its action does, never that it is gone.
 
 ## UI
 

@@ -22,6 +22,7 @@ import LibraryView
 import Logo
 import Minidenticons
 import ModelsView
+import Notice
 import Page.Account
 import Page.General
 import Page.Passkey
@@ -32,6 +33,7 @@ import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline
 import Plain
+import Process
 import Session exposing (Session(..))
 import StudioView
 import Stylist
@@ -42,11 +44,11 @@ import Task
 import Time
 import UI.Avatar as Avatar
 import UI.Button as Button
-import UI.Card as Card
 import UI.DropdownMenu as DropdownMenu
 import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 import UI.Tabs as Tabs
+import UI.Toast as Toast
 import Url exposing (Url)
 
 
@@ -84,6 +86,7 @@ type alias Model =
     , sidebarProgress : Float
     , runs : Int
     , turns : Int
+    , toaster : Toast.Toaster Msg
     , page : Page
     }
 
@@ -128,6 +131,7 @@ init flags url =
         , sidebarProgress = sidebarTarget sidebar
         , runs = 0
         , turns = 0
+        , toaster = Toast.init
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
@@ -321,6 +325,7 @@ type Msg
     | SidebarAnimated Float
     | HourglassTurned
     | Scrolled
+    | GotToast (Toast.Msg Msg)
 
 
 subscriptions : Model -> Sub Msg
@@ -337,6 +342,7 @@ subscriptions model =
 
           else
             Sub.none
+        , Toast.subscriptions GotToast model.toaster
         ]
 
 
@@ -479,6 +485,10 @@ step msg model =
         HourglassTurned ->
             ( { model | turns = model.turns + 1 }, NoEffect )
 
+        GotToast toastMsg ->
+            Toast.update GotToast toastMsg model.toaster
+                |> Tuple.mapBoth (\toaster -> { model | toaster = toaster }) Toaster
+
         PathSelected path ->
             ( model, PushUrl (Path.toString path) )
 
@@ -543,8 +553,15 @@ step msg model =
                             NoEffect
                     )
 
-                ( _, ApiClient.Failed message ) ->
-                    ( { model | session = Unavailable message }, NoEffect )
+                _ ->
+                    ( model
+                    , Effect.failure
+                        { id = "session"
+                        , title = "Can't check who is signed in"
+                        , retry = Just SessionRetried
+                        }
+                        error
+                    )
 
         SessionRetried ->
             case model.page of
@@ -685,6 +702,18 @@ perform key effect =
                 |> Task.andThen (Dom.setViewport 0)
                 |> Task.attempt (always Scrolled)
 
+        Notify notice ->
+            Task.perform GotToast (Task.succeed (Toast.add (Notice.toToast notice)))
+
+        Dismiss id ->
+            Task.perform GotToast (Task.succeed (Toast.close id))
+
+        Sleep milliseconds msg ->
+            Task.perform (\_ -> msg) (Process.sleep milliseconds)
+
+        Toaster cmd ->
+            cmd
+
 
 
 -- VIEW
@@ -704,7 +733,9 @@ view model =
                 )
             , attribute "style" ("--sidebar-progress: " ++ String.fromFloat model.sidebarProgress)
             ]
-            [ viewBody model ]
+            [ viewBody model
+            , Toast.view GotToast model.toaster
+            ]
         ]
     }
 
@@ -824,13 +855,7 @@ viewBody model =
                                     _ ->
                                         text "Manage your account and how you sign in."
                                 )
-                                (case model.session of
-                                    Unavailable message ->
-                                        [ notice "Can't check who is signed in" message [ retry ] ]
-
-                                    _ ->
-                                        List.map (Html.map GotAccount) (Page.Account.view model.session account)
-                                )
+                                (List.map (Html.map GotAccount) (Page.Account.view model.session account))
                     ]
                 ]
 
@@ -1040,10 +1065,6 @@ viewSession model =
                     ]
                 ]
 
-        Unavailable _ ->
-            guest "Can't check who is signed in"
-                [ DropdownMenu.item [ onClick SessionRetried ] [ icon Phosphor.arrowClockwise, text "Try again" ] ]
-
         SignedOut ->
             guest "Not signed in"
                 [ DropdownMenu.item [ onClick (PathSelected Path.SignIn) ] [ icon Phosphor.signIn, text "Log in" ]
@@ -1158,29 +1179,6 @@ viewContent children =
     Html.section [ class "flex min-w-0 flex-1 flex-col" ] children
 
 
-notice : String -> String -> List (Html Msg) -> Html Msg
-notice heading body actions =
-    Card.new
-        |> Card.title [ text heading ]
-        |> Card.description [ text body ]
-        |> (if List.isEmpty actions then
-                identity
-
-            else
-                Card.footer [ class "gap-2" ] actions
-           )
-        |> Card.toHtml [ class "w-full max-w-sm" ]
-
-
-retry : Html Msg
-retry =
-    Button.new
-        |> Button.text "Try again"
-        |> Button.outline
-        |> Button.small
-        |> Button.toHtml [ onClick SessionRetried ]
-
-
 notFoundOptions : Session -> List (Html Msg)
 notFoundOptions session =
     let
@@ -1193,13 +1191,6 @@ notFoundOptions session =
     case session of
         Unknown ->
             []
-
-        Unavailable _ ->
-            [ Button.new
-                |> Button.text "Try again"
-                |> Button.outline
-                |> Button.toHtml [ onClick SessionRetried, class "h-10 flex-1" ]
-            ]
 
         SignedOut ->
             [ option Path.SignIn "Log in"

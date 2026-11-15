@@ -21,6 +21,22 @@ suite =
                 \() ->
                     answer (response 503 """{"error":"Not available right now. Try again later."}""")
                         |> Expect.equal (Err (ApiClient.Failed "Not available right now. Try again later."))
+            , test "reads how long to wait from a 429" <|
+                \() ->
+                    answer (responseWith 429 [ ( "retry-after", "30" ) ] """{"error":"Too many attempts, try again later"}""")
+                        |> Expect.equal (Err (ApiClient.Throttled 30 "Too many attempts, try again later"))
+            , test "reads the wait whatever the header's case" <|
+                \() ->
+                    answer (responseWith 429 [ ( "Retry-After", "30" ) ] """{"error":"Too many attempts, try again later"}""")
+                        |> Expect.equal (Err (ApiClient.Throttled 30 "Too many attempts, try again later"))
+            , test "fails a 429 that says no wait" <|
+                \() ->
+                    answer (response 429 """{"error":"Too many attempts, try again later"}""")
+                        |> Expect.equal (Err (ApiClient.Failed "Too many attempts, try again later"))
+            , test "tells a refused input from a failure" <|
+                \() ->
+                    answer (response 404 """{"error":"This link is not valid any more. Sign up again to get a new one."}""")
+                        |> Expect.equal (Err (ApiClient.Refused "This link is not valid any more. Sign up again to get a new one."))
             , test "fails when the server can't be reached" <|
                 \() ->
                     answer Test.Http.networkError
@@ -46,5 +62,10 @@ answer =
 
 
 response : Int -> String -> Http.Response String
-response statusCode body =
-    Test.Http.httpResponse { statusCode = statusCode, headers = [], body = body }
+response statusCode =
+    responseWith statusCode []
+
+
+responseWith : Int -> List ( String, String ) -> String -> Http.Response String
+responseWith statusCode headers body =
+    Test.Http.httpResponse { statusCode = statusCode, headers = headers, body = body }

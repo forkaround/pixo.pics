@@ -210,9 +210,6 @@ view session account =
             , viewDeleteAccount Nothing
             ]
 
-        Session.Unavailable _ ->
-            []
-
         Session.SignedOut ->
             [ Empty.new
                 |> Empty.icon (Phosphor.userCircle Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])

@@ -8,12 +8,14 @@ import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Main
+import Notice
 import Pipeline
 import ProgramTest exposing (ProgramTest)
 import SimulatedEffect.Cmd
 import SimulatedEffect.Http
 import SimulatedEffect.Navigation
 import SimulatedEffect.Ports
+import SimulatedEffect.Process
 import SimulatedEffect.Task
 import SimulatedEffect.Time
 import Stylist
@@ -23,6 +25,7 @@ import Test.Html.Selector as Selector exposing (attribute, class, containing, id
 import Test.Http
 import TsJson.Decode as TsDecode
 import TsJson.Encode as TsEncode
+import UI.Toast as Toast
 
 
 suite : Test
@@ -239,6 +242,24 @@ suite =
                         |> ProgramTest.clickButton "Try again"
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
+            , test "tries the session again by itself after a 429" <|
+                \() ->
+                    start defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" (throttled 30)
+                        |> ProgramTest.ensureViewHas [ text "Too many attempts. Trying again in 30 seconds." ]
+                        |> ProgramTest.advanceTime 29999
+                        |> ProgramTest.ensureHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 0)
+                        |> ProgramTest.advanceTime 1
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
+            , test "keeps the account page's skeletons while the session can't be checked" <|
+                \() ->
+                    startAt "/settings/account" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET"
+                            "/api/auth/session"
+                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                        |> ProgramTest.ensureViewHasNot [ text "Not logged in" ]
+                        |> ProgramTest.expectViewHasNot [ text "Manage your account and how you sign in." ]
             ]
         , describe "Account"
             [ test "deletes the account only after confirmation and returns home signed out" <|
@@ -363,7 +384,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/auth/passkeys"
                             (response 503 """{"error":"Not available right now. Try again later."}""")
-                        |> ProgramTest.within (Query.find [ tag "section" ]) (ProgramTest.clickButton "Try again")
+                        |> inToast "Can't check who is signed in" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
                         |> ProgramTest.ensureViewHas [ text "Signed in as ada (ada@example.com)" ]
@@ -2392,6 +2413,19 @@ simulateEffects effect =
         Effect.ScrollTo _ ->
             SimulatedEffect.Cmd.none
 
+        Effect.Notify notice ->
+            SimulatedEffect.Task.perform Main.GotToast (SimulatedEffect.Task.succeed (Toast.add (Notice.toToast notice)))
+
+        Effect.Dismiss id ->
+            SimulatedEffect.Task.perform Main.GotToast (SimulatedEffect.Task.succeed (Toast.close id))
+
+        Effect.Sleep milliseconds msg ->
+            SimulatedEffect.Process.sleep milliseconds
+                |> SimulatedEffect.Task.perform (\() -> msg)
+
+        Effect.Toaster _ ->
+            SimulatedEffect.Cmd.none
+
 
 simulateSubscriptions : Main.Model -> ProgramTest.SimulatedSub Main.Msg
 simulateSubscriptions _ =
@@ -2413,6 +2447,25 @@ merge result =
 response : Int -> String -> Http.Response String
 response statusCode body =
     Test.Http.httpResponse { statusCode = statusCode, headers = [], body = body }
+
+
+throttled : Int -> Http.Response String
+throttled seconds =
+    Test.Http.httpResponse
+        { statusCode = 429
+        , headers = [ ( "retry-after", String.fromInt seconds ) ]
+        , body = """{"error":"Too many attempts, try again later"}"""
+        }
+
+
+inToast : String -> (ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+inToast heading =
+    ProgramTest.within
+        (Query.find
+            [ attribute (Html.Attributes.attribute "data-slot" "toast")
+            , containing [ text heading ]
+            ]
+        )
 
 
 localStorageWrite : Decode.Decoder { tag : String, key : String, value : String }
