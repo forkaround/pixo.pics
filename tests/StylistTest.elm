@@ -78,7 +78,7 @@ suite =
                         |> List.map (\turn -> List.map (String.split ":" >> List.head) (String.lines turn.content))
                         |> List.filter ((/=) (List.map Just [ "Subject", "Style", "Setting", "Lighting", "Camera", "Mood" ]))
                         |> Expect.equal []
-            , test "tells the shape of the picture" <|
+            , test "tells the orientation of the picture, and no size or ratio to copy" <|
                 \() ->
                     List.map
                         (\frame ->
@@ -86,10 +86,10 @@ suite =
                                 |> List.head
                                 |> Maybe.map .content
                                 |> Maybe.withDefault ""
-                                |> (\content -> List.filter (\shape -> String.contains shape content) [ "1:1, a square frame", "9:16, a tall portrait frame", "16:9, a wide landscape frame" ])
+                                |> (\content -> List.filter (\words -> String.contains words content) [ "a square frame", "a tall portrait frame", "a wide landscape frame", "1:1", "9:16", "16:9", "pixels", "1024" ])
                         )
                         [ square, { width = 576, height = 1024 }, { width = 1024, height = 576 } ]
-                        |> Expect.equal [ [ "1:1, a square frame" ], [ "9:16, a tall portrait frame" ], [ "16:9, a wide landscape frame" ] ]
+                        |> Expect.equal [ [ "a square frame" ], [ "a tall portrait frame" ], [ "a wide landscape frame" ] ]
             , test "has examples that frame no shape of their own" <|
                 \() ->
                     Stylist.styles

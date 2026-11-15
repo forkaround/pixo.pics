@@ -109,9 +109,11 @@ answer.
 - While it writes, AI Style holds the prompt: `Stylist.update` hands it over (`Took`,
   then `Gave` with the answer or the idea) and `Pipeline.Draft` is `Styling`, so the
   studio has no prompt to make a picture from. The box shows `Stylist.shown` meanwhile.
-- The instructions give the picture's size, ratio and orientation (`Stylist.Frame`), and
-  the Camera line asks for a composition that fills it. The examples name no ratio or
-  widescreen framing of their own, which would contradict a square or tall picture.
+- The instructions give the picture's orientation only (`Stylist.Frame`: square, tall
+  or wide), and the Camera line asks for a composition that fills it. Given the size and
+  ratio ("768 by 960 pixels, 4:5"), the model copied them into almost every answer, and
+  FLUX.2 gets the size on its own. The examples name no ratio or widescreen framing of
+  their own, which would contradict a square or tall picture.
 - WebLLM keeps the model in the Cache API (`webllm/*`), apart from Bonsai's IndexedDB:
   "Remove downloaded models" leaves it, and the Prompt writer card removes it.
   `stylist` in `localStorage` holds the id of the model that finished loading.

@@ -1552,7 +1552,7 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             instructing
                             (List.filterMap identity
-                                >> List.map (String.contains "The picture is 1024 by 576 pixels, 16:9, a wide landscape frame.")
+                                >> List.map (String.contains "The picture is a wide landscape frame.")
                                 >> Expect.equal [ True ]
                             )
             , test "can't generate while it writes the prompt" <|

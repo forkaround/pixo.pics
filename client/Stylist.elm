@@ -576,7 +576,7 @@ instructions : Style -> Frame -> String
 instructions style frame =
     String.join "\n"
         [ "You write prompts for the FLUX.2 image model in the style \"" ++ styleName style ++ "\": " ++ look style ++ "."
-        , "The picture is " ++ shape frame ++ "."
+        , "The picture is " ++ orientation frame ++ "."
         , ""
         , "Turn each idea into exactly these six lines, in this order:"
         , "Subject: the main subject from the idea and what it is doing, with concrete details"
@@ -595,18 +595,6 @@ instructions style frame =
         ]
 
 
-shape : Frame -> String
-shape frame =
-    let
-        common =
-            gcd frame.width frame.height
-
-        ratio =
-            String.fromInt (frame.width // common) ++ ":" ++ String.fromInt (frame.height // common)
-    in
-    String.fromInt frame.width ++ " by " ++ String.fromInt frame.height ++ " pixels, " ++ ratio ++ ", " ++ orientation frame
-
-
 orientation : Frame -> String
 orientation frame =
     if frame.width > frame.height then
@@ -617,15 +605,6 @@ orientation frame =
 
     else
         "a square frame"
-
-
-gcd : Int -> Int -> Int
-gcd a b =
-    if b == 0 then
-        max 1 a
-
-    else
-        gcd b (modBy b a)
 
 
 look : Style -> String
