@@ -5,7 +5,7 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Expect
-import Pipeline exposing (Command(..), Component(..), Device(..), Draft(..), Engine(..), Event(..), Message(..), Msg(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
+import Pipeline exposing (Command(..), Component(..), Device(..), Draft(..), Engine(..), Event(..), Message(..), Msg(..), NumberField(..), Prompting(..), Seeding(..), Stage(..), Storage(..), Weights(..))
 import Test exposing (Test, describe, test)
 
 
@@ -46,20 +46,6 @@ suite =
                         )
                         [ "", "0", "51", "4.5", "four" ]
                         |> Expect.equal (List.repeat 5 ( [ "Steps must be a whole number from 1 to 50." ], Nothing ))
-            , test "start a fixed seed from the last picture's" <|
-                \() ->
-                    run
-                        [ PromptChanged "a bonsai"
-                        , SeedChanged "31"
-                        , GenerateClicked
-                        , Happened (PictureMade "blob:1")
-                        , RandomSeedToggled True
-                        , RandomSeedToggled False
-                        ]
-                        ready
-                        |> .settings
-                        |> .seeding
-                        |> Expect.equal (FixedSeed "31")
             , test "take a preset's width and height" <|
                 \() ->
                     List.filter (\preset -> preset.name == "Story") Pipeline.presets
@@ -233,7 +219,7 @@ suite =
                         |> Expect.equal ( [ "Write a prompt to generate a picture." ], Nothing )
             , test "names every value it can't take at once" <|
                 \() ->
-                    run [ StepsChanged "0", RandomSeedToggled False, SeedChanged "-1", GenerateClicked ] ready
+                    run [ StepsChanged "0", SeedChanged "-1", GenerateClicked ] ready
                         |> failing
                         |> Expect.equal
                             [ "Write a prompt to generate a picture."
@@ -284,8 +270,27 @@ suite =
                             run [ PromptChanged "a bonsai", SeedChanged seed, GenerateClicked ] ready
                                 |> .device
                         )
-                        [ "", "-1", "1.5", "4294967296", "seven" ]
-                        |> Expect.equal (List.repeat 5 (Supported CanPrompt (Ready Ternary)))
+                        [ "-1", "1.5", "4294967296", "seven" ]
+                        |> Expect.equal (List.repeat 4 (Supported CanPrompt (Ready Ternary)))
+            , test "names a seed or steps the browser can't read, and makes no picture" <|
+                \() ->
+                    run [ PromptChanged "a bonsai", SeedChanged "123", Unreadable SeedField, Unreadable StepsField, GenerateClicked ] ready
+                        |> (\model -> ( failing model, model.device ))
+                        |> Expect.equal
+                            ( [ "Steps must be a whole number from 1 to 50."
+                              , "Seed must be a whole number from 0 to 4294967295."
+                              ]
+                            , Supported CanPrompt (Ready Ternary)
+                            )
+            , test "drops an unreadable value once a readable one is typed" <|
+                \() ->
+                    run [ Unreadable SeedField, Unreadable StepsField, SeedChanged "7", StepsChanged "8" ] ready
+                        |> failing
+                        |> Expect.equal []
+            , test "goes back to a random seed when the seed is emptied" <|
+                \() ->
+                    List.map (\seed -> run [ SeedChanged seed ] ready |> .settings |> .seeding) [ "", "  " ]
+                        |> Expect.equal [ RandomSeed, RandomSeed ]
             , test "takes the largest seed" <|
                 \() ->
                     Pipeline.update GenerateClicked (run [ PromptChanged "a bonsai", SeedChanged "4294967295" ] ready)
@@ -458,7 +463,7 @@ supported =
 
 ready : Pipeline.Model
 ready =
-    run [ DownloadClicked Ternary, Happened ModelLoaded, RandomSeedToggled False ] supported
+    run [ DownloadClicked Ternary, Happened ModelLoaded, SeedChanged "0" ] supported
 
 
 run : List Msg -> Pipeline.Model -> Pipeline.Model

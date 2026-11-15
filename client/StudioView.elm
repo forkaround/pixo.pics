@@ -6,14 +6,15 @@ import Data.Seed as Seed
 import Data.Steps as Steps
 import Html exposing (Html, button, div, figcaption, figure, form, img, label, p, span, text)
 import Html.Attributes exposing (alt, attribute, class, disabled, download, for, height, href, id, name, novalidate, placeholder, readonly, src, style, title, type_, value, width)
-import Html.Events exposing (onClick, onInput, onSubmit)
+import Html.Events exposing (on, onClick, onInput, onSubmit, preventDefaultOn)
 import Html.Keyed as Keyed
+import Json.Decode as Decode
 import Library
 import Lightbox
 import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
-import Pipeline exposing (Component(..), Device(..), Draft(..), Engine(..), Message(..), Model, Msg(..), Seeding(..), Stage(..))
+import Pipeline exposing (Component(..), Device(..), Draft(..), Engine(..), Message(..), Model, Msg(..), NumberField(..), Seeding(..), Stage(..))
 import Stylist
 import SupportView
 import UI.Button as Button
@@ -82,9 +83,10 @@ viewPrompt toMsg checks stylist model =
     , Textarea.view
         [ id "prompt"
         , name "prompt"
-        , placeholder "A bonsai tree on a misty mountain top"
+        , placeholder "Honest politicians at work, photorealistic. ⌘ + ↵"
         , value shown
         , onInput (PromptChanged >> toMsg.pipeline)
+        , onShortcutEnter (toMsg.pipeline GenerateClicked)
         , disabled (isLocked model)
         , invalid checks "prompt"
         , attribute "aria-busy"
@@ -101,6 +103,24 @@ viewPrompt toMsg checks stylist model =
             ++ [ Html.map toMsg.pipeline (viewWeights model) ]
         )
     ]
+
+
+onShortcutEnter : msg -> Html.Attribute msg
+onShortcutEnter msg =
+    preventDefaultOn "keydown"
+        (Decode.map3 (\key meta ctrl -> key == "Enter" && (meta || ctrl))
+            (Decode.field "key" Decode.string)
+            (Decode.field "metaKey" Decode.bool)
+            (Decode.field "ctrlKey" Decode.bool)
+            |> Decode.andThen
+                (\pressed ->
+                    if pressed then
+                        Decode.succeed ( msg, True )
+
+                    else
+                        Decode.fail "Not Cmd or Ctrl and Enter"
+                )
+        )
 
 
 isLocked : Model -> Bool
@@ -352,7 +372,7 @@ viewSettings : Bool -> List Pipeline.Validation -> Pipeline.Settings -> Html Msg
 viewSettings locked checks settings generate =
     [ div [ class "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 md:flex md:flex-wrap md:items-center" ]
         [ viewSize locked settings
-        , viewSeed locked (invalid checks "seed") settings.seeding
+        , viewSeed locked (invalid checks "seed") settings
         , viewSteps locked (invalid checks "steps") settings
         , generate
         ]
@@ -361,17 +381,21 @@ viewSettings locked checks settings generate =
 
 viewSteps : Bool -> Html.Attribute Msg -> Pipeline.Settings -> Html Msg
 viewSteps locked validity settings =
-    InputGroup.view [ InputGroup.small, class "w-auto!" ]
+    InputGroup.view [ InputGroup.small, class "w-auto! bg-background" ]
         [ InputGroup.start [] [ label [ for "steps" ] [ text "Steps" ] ]
         , InputGroup.input
             [ id "steps"
             , name "steps"
+            , type_ "number"
+            , Html.Attributes.min (String.fromInt Steps.fewest)
+            , Html.Attributes.max (String.fromInt Steps.most)
+            , Html.Attributes.step "1"
             , attribute "inputmode" "numeric"
             , validity
-            , value settings.steps
-            , onInput StepsChanged
+            , value (readable StepsField settings settings.steps)
+            , onReadableInput StepsChanged (Unreadable StepsField)
             , disabled locked
-            , class "w-14! flex-none! text-center tabular-nums"
+            , class "w-auto! min-w-[calc(1ch+--spacing(4))] max-w-[calc(4ch+--spacing(4))] flex-none! field-sizing-content font-mono tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             ]
         ]
 
@@ -396,7 +420,6 @@ viewSize locked settings =
                             Nothing ->
                                 "Size: " ++ size settings.width settings.height
                         )
-                   , class "tabular-nums"
                    , disabled locked
                    ]
             )
@@ -416,7 +439,7 @@ viewSize locked settings =
                             ]
                             [ shapeIcon preset.width preset.height
                             , text preset.name
-                            , DropdownMenu.shortcut [ span [ class "tabular-nums" ] [ text preset.ratio ] ]
+                            , DropdownMenu.shortcut [ text preset.ratio ]
                             ]
                     )
                     Pipeline.presets
@@ -451,49 +474,60 @@ size across down =
     String.fromInt (Dimension.toInt across) ++ " × " ++ String.fromInt (Dimension.toInt down)
 
 
-viewSeed : Bool -> Html.Attribute Msg -> Seeding -> Html Msg
-viewSeed locked validity seeding =
-    let
-        ( typed, random ) =
-            case seeding of
-                RandomSeed ->
-                    ( "", True )
-
-                FixedSeed seed ->
-                    ( seed, False )
-    in
-    InputGroup.view [ InputGroup.small, class "w-auto!" ]
+viewSeed : Bool -> Html.Attribute Msg -> Pipeline.Settings -> Html Msg
+viewSeed locked validity settings =
+    InputGroup.view [ InputGroup.small, class "w-auto! bg-background" ]
         [ InputGroup.start [] [ label [ for "seed" ] [ text "Seed" ] ]
         , InputGroup.input
             [ id "seed"
             , name "seed"
+            , type_ "number"
+            , Html.Attributes.min "0"
+            , Html.Attributes.max (String.fromInt Seed.largest)
+            , Html.Attributes.step "1"
             , attribute "inputmode" "numeric"
             , validity
-            , placeholder "Random"
-            , value typed
-            , onInput SeedChanged
-            , disabled locked
-            , class "tabular-nums md:w-24! md:flex-none!"
-            ]
-        , InputGroup.end []
-            [ InputGroup.button
-                |> Button.icon (Phosphor.diceFive Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-                |> Button.label "Random seed"
-                |> Button.toHtml
-                    [ attribute "aria-pressed"
-                        (if random then
-                            "true"
+            , placeholder "-1"
+            , value
+                (readable SeedField
+                    settings
+                    (case settings.seeding of
+                        RandomSeed ->
+                            ""
 
-                         else
-                            "false"
-                        )
-                    , title "Random seed"
-                    , onClick (RandomSeedToggled (not random))
-                    , disabled locked
-                    , class "aria-pressed:bg-muted! aria-pressed:text-foreground! dark:aria-pressed:bg-input!"
-                    ]
+                        FixedSeed seed ->
+                            seed
+                    )
+                )
+            , onReadableInput SeedChanged (Unreadable SeedField)
+            , disabled locked
+            , class "w-auto! min-w-[calc(1ch+--spacing(4))] max-w-[calc(12ch+--spacing(4))] flex-none! field-sizing-content font-mono tabular-nums placeholder:text-foreground! [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             ]
         ]
+
+
+readable : NumberField -> Pipeline.Settings -> String -> String
+readable field settings typed =
+    if List.member field settings.unreadable then
+        ""
+
+    else
+        typed
+
+
+onReadableInput : (String -> msg) -> msg -> Html.Attribute msg
+onReadableInput toMsg unreadable =
+    on "input"
+        (Decode.oneOf [ Decode.at [ "target", "validity", "badInput" ] Decode.bool, Decode.succeed False ]
+            |> Decode.andThen
+                (\bad ->
+                    if bad then
+                        Decode.succeed unreadable
+
+                    else
+                        Decode.map toMsg (Decode.at [ "target", "value" ] Decode.string)
+                )
+        )
 
 
 viewStart : Model -> Html Msg
@@ -846,7 +880,7 @@ actions toMsg library picture =
         |> Button.small
         |> Button.toAnchor [ href picture.url, download (Library.fileName picture.job), glass ]
     , Button.new
-        |> Button.icon (Phosphor.diceFive Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+        |> Button.icon (Phosphor.plant Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
         |> Button.label "Use this seed"
         |> Button.small
         |> Button.toHtml [ onClick (toMsg.pipeline (SeedReused picture.job.seed)), glass ]

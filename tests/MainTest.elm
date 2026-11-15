@@ -1087,28 +1087,60 @@ suite =
                             (List.filterMap (Maybe.map (\made -> ( made.width, made.height )))
                                 >> Expect.equal [ ( 1024, 1024 ) ]
                             )
-            , test "shows the seed while it is random, and fixes the one typed" <|
+            , test "shows random until a seed is typed, and goes back to it when emptied" <|
                 \() ->
                     ready
-                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.value ""), attribute (Html.Attributes.placeholder "Random") ]
-                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Random seed"), attribute (Html.Attributes.attribute "aria-pressed" "true") ]
+                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.value ""), attribute (Html.Attributes.placeholder "-1") ]
                         |> ProgramTest.fillIn "seed" "Seed" "31"
-                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Random seed"), attribute (Html.Attributes.attribute "aria-pressed" "false") ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             generation
                             (List.filterMap (Maybe.map .seed) >> Expect.equal [ 31 ])
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
-                        |> ProgramTest.clickButton "Random seed"
-                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.value "") ]
-                        |> ProgramTest.clickButton "Random seed"
-                        |> ProgramTest.expectViewHas [ id "seed", attribute (Html.Attributes.value "31") ]
+                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.value "31") ]
+                        |> ProgramTest.fillIn "seed" "Seed" ""
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap (Maybe.map .seed) >> List.drop 1 >> List.all ((/=) 31) >> Expect.equal True)
+            , test "says what the browser can't read as a seed, and makes no picture" <|
+                \() ->
+                    ready
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.fillIn "seed" "Seed" "123"
+                        |> ProgramTest.simulateDomEvent (Query.find [ id "seed" ]) ( "input", Encode.object [ ( "target", Encode.object [ ( "value", Encode.string "" ), ( "validity", Encode.object [ ( "badInput", Encode.bool True ) ] ) ] ) ] )
+                        |> ProgramTest.ensureViewHas [ attribute (Html.Attributes.attribute "role" "alert"), containing [ text "Seed must be a whole number from 0 to 4294967295." ] ]
+                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.attribute "aria-invalid" "true"), attribute (Html.Attributes.value "") ]
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            generation
+                            (List.filterMap identity >> Expect.equal [])
+            , test "makes a picture with Cmd or Ctrl and Enter in the prompt" <|
+                \() ->
+                    let
+                        pressing meta ctrl =
+                            ready
+                                |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                                |> ProgramTest.simulateDomEvent (Query.find [ id "prompt" ])
+                                    ( "keydown"
+                                    , Encode.object
+                                        [ ( "key", Encode.string "Enter" )
+                                        , ( "metaKey", Encode.bool meta )
+                                        , ( "ctrlKey", Encode.bool ctrl )
+                                        ]
+                                    )
+                                |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                                    generation
+                                    (List.filterMap (Maybe.map .prompt) >> Expect.equal [ "a bonsai" ])
+                    in
+                    Expect.all [ \() -> pressing True False, \() -> pressing False True ] ()
             , test "takes the steps typed" <|
                 \() ->
                     ready
                         |> ProgramTest.ensureViewHas [ id "steps", attribute (Html.Attributes.attribute "inputmode" "numeric"), attribute (Html.Attributes.value "4") ]
-                        |> ProgramTest.ensureViewHasNot [ id "steps", attribute (Html.Attributes.type_ "number") ]
+                        |> ProgramTest.ensureViewHas [ id "steps", attribute (Html.Attributes.type_ "number"), attribute (Html.Attributes.min "1"), attribute (Html.Attributes.max "50"), attribute (Html.Attributes.step "1") ]
+                        |> ProgramTest.ensureViewHas [ id "seed", attribute (Html.Attributes.type_ "number"), attribute (Html.Attributes.min "0"), attribute (Html.Attributes.max "4294967295"), attribute (Html.Attributes.step "1") ]
                         |> ProgramTest.ensureViewHas [ tag "form", attribute (Html.Attributes.novalidate True) ]
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.fillIn "steps" "Steps" "8"
@@ -2792,7 +2824,6 @@ lockedBut kept =
             , off [ id "ai-style" ]
             , off [ id "weights" ]
             , off [ id "size" ]
-            , off [ attribute (Html.Attributes.attribute "aria-label" "Random seed") ]
             , off [ attribute (Html.Attributes.attribute "aria-label" "Undo") ]
             , off [ attribute (Html.Attributes.type_ "submit") ]
             ]

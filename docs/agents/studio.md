@@ -63,7 +63,10 @@ no part.
 - WebGPU is asked for inside the worker: a browser that has it only on the page can't
   make pictures.
 - The prompt, steps and seed are checked in Elm, not by the browser: the form is
-  `novalidate` and no input has `type="number"`, `min` or `max`. `Pipeline.checks`
+  `novalidate`, and steps and seed are `type="number"`, which keeps out letters. Their
+  `min` and `max` (from `Steps` and `Seed`) and `step` only keep the arrow keys in
+  range: HTML can't stop a typed minus sign or a number too large, and `novalidate`
+  keeps them from blocking Generate. `Pipeline.checks`
   (`Stylist.checks`) derive each problem from the current values, so each one hides as
   soon as its value is right. Steps and seed are checked as they are typed; an empty
   prompt is where every picture starts, so it is named only once Generate (or AI Style)
@@ -75,6 +78,14 @@ no part.
   with its words still in it. A closed line is `inert` and drops its `role="alert"`, and
   an open one is a new node, so a screen reader hears it each time it opens: a test that
   a problem went away looks for it under `inert`.
+- An empty seed field is the random seed (placeholder "-1"): typing a number fixes
+  it and emptying the field makes it random again. A number input holding text the
+  browser can't read (`1e`, `123-123`) reports `""` too, and hides the text from Elm,
+  so `onReadableInput` sends `Unreadable` when `validity.badInput` is set instead of the
+  value: the field is named as a problem and blocks the picture. While it is, the
+  view gives the input the value `""`, what the browser reports: Elm writes `value`
+  whenever it differs from the DOM's, and anything else would replace what was typed.
+  The next readable value clears it.
 - A random seed is drawn in Elm from the `entropy` flag, with no `Effect`: a test fixes
   it through the flags.
 - `client/bonsai.d.ts` types the library, which ships no types: keep it to what the

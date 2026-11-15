@@ -11,6 +11,7 @@ module Pipeline exposing
     , Message(..)
     , Model
     , Msg(..)
+    , NumberField(..)
     , Pending
     , Picture
     , Preset
@@ -137,7 +138,13 @@ type alias Settings =
     , height : Dimension
     , steps : String
     , seeding : Seeding
+    , unreadable : List NumberField
     }
+
+
+type NumberField
+    = StepsField
+    | SeedField
 
 
 type Draft
@@ -210,6 +217,7 @@ init entropy webGpu downloaded =
         , height = Dimension.default
         , steps = Steps.toString Steps.default
         , seeding = RandomSeed
+        , unreadable = []
         }
     , message = Nothing
     , fading = Nothing
@@ -430,8 +438,8 @@ type Msg
     | StylingEnded String
     | PresetChosen Preset
     | StepsChanged String
-    | RandomSeedToggled Bool
     | SeedChanged String
+    | Unreadable NumberField
     | SeedReused Seed
     | Opened String
     | Closed
@@ -509,16 +517,27 @@ step msg model =
             ( edit (\settings -> { settings | width = chosen.width, height = chosen.height }) model, Nothing )
 
         StepsChanged count ->
-            ( edit (\settings -> { settings | steps = count }) model, Nothing )
+            ( edit (\settings -> { settings | steps = count, unreadable = List.filter ((/=) StepsField) settings.unreadable }) model, Nothing )
 
-        RandomSeedToggled True ->
-            ( edit (\settings -> { settings | seeding = RandomSeed }) model, Nothing )
-
-        RandomSeedToggled False ->
-            ( edit (\settings -> { settings | seeding = FixedSeed (lastSeed model.pictures) }) model, Nothing )
+        Unreadable field ->
+            ( edit (\settings -> { settings | unreadable = field :: List.filter ((/=) field) settings.unreadable }) model, Nothing )
 
         SeedChanged seed ->
-            ( edit (\settings -> { settings | seeding = FixedSeed seed }) model, Nothing )
+            ( edit
+                (\settings ->
+                    { settings
+                        | unreadable = List.filter ((/=) SeedField) settings.unreadable
+                        , seeding =
+                            if String.isEmpty (String.trim seed) then
+                                RandomSeed
+
+                            else
+                                FixedSeed seed
+                    }
+                )
+                model
+            , Nothing
+            )
 
         Opened url ->
             ( { model | viewing = Just url, zoomed = True, detailed = False }, Nothing )
@@ -542,7 +561,7 @@ step msg model =
             ( { model | detailed = not model.detailed }, Nothing )
 
         SeedReused seed ->
-            ( edit (\settings -> { settings | seeding = FixedSeed (Seed.toString seed) }) { model | zoomed = False }, Nothing )
+            ( edit (\settings -> { settings | seeding = FixedSeed (Seed.toString seed), unreadable = List.filter ((/=) SeedField) settings.unreadable }) { model | zoomed = False }, Nothing )
 
         DownloadClicked chosen ->
             start { weights = chosen, job = Nothing } model
@@ -799,6 +818,15 @@ explain failure =
 
 plan : String -> Model -> Maybe ( Job, Random.Seed )
 plan text { settings, random } =
+    if List.isEmpty settings.unreadable then
+        planReadable text settings random
+
+    else
+        Nothing
+
+
+planReadable : String -> Settings -> Random.Seed -> Maybe ( Job, Random.Seed )
+planReadable text settings random =
     Maybe.map3
         (\prompt steps ( seed, next ) ->
             ( { prompt = prompt
@@ -834,11 +862,11 @@ checks { settings, random, checked } =
     , check "steps"
         ("Steps must be a whole number from " ++ String.fromInt Steps.fewest ++ " to " ++ String.fromInt Steps.most ++ ".")
         True
-        (Steps.fromString settings.steps /= Nothing)
+        (Steps.fromString settings.steps /= Nothing && not (List.member StepsField settings.unreadable))
     , check "seed"
         ("Seed must be a whole number from 0 to " ++ String.fromInt Seed.largest ++ ".")
         True
-        (draw settings.seeding random /= Nothing)
+        (draw settings.seeding random /= Nothing && not (List.member SeedField settings.unreadable))
     ]
 
 
@@ -851,13 +879,6 @@ draw seeding random =
         FixedSeed text ->
             Seed.fromString text
                 |> Maybe.map (\seed -> ( seed, random ))
-
-
-lastSeed : List Picture -> String
-lastSeed pictures =
-    List.head pictures
-        |> Maybe.map (.job >> .seed >> Seed.toString)
-        |> Maybe.withDefault "0"
 
 
 edit : (Settings -> Settings) -> Model -> Model
