@@ -103,8 +103,13 @@ answer.
   2026-11-13 it was measured against Qwen3.5 0.8B, 2B and 4B, Gemma 3 1B and Llama 3.2
   1B and 3B, on 24 ideas in every style. Smaller ones changed the idea (red sneakers came
   back black), Llama broke the format, Qwen3.5 2B looped and took twice as long, and 4B
-  is 2.4 GB beside a 3.4 GB image model. Change `modelId` and `modelSize` together, and
-  measure again.
+  is 2.4 GB beside a 3.4 GB image model. On 2026-11-15 Gemma 4 E2B (q4f16) wrote more
+  coherent prompts on 66 cases (12 ideas in 5 styles and 3 frames, 6 edgy ones), with the
+  same format and no refusals, but took 10 s a prompt against 3 s and is a 2.8 GB
+  download. Neither refused war, nudity in art, bribery or boudoir ideas. Qwen3 0.6B, on
+  the same cases, was faster (2 s) but turned the yellow net red, looped ("a white
+  office with a white table"), muddled the bribe and wrote "1:1 ratio" once. Change
+  `modelId` and `modelSize` together, and measure again.
 - The answer is six labelled lines, subject first, as FLUX.2 weighs earlier words more:
   a person changes one line. Bonsai reads only 512 tokens; the answers are about 90 words.
 - The examples steer it more than the instructions. Without them the format breaks.
