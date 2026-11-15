@@ -160,7 +160,7 @@ passkeyToast =
 
 passkeyTitle : String
 passkeyTitle =
-    "Couldn't log in with a passkey"
+    "Couldn't log in"
 
 
 sendLink : String -> Effect Msg
@@ -215,7 +215,7 @@ signInProblem name =
             "This browser can't use passkeys."
 
         _ ->
-            "The passkey could not be used."
+            "The passkey failed."
 
 
 

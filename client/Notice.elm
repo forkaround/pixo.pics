@@ -41,7 +41,7 @@ failure { id, title, retry } error =
     in
     case ( error, retry ) of
         ( ApiClient.Throttled seconds _, Just again ) ->
-            problem ("Too many attempts. Trying again in " ++ wait seconds ++ ".") (RetryIn seconds again)
+            problem ("Retrying in " ++ wait seconds ++ ".") (RetryIn seconds again)
 
         ( ApiClient.Failed reason, Just again ) ->
             problem reason (Retry again)

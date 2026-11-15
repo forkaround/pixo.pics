@@ -77,7 +77,7 @@ acceptFailure found retry =
         { id = acceptToast
         , title =
             if found.newAccount then
-                "Couldn't create your account"
+                "Couldn't sign up"
 
             else
                 "Couldn't log in"

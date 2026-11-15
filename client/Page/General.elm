@@ -41,7 +41,7 @@ update msg model =
 
         GotHealth (Err error) ->
             ( Checking
-            , Effect.failure { id = toast, title = "Can't check health status", retry = Just Retried } error
+            , Effect.failure { id = toast, title = "Can't check health", retry = Just Retried } error
             )
 
         Retried ->

@@ -76,7 +76,7 @@ suite =
                             , [ { resolve = "11"
                                 , status = 429
                                 , headers = ( "retry-after", "6" ) :: jsonHeaders
-                                , body = """{"error":"Too many attempts, try again later"}"""
+                                , body = """{"error":"Too many attempts."}"""
                                 }
                               ]
                             )
@@ -208,7 +208,7 @@ suite =
                             [ { resolve = "4"
                               , status = 429
                               , headers = ( "retry-after", "1200" ) :: jsonHeaders
-                              , body = """{"error":"Too many attempts, try again later"}"""
+                              , body = """{"error":"Too many attempts."}"""
                               }
                             ]
             , test "answers 429 to a 6th link from one address within 15 minutes" <|
@@ -221,7 +221,7 @@ suite =
                             [ { resolve = "6"
                               , status = 429
                               , headers = ( "retry-after", "180" ) :: jsonHeaders
-                              , body = """{"error":"Too many attempts, try again later"}"""
+                              , body = """{"error":"Too many attempts."}"""
                               }
                             ]
             , test "does not count a link refused for its email against the address" <|
@@ -284,7 +284,7 @@ suite =
                             , [ { resolve = "first"
                                 , status = 502
                                 , headers = jsonHeaders
-                                , body = """{"error":"The email could not be sent. Try again."}"""
+                                , body = """{"error":"The email wasn't sent."}"""
                                 }
                               ]
                             )
@@ -303,7 +303,7 @@ suite =
                             [ { resolve = "first"
                               , status = 503
                               , headers = jsonHeaders
-                              , body = """{"error":"Not available right now. Try again later."}"""
+                              , body = """{"error":"Unavailable right now."}"""
                               }
                             ]
             , test "answers 503 and logs when the database gives an outcome a sign-up can't have" <|
@@ -573,7 +573,7 @@ suite =
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectResponses
-                            [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Not available right now. Try again later."}""" } ]
+                            [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Unavailable right now."}""" } ]
             ]
         , describe "DELETE /api/auth/session"
             [ test "ends the session and clears the cookie" <|
@@ -759,7 +759,7 @@ suite =
                             [ { resolve = "first"
                               , status = 409
                               , headers = jsonHeaders
-                              , body = """{"error":"This passkey request expired or was used already. Try again."}"""
+                              , body = """{"error":"This passkey request expired."}"""
                               }
                             ]
             , test "answers 422, asks the database nothing and logs why when the passkey is from another site" <|
@@ -774,7 +774,7 @@ suite =
                             , [ { resolve = "first"
                                 , status = 422
                                 , headers = jsonHeaders
-                                , body = """{"error":"This passkey could not be verified. Try again."}"""
+                                , body = """{"error":"This passkey couldn't be verified."}"""
                                 }
                               ]
                             )
@@ -876,7 +876,7 @@ suite =
                             [ { resolve = "11"
                               , status = 429
                               , headers = ( "retry-after", "90" ) :: jsonHeaders
-                              , body = """{"error":"Too many attempts, try again later"}"""
+                              , body = """{"error":"Too many attempts."}"""
                               }
                             ]
             ]
@@ -1057,7 +1057,7 @@ suite =
                             [ { resolve = "31"
                               , status = 429
                               , headers = ( "retry-after", "2" ) :: jsonHeaders
-                              , body = """{"error":"Too many attempts, try again later"}"""
+                              , body = """{"error":"Too many attempts."}"""
                               }
                             ]
             , test "counts each address apart" <|
@@ -1272,7 +1272,7 @@ notVerified =
     { resolve = "first"
     , status = 401
     , headers = jsonHeaders
-    , body = """{"error":"This passkey could not be verified. Try again, or sign in with an emailed link."}"""
+    , body = """{"error":"This passkey wasn't recognized."}"""
     }
 
 

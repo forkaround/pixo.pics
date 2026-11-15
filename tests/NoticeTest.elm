@@ -18,7 +18,7 @@ suite =
                     Notice.failure { id = "a", title = "T", retry = Just "again" } (ApiClient.Throttled 30 "x")
                         |> Expect.all
                             [ .retry >> Expect.equal (Notice.RetryIn 30 "again")
-                            , .description >> Expect.equal (Just "Too many attempts. Trying again in 30 seconds.")
+                            , .description >> Expect.equal (Just "Retrying in 30 seconds.")
                             ]
             , test "offers to try again after a failure" <|
                 \() ->
@@ -36,10 +36,10 @@ suite =
                             ]
             , test "offers nothing when there is nothing to retry" <|
                 \() ->
-                    Notice.failure { id = "a", title = "T", retry = Nothing } (ApiClient.Throttled 30 "Too many attempts, try again later")
+                    Notice.failure { id = "a", title = "T", retry = Nothing } (ApiClient.Throttled 30 "Too many attempts.")
                         |> Expect.all
                             [ .retry >> Expect.equal Notice.NoRetry
-                            , .description >> Expect.equal (Just "Too many attempts, try again later")
+                            , .description >> Expect.equal (Just "Too many attempts.")
                             ]
             ]
         , describe "wait"

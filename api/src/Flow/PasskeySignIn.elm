@@ -140,6 +140,6 @@ update server msg =
 refuse : Interop.Resolver -> String -> Effect Msg
 refuse resolver problem =
     Batch
-        [ respond resolver (Response.error 401 "This passkey could not be verified. Try again, or sign in with an emailed link.")
+        [ respond resolver (Response.error 401 "This passkey wasn't recognized.")
         , log Interop.Warn ("Passkey sign-in refused: " ++ String.left 200 problem)
         ]

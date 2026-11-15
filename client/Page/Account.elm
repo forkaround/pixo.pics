@@ -116,7 +116,7 @@ update session msg model =
 
         GotPasskeys (Err error) ->
             ( model
-            , Effect.failure { id = passkeysToast, title = "Can't load your passkeys", retry = Just PasskeysRetried } error
+            , Effect.failure { id = passkeysToast, title = "Can't load passkeys", retry = Just PasskeysRetried } error
             )
 
         PasskeysRetried ->
@@ -175,7 +175,7 @@ update session msg model =
 
         GotRemoved id (Err error) ->
             ( model
-            , Effect.failure { id = removalToast, title = "Couldn't remove the passkey", retry = Just (RemoveConfirmed id) } error
+            , Effect.failure { id = removalToast, title = "Couldn't remove passkey", retry = Just (RemoveConfirmed id) } error
             )
 
         DeleteRequested ->
@@ -250,7 +250,7 @@ deleteAccount =
 
 deletionFailure : Msg -> ApiClient.Error -> Effect Msg
 deletionFailure retry =
-    Effect.failure { id = deletionToast, title = "Couldn't delete your account", retry = Just retry }
+    Effect.failure { id = deletionToast, title = "Couldn't delete account", retry = Just retry }
 
 
 

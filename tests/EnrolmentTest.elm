@@ -41,7 +41,7 @@ suite =
                 case Enrolment.update (Enrolment.failed "InvalidStateError") Waiting of
                     ( Resting, Notify notice, Enrolment.Pending ) ->
                         ( notice.description, notice.retry )
-                            |> Expect.equal ( Just "This device already has a passkey for this account.", Notice.NoRetry )
+                            |> Expect.equal ( Just "This device already has one.", Notice.NoRetry )
 
                     _ ->
                         Expect.fail "Expected a reason."

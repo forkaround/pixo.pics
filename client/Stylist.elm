@@ -397,7 +397,7 @@ happened event model =
                 ( { model | state = Awake, written = Just { idea = job.idea, prompt = prompt } }, Nothing, Just (Gave prompt) )
 
             else
-                ( { model | state = Awake, notice = noticed Notice.Problem "AI Style returned an incomplete prompt" Nothing (again job) }, Nothing, Just (Gave job.idea) )
+                ( { model | state = Awake, notice = noticed Notice.Problem "Incomplete prompt" Nothing (again job) }, Nothing, Just (Gave job.idea) )
 
         ( Finished _, Stopping job ) ->
             ( { model | state = Awake }, Nothing, Just (Gave job.idea) )
@@ -434,7 +434,7 @@ failed failure state model =
             ( { model | state = Asleep, notice = noticed Notice.Problem "Couldn't load AI Style" (Just (explain failure)) (Maybe.withDefault Notice.NoRetry (Maybe.map again waiting)) }, Nothing, Maybe.map (.idea >> Gave) waiting )
 
         Writing job _ ->
-            ( { model | state = Awake, notice = noticed Notice.Problem "AI Style couldn't write a prompt" (Just (explain failure)) (again job) }, Nothing, Just (Gave job.idea) )
+            ( { model | state = Awake, notice = noticed Notice.Problem "AI Style failed" (Just (explain failure)) (again job) }, Nothing, Just (Gave job.idea) )
 
         Stopping job ->
             ( { model | state = Awake }, Nothing, Just (Gave job.idea) )

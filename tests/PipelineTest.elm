@@ -356,13 +356,13 @@ suite =
                     run [ DownloadClicked Binary, Happened (Failed { name = "Error", message = "HTTP 404" }) ] supported
                         |> .notice
                         |> Maybe.map (\notice -> ( notice.title, notice.retry ))
-                        |> Expect.equal (Just ( "Couldn't download the model", Notice.Retry (DownloadClicked Binary) ))
+                        |> Expect.equal (Just ( "Couldn't download", Notice.Retry (DownloadClicked Binary) ))
             , test "offers to generate again when a picture fails" <|
                 \() ->
                     run [ PromptChanged "a bonsai", GenerateClicked, Happened (Failed { name = "Error", message = "Out of memory" }) ] ready
                         |> .notice
                         |> Maybe.map (\notice -> ( notice.title, notice.retry ))
-                        |> Expect.equal (Just ( "Couldn't generate the picture", Notice.Retry GenerateClicked ))
+                        |> Expect.equal (Just ( "Couldn't generate", Notice.Retry GenerateClicked ))
             , test "names a failure that says nothing" <|
                 \() ->
                     run [ DownloadClicked Ternary, Happened (Failed { name = "OperationError", message = "" }) ] supported

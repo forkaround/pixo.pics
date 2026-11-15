@@ -582,7 +582,7 @@ step msg model =
                     ( model
                     , Effect.failure
                         { id = "session"
-                        , title = "Can't check who is signed in"
+                        , title = "Can't check sign-in"
                         , retry =
                             case error of
                                 ApiClient.Throttled _ _ ->

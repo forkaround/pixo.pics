@@ -114,7 +114,7 @@ fromResponse decoder response =
 
         Http.GoodStatus_ _ body ->
             Decode.decodeString decoder body
-                |> Result.mapError (\_ -> Failed "Unexpected server response")
+                |> Result.mapError (\_ -> Failed "Unexpected response")
 
 
 refusal : Http.Metadata -> String -> Error

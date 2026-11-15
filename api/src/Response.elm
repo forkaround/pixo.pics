@@ -47,7 +47,7 @@ health release check =
 
 unavailable : Response
 unavailable =
-    error 503 "Not available right now. Try again later."
+    error 503 "Unavailable right now."
 
 
 accepted : Response
@@ -67,7 +67,7 @@ invalidLink =
 
 tooManyRequests : Int -> Response
 tooManyRequests seconds =
-    error 429 "Too many attempts, try again later"
+    error 429 "Too many attempts."
         |> withHeader "retry-after" (String.fromInt seconds)
 
 

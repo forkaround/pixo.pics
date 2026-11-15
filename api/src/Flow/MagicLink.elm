@@ -124,7 +124,7 @@ update server msg =
 
         LinkSent resolver (Err problem) ->
             Batch
-                [ respond resolver (Response.error 502 "The email could not be sent. Try again.")
+                [ respond resolver (Response.error 502 "The email wasn't sent.")
                 , log Interop.Error ("Magic link failed at its email: " ++ problem)
                 ]
 

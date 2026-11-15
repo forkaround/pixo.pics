@@ -19,20 +19,20 @@ suite =
                         |> Expect.equal (Err (ApiClient.Unauthorized "Not signed in."))
             , test "keeps the reason the server gives with another status" <|
                 \() ->
-                    answer (response 503 """{"error":"Not available right now. Try again later."}""")
-                        |> Expect.equal (Err (ApiClient.Failed "Not available right now. Try again later."))
+                    answer (response 503 """{"error":"Unavailable right now."}""")
+                        |> Expect.equal (Err (ApiClient.Failed "Unavailable right now."))
             , test "reads how long to wait from a 429" <|
                 \() ->
-                    answer (responseWith 429 [ ( "retry-after", "30" ) ] """{"error":"Too many attempts, try again later"}""")
-                        |> Expect.equal (Err (ApiClient.Throttled 30 "Too many attempts, try again later"))
+                    answer (responseWith 429 [ ( "retry-after", "30" ) ] """{"error":"Too many attempts."}""")
+                        |> Expect.equal (Err (ApiClient.Throttled 30 "Too many attempts."))
             , test "reads the wait whatever the header's case" <|
                 \() ->
-                    answer (responseWith 429 [ ( "Retry-After", "30" ) ] """{"error":"Too many attempts, try again later"}""")
-                        |> Expect.equal (Err (ApiClient.Throttled 30 "Too many attempts, try again later"))
+                    answer (responseWith 429 [ ( "Retry-After", "30" ) ] """{"error":"Too many attempts."}""")
+                        |> Expect.equal (Err (ApiClient.Throttled 30 "Too many attempts."))
             , test "fails a 429 that says no wait" <|
                 \() ->
-                    answer (response 429 """{"error":"Too many attempts, try again later"}""")
-                        |> Expect.equal (Err (ApiClient.Failed "Too many attempts, try again later"))
+                    answer (response 429 """{"error":"Too many attempts."}""")
+                        |> Expect.equal (Err (ApiClient.Failed "Too many attempts."))
             , test "tells a refused input from a failure" <|
                 \() ->
                     answer (response 404 """{"error":"This link is not valid any more. Sign up again to get a new one."}""")

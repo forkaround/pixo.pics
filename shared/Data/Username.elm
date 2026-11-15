@@ -18,7 +18,7 @@ parse value =
         Ok (Username clean)
 
     else
-        Err "A username has 3 to 20 characters: letters, digits and underscores."
+        Err "Not a valid username."
 
 
 decoder : Decoder Username

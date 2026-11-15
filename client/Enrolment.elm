@@ -84,7 +84,7 @@ toast =
 
 title : String
 title =
-    "Couldn't create a passkey"
+    "Couldn't add a passkey"
 
 
 askOptions : Effect Msg
@@ -125,13 +125,13 @@ reason : String -> String
 reason name =
     case name of
         "NotAllowedError" ->
-            "The passkey was not created."
+            "No passkey was created."
 
         "InvalidStateError" ->
-            "This device already has a passkey for this account."
+            "This device already has one."
 
         "NotSupportedError" ->
             "This browser can't create passkeys."
 
         _ ->
-            "The passkey could not be created."
+            "The passkey failed."

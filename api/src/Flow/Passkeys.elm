@@ -84,7 +84,7 @@ add server request =
 
                 Err (Just problem) ->
                     Batch
-                        [ respond resolver (Response.error 422 "This passkey could not be verified. Try again.")
+                        [ respond resolver (Response.error 422 "This passkey couldn't be verified.")
                         , log Interop.Warn ("Passkey refused: " ++ String.left 200 problem)
                         ]
         )
@@ -145,7 +145,7 @@ update server msg =
                 )
 
         Added resolver (Just Db.NotAdded) ->
-            respond resolver (Response.error 409 "This passkey request expired or was used already. Try again.")
+            respond resolver (Response.error 409 "This passkey request expired.")
 
         Added resolver Nothing ->
             respond resolver Response.notSignedIn

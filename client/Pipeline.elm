@@ -755,22 +755,22 @@ failedTitle : Device -> String
 failedTitle device =
     case device of
         Supported _ (Loading _ _ _) ->
-            "Couldn't download the model"
+            "Couldn't download"
 
         Supported _ (Cancelling _ _) ->
-            "Couldn't download the model"
+            "Couldn't download"
 
         Supported _ (Generating _ _ _) ->
-            "Couldn't generate the picture"
+            "Couldn't generate"
 
         Supported _ Clearing ->
-            "Couldn't remove the downloaded models"
+            "Couldn't remove models"
 
         Unsupported Emptying ->
-            "Couldn't remove the downloaded models"
+            "Couldn't remove models"
 
         Supported _ (Releasing _) ->
-            "Couldn't release the model"
+            "Couldn't release model"
 
         _ ->
             "Couldn't start the studio"

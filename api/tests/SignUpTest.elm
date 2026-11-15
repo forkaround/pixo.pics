@@ -42,7 +42,7 @@ suite =
                         test ("like " ++ Debug.toString username) <|
                             \() ->
                                 parsed { email = "ada@example.com", username = username }
-                                    |> Expect.equal (Err "A username has 3 to 20 characters: letters, digits and underscores.")
+                                    |> Expect.equal (Err "Not a valid username.")
                     )
                     [ ""
                     , "ad"

@@ -105,8 +105,8 @@ suite =
                         |> ProgramTest.clickButton "Email me a link"
                         |> ProgramTest.simulateHttpResponse "POST"
                             "/api/auth/signin"
-                            (response 429 """{"error":"Too many attempts, try again later"}""")
-                        |> ProgramTest.expectViewHas [ text "Too many attempts, try again later" ]
+                            (response 429 """{"error":"Too many attempts."}""")
+                        |> ProgramTest.expectViewHas [ text "Too many attempts." ]
             , test "signs in with a passkey: a challenge, the browser, then home" <|
                 \() ->
                     startAt "/login" defaultFlags
@@ -165,16 +165,16 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" passkeyUsed
                         |> ProgramTest.simulateHttpResponse "POST"
                             "/api/auth/signin/passkey"
-                            (response 401 """{"error":"This passkey could not be verified. Try again, or sign in with an emailed link."}""")
+                            (response 401 """{"error":"This passkey wasn't recognized."}""")
                         |> ProgramTest.expectViewHas
-                            [ text "This passkey could not be verified. Try again, or sign in with an emailed link." ]
+                            [ text "This passkey wasn't recognized." ]
             , test "sends the link again by itself after a 429" <|
                 \() ->
                     startAt "/login" defaultFlags
                         |> ProgramTest.fillIn "email" "Email" "ada@example.com"
                         |> ProgramTest.clickButton "Email me a link"
                         |> ProgramTest.simulateHttpResponse "POST" "/api/auth/signin" (throttled 30)
-                        |> ProgramTest.ensureViewHas [ text "Too many attempts. Trying again in 30 seconds." ]
+                        |> ProgramTest.ensureViewHas [ text "Retrying in 30 seconds." ]
                         |> ProgramTest.ensureViewHas [ tag "button", containing [ text "Sending the link…" ], attribute (Html.Attributes.disabled True) ]
                         |> ProgramTest.advanceTime 30000
                         |> ProgramTest.ensureHttpRequest "POST"
@@ -283,7 +283,7 @@ suite =
                     start defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" Test.Http.networkError
                         |> ProgramTest.ensureViewHasNot [ text "Create an account" ]
-                        |> ProgramTest.ensureViewHas [ text "Can't check who is signed in" ]
+                        |> ProgramTest.ensureViewHas [ text "Can't check sign-in" ]
                         |> ProgramTest.clickButton "Try again"
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.expectViewHas [ tag "button", containing [ text "ada@example.com" ] ]
@@ -291,7 +291,7 @@ suite =
                 \() ->
                     start defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" (throttled 30)
-                        |> ProgramTest.ensureViewHas [ text "Too many attempts. Trying again in 30 seconds." ]
+                        |> ProgramTest.ensureViewHas [ text "Retrying in 30 seconds." ]
                         |> ProgramTest.advanceTime 29999
                         |> ProgramTest.ensureHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 0)
                         |> ProgramTest.advanceTime 1
@@ -302,7 +302,7 @@ suite =
                     startAt "/settings/account" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/auth/session"
-                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                            (response 503 """{"error":"Unavailable right now."}""")
                         |> ProgramTest.ensureViewHasNot [ text "Not logged in" ]
                         |> ProgramTest.expectViewHasNot [ text "Manage your account and how you sign in." ]
             ]
@@ -313,7 +313,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/passkeys" notSignedIn
                         |> ProgramTest.ensureViewHas [ text "Not logged in" ]
-                        |> ProgramTest.expectViewHasNot [ text "Can't load your passkeys" ]
+                        |> ProgramTest.expectViewHasNot [ text "Can't load passkeys" ]
             , test "deletes the account only after confirmation and returns home signed out" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -372,7 +372,7 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Please try again." ]
                         |> ProgramTest.ensureViewHasNot [ tag "elmcn-dialog", attribute (Html.Attributes.attribute "id" "delete-account"), attribute (Html.Attributes.attribute "open" "") ]
                         |> ProgramTest.ensureViewHas [ text "Signed in as ada (ada@example.com)" ]
-                        |> inToast "Couldn't delete your account" (ProgramTest.clickButton "Try again")
+                        |> inToast "Couldn't delete account" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.within (Query.find [ id "delete-account" ]) (ProgramTest.clickButton "Delete")
                         |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/account" "{}"
                         |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/")
@@ -445,19 +445,19 @@ suite =
                     startAt "/settings/account" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/auth/session"
-                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                            (response 503 """{"error":"Unavailable right now."}""")
                         |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/account")
-                        |> ProgramTest.expectViewHas [ text "Not available right now. Try again later." ]
+                        |> ProgramTest.expectViewHas [ text "Unavailable right now." ]
             , test "checks the session again on request" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/auth/session"
-                            (response 503 """{"error":"Not available right now. Try again later."}""")
+                            (response 503 """{"error":"Unavailable right now."}""")
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/auth/passkeys"
-                            (response 503 """{"error":"Not available right now. Try again later."}""")
-                        |> inToast "Can't check who is signed in" (ProgramTest.clickButton "Try again")
+                            (response 503 """{"error":"Unavailable right now."}""")
+                        |> inToast "Can't check sign-in" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
                         |> ProgramTest.ensureViewHas [ text "Signed in as ada (ada@example.com)" ]
@@ -471,9 +471,9 @@ suite =
                         |> ProgramTest.simulateHttpResponse "GET"
                             "/api/auth/passkeys"
                             (response 503 """{"error":"Please try again."}""")
-                        |> ProgramTest.ensureViewHas [ text "Can't load your passkeys" ]
+                        |> ProgramTest.ensureViewHas [ text "Can't load passkeys" ]
                         |> ProgramTest.ensureViewHasNot [ text "No passkeys yet." ]
-                        |> inToast "Can't load your passkeys" (ProgramTest.clickButton "Try again")
+                        |> inToast "Can't load passkeys" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/passkeys" ("[" ++ passkey ++ "]")
                         |> ProgramTest.expectViewHas [ text "Apple Passwords" ]
             , test "formats the added time once when the passkeys are shown" <|
@@ -535,8 +535,8 @@ suite =
                         |> ProgramTest.clickButton "Remove"
                         |> ProgramTest.simulateHttpResponse "DELETE"
                             "/api/auth/passkeys/oKGio6SlpqeoqaqrrK2urw"
-                            (response 503 """{"error":"Not available right now. Try again later."}""")
-                        |> ProgramTest.ensureViewHas [ text "Not available right now. Try again later." ]
+                            (response 503 """{"error":"Unavailable right now."}""")
+                        |> ProgramTest.ensureViewHas [ text "Unavailable right now." ]
                         |> ProgramTest.expectViewHas [ tag "time", attribute (Html.Attributes.attribute "datetime" "2026-11-10T09:30:00Z") ]
             , test "says so when the account has none" <|
                 \() ->
@@ -580,7 +580,7 @@ suite =
                         |> ProgramTest.clickButton "Add a passkey"
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
                         |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
-                        |> ProgramTest.ensureViewHas [ text "The passkey was not created." ]
+                        |> ProgramTest.ensureViewHas [ text "No passkey was created." ]
                         |> ProgramTest.expectHttpRequests "POST" "/api/auth/passkeys" (List.length >> Expect.equal 0)
             , test "says so when the device already has one" <|
                 \() ->
@@ -589,7 +589,7 @@ suite =
                         |> ProgramTest.clickButton "Add a passkey"
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
                         |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "InvalidStateError")
-                        |> ProgramTest.expectViewHas [ text "This device already has a passkey for this account." ]
+                        |> ProgramTest.expectViewHas [ text "This device already has one." ]
             , test "shows why the server refused the passkey" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -599,8 +599,8 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" passkeyCreated
                         |> ProgramTest.simulateHttpResponse "POST"
                             "/api/auth/passkeys"
-                            (response 422 """{"error":"This passkey could not be verified. Try again."}""")
-                        |> ProgramTest.expectViewHas [ text "This passkey could not be verified. Try again." ]
+                            (response 422 """{"error":"This passkey couldn't be verified."}""")
+                        |> ProgramTest.expectViewHas [ text "This passkey couldn't be verified." ]
             , test "keeps adding a passkey when a removal finishes meanwhile" <|
                 \() ->
                     startAt "/settings/account" defaultFlags
@@ -672,7 +672,7 @@ suite =
                         |> ProgramTest.clickButton "Create a passkey"
                         |> ProgramTest.simulateHttpOk "POST" "/api/auth/passkeys/options" passkeyOptions
                         |> ProgramTest.simulateIncomingPort "interopToElm" (passkeyFailed "NotAllowedError")
-                        |> ProgramTest.ensureViewHas [ text "The passkey was not created." ]
+                        |> ProgramTest.ensureViewHas [ text "No passkey was created." ]
                         |> ProgramTest.clickButton "Create a passkey"
                         |> ProgramTest.expectHttpRequestWasMade "POST" "/api/auth/passkeys/options"
             , test "sends a signed-out visitor at the passkey page to log in" <|
@@ -1817,7 +1817,7 @@ suite =
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten "\"Cozy\"")
-                        |> ProgramTest.ensureViewHas [ text "AI Style returned an incomplete prompt" ]
+                        |> ProgramTest.ensureViewHas [ text "Incomplete prompt" ]
                         |> ProgramTest.expectViewHas [ id "prompt", attribute (Html.Attributes.value "a fox in the snow") ]
             , test "shows why the prompt model failed, and keeps the idea" <|
                 \() ->
@@ -1882,7 +1882,7 @@ suite =
                     startAt "/settings/general" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/health" Test.Http.networkError
                         |> ProgramTest.ensureViewHas [ text "Checking health status" ]
-                        |> inToast "Can't check health status" (ProgramTest.clickButton "Try again")
+                        |> inToast "Can't check health" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.simulateHttpOk "GET" "/api/health" health
                         |> ProgramTest.expectViewHas [ text "Healthy" ]
             , test "says when the server can't be reached" <|
@@ -1983,7 +1983,7 @@ suite =
                         |> ProgramTest.simulateIncomingPort "interopToElm" (webGpuChecked True)
                         |> ProgramTest.clickButton "Download Bonsai ternary, 2-bit"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "Error" "HTTP 404 for model_index.json")
-                        |> inToast "Couldn't download the model" (ProgramTest.clickButton "Try again")
+                        |> inToast "Couldn't download" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [ "CheckWebGpu", "LoadModel", "LoadModel" ])
@@ -2603,7 +2603,7 @@ throttled seconds =
     Test.Http.httpResponse
         { statusCode = 429
         , headers = [ ( "retry-after", String.fromInt seconds ) ]
-        , body = """{"error":"Too many attempts, try again later"}"""
+        , body = """{"error":"Too many attempts."}"""
         }
 
 
