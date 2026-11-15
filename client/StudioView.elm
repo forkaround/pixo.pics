@@ -38,7 +38,7 @@ controls toMsg stylist model =
         checks =
             Stylist.checks model.settings.prompt stylist ++ Pipeline.checks model
     in
-    div [ class "sticky bottom-0 z-10 px-1.5 pb-[max(--spacing(1.5),env(safe-area-inset-bottom))] md:px-8" ]
+    div [ class "sticky bottom-0 z-10 px-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))] md:px-8 md:pb-[max(--spacing(8),env(safe-area-inset-bottom))]" ]
         [ form [ onSubmit (toMsg.pipeline GenerateClicked), novalidate True, class "mx-auto w-full md:max-w-2xl" ]
             [ Html.fieldset [ disabled (not (Pipeline.isSupported model.device)), class "min-w-0" ]
                 [ Card.new
@@ -284,12 +284,8 @@ viewPromptModel stylist =
                             )
                         ]
                     |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
-                    |> Progress.toHtml [ class "min-w-0 flex-1 [&_[data-slot=progress-value]]:text-xs" ]
-                , Button.new
-                    |> Button.text "Cancel"
-                    |> Button.outline
-                    |> Button.small
-                    |> Button.toHtml [ onClick Stylist.StopClicked, class "ms-auto" ]
+                    |> Progress.toHtml [ class "me-4 min-w-0 max-w-74 flex-1 gap-y-1! [&_[data-slot=progress-value]]:text-xs" ]
+                , stopButton "Cancel" [ onClick Stylist.StopClicked ]
                 ]
 
         _ ->
@@ -306,21 +302,13 @@ viewGenerate model =
             viewStart model
 
         Just (Generating _ _ (Denoising _)) ->
-            Button.new
-                |> Button.text "Cancel"
-                |> Button.outline
-                |> Button.small
-                |> Button.toHtml [ onClick CancelClicked, class "ms-auto max-md:w-full" ]
+            stopButton "Cancel" [ onClick CancelClicked ]
 
         Just (Generating _ _ Stopping) ->
-            Button.new
-                |> Button.text "Cancelling…"
-                |> Button.outline
-                |> Button.small
-                |> Button.toHtml [ disabled True, class "ms-auto max-md:w-full" ]
+            stopButton "Cancelling…" [ disabled True ]
 
         _ ->
-            generateButton "Generate" [ disabled True ]
+            generateButton [ disabled True ]
 
 
 viewWork : Model -> Maybe (List (Html Msg))
@@ -330,20 +318,16 @@ viewWork model =
             Just
                 [ loading chosen parts
                     |> List.singleton
-                    |> div [ class "min-w-0 flex-1" ]
-                , cancel
+                    |> div [ class "me-4 min-w-0 max-w-74 flex-1" ]
+                , stopButton "Cancel" [ onClick CancelClicked ]
                 ]
 
         Just (Cancelling chosen parts) ->
             Just
                 [ loading chosen parts
                     |> List.singleton
-                    |> div [ class "min-w-0 flex-1" ]
-                , Button.new
-                    |> Button.text "Cancelling…"
-                    |> Button.outline
-                    |> Button.small
-                    |> Button.toHtml [ disabled True, class "ms-auto" ]
+                    |> div [ class "me-4 min-w-0 max-w-74 flex-1" ]
+                , stopButton "Cancelling…" [ disabled True ]
                 ]
 
         Just (Generating _ _ _) ->
@@ -370,7 +354,7 @@ viewWork model =
 
 viewSettings : Bool -> List Pipeline.Validation -> Pipeline.Settings -> Html Msg -> List (Html Msg)
 viewSettings locked checks settings generate =
-    [ div [ class "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 md:flex md:flex-wrap md:items-center" ]
+    [ div [ class "flex w-full min-w-0 items-center gap-2" ]
         [ viewSize locked settings
         , viewSeed locked (invalid checks "seed") settings
         , viewSteps locked (invalid checks "steps") settings
@@ -501,7 +485,7 @@ viewSeed locked validity settings =
                 )
             , onReadableInput SeedChanged (Unreadable SeedField)
             , disabled locked
-            , class "w-auto! min-w-[calc(1ch+--spacing(4))] max-w-[calc(12ch+--spacing(4))] flex-none! field-sizing-content font-mono tabular-nums placeholder:text-foreground! [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            , class "w-auto! min-w-[calc(1ch+--spacing(4))] max-w-[calc(12ch+--spacing(4))] flex-initial! field-sizing-content font-mono tabular-nums placeholder:text-foreground! [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             ]
         ]
 
@@ -532,31 +516,45 @@ onReadableInput toMsg unreadable =
 
 viewStart : Model -> Html Msg
 viewStart model =
-    generateButton "Generate" [ disabled (model.settings.prompt == Styling) ]
+    generateButton [ disabled (model.settings.prompt == Styling) ]
 
 
-generateButton : String -> List (Html.Attribute Msg) -> Html Msg
-generateButton label attributes =
+generateButton : List (Html.Attribute Msg) -> Html Msg
+generateButton attributes =
+    iconButton
+        (span [ class "contents" ]
+            [ glyph (Phosphor.arrowUp Bold)
+            , span [ class "sr-only" ] [ text "Generate" ]
+            ]
+        )
+        "Generate"
+        (type_ "submit" :: attributes)
+
+
+stopButton : String -> List (Html.Attribute msg) -> Html msg
+stopButton label attributes =
+    iconButton (glyph (Phosphor.stop Fill)) label attributes
+
+
+glyph : Phosphor.IconVariant -> Html msg
+glyph icon =
+    icon |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ]
+
+
+iconButton : Html msg -> String -> List (Html.Attribute msg) -> Html msg
+iconButton content label attributes =
     Button.new
-        |> Button.text label
-        |> Button.startIcon (Phosphor.sparkle Bold |> Phosphor.withClass "size-4" |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+        |> Button.icon content
+        |> Button.label label
         |> Button.small
-        |> Button.toHtml (type_ "submit" :: class "ms-auto max-md:w-full" :: attributes)
-
-
-cancel : Html Msg
-cancel =
-    Button.new
-        |> Button.text "Cancel"
-        |> Button.outline
-        |> Button.small
-        |> Button.toHtml [ onClick CancelClicked, class "ms-auto" ]
+        |> Button.rounded
+        |> Button.toHtml (class "ms-auto shrink-0" :: attributes)
 
 
 viewWaiting : String -> List (Html Msg)
 viewWaiting reason =
     [ p [ class "min-w-0 flex-1 text-sm text-muted-foreground", attribute "role" "status" ] [ text reason ]
-    , generateButton "Generate" [ disabled True ]
+    , generateButton [ disabled True ]
     ]
 
 
@@ -708,7 +706,7 @@ loading chosen parts =
                 )
             ]
         |> Progress.formatValue (\done -> String.fromInt (floor done) ++ "%")
-        |> Progress.toHtml [ class "[&_[data-slot=progress-value]]:text-xs" ]
+        |> Progress.toHtml [ class "gap-y-1! [&_[data-slot=progress-value]]:text-xs" ]
 
 
 percentage : Pipeline.Download -> Float

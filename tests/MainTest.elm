@@ -19,7 +19,7 @@ import SimulatedEffect.Time
 import Stylist
 import Test exposing (Test, describe, test)
 import Test.Html.Query as Query
-import Test.Html.Selector exposing (attribute, class, containing, id, tag, text)
+import Test.Html.Selector as Selector exposing (attribute, class, containing, id, tag, text)
 import Test.Http
 import TsJson.Decode as TsDecode
 import TsJson.Encode as TsEncode
@@ -1157,7 +1157,7 @@ suite =
                             , containing [ id "size" ]
                             , containing [ id "seed" ]
                             , containing [ id "steps" ]
-                            , containing [ tag "button", containing [ text "Cancel" ] ]
+                            , containing [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Cancel") ]
                             ]
                         |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ text "Generating · Step 1 of 4" ] ]
                         |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ attribute (Html.Attributes.attribute "role" "progressbar") ] ]
@@ -1171,13 +1171,13 @@ suite =
                             , containing [ attribute (Html.Attributes.attribute "role" "progressbar"), containing [ text "Generating · Step 2 of 4" ], containing [ text "25%" ] ]
                             ]
                         |> ProgramTest.clickButton "Cancel"
-                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Cancelling…" ] ] ]
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "data-slot" "card-footer"), containing [ tag "button", attribute (Html.Attributes.disabled True), attribute (Html.Attributes.attribute "aria-label" "Cancelling…") ] ]
             , test "locks every control but Cancel while it makes a picture" <|
                 \() ->
                     ready
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
-                        |> ProgramTest.ensureView (lockedBut "Cancel")
+                        |> ProgramTest.ensureView (lockedBut (attribute (Html.Attributes.attribute "aria-label" "Cancel")))
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
                         |> ProgramTest.expectView (Query.findAll [ id "prompt", attribute (Html.Attributes.disabled False) ] >> Query.count (Expect.equal 1))
             , test "says it is cancelling a download until it stops" <|
@@ -1191,10 +1191,10 @@ suite =
                         |> ProgramTest.ensureViewHas
                             [ attribute (Html.Attributes.attribute "data-slot" "card-footer")
                             , containing [ text "Downloading the transformer" ]
-                            , containing [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Cancelling…" ] ]
+                            , containing [ tag "button", attribute (Html.Attributes.disabled True), attribute (Html.Attributes.attribute "aria-label" "Cancelling…") ]
                             ]
                         |> ProgramTest.simulateIncomingPort "interopToElm" (pipelineFailed "AbortError" "")
-                        |> ProgramTest.ensureViewHasNot [ text "Cancelling…" ]
+                        |> ProgramTest.ensureViewHasNot [ attribute (Html.Attributes.attribute "aria-label" "Cancelling…") ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.disabled False), containing [ text "Generate" ] ]
             , test "says how many steps it takes" <|
                 \() ->
@@ -1615,7 +1615,7 @@ suite =
                             [ attribute (Html.Attributes.attribute "data-slot" "card-footer")
                             , containing [ text "Downloading the prompt model" ]
                             , containing [ text "42%" ]
-                            , containing [ tag "button", containing [ text "Cancel" ] ]
+                            , containing [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Cancel") ]
                             ]
                         |> ProgramTest.ensureViewHasNot [ id "steps" ]
                         |> ProgramTest.ensureViewHas [ tag "button", id "ai-style", attribute (Html.Attributes.disabled True) ]
@@ -1631,7 +1631,7 @@ suite =
                         |> ProgramTest.clickButton "Photo"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (tagged "StylistLoaded")
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptStreamed "Subject: a red fox")
-                        |> ProgramTest.ensureView (lockedBut "Stop generating")
+                        |> ProgramTest.ensureView (lockedBut (containing [ text "Stop generating" ]))
                         |> ProgramTest.simulateIncomingPort "interopToElm" (promptWritten foxPrompt)
                         |> ProgramTest.expectView (Query.findAll [ id "prompt", attribute (Html.Attributes.disabled False) ] >> Query.count (Expect.equal 1))
             , test "loads the prompt model it already has, rather than downloading it" <|
@@ -2805,7 +2805,7 @@ writing =
             )
 
 
-lockedBut : String -> Query.Single msg -> Expect.Expectation
+lockedBut : Selector.Selector -> Query.Single msg -> Expect.Expectation
 lockedBut kept =
     let
         off selectors =
@@ -2813,8 +2813,8 @@ lockedBut kept =
     in
     Query.find [ tag "form" ]
         >> Expect.all
-            [ Query.findAll [ tag "button", containing [ text kept ] ] >> Query.count (Expect.equal 1)
-            , Query.findAll [ tag "button", containing [ text kept ] ] >> Query.each (Query.hasNot [ attribute (Html.Attributes.disabled True) ])
+            [ Query.findAll [ tag "button", kept ] >> Query.count (Expect.equal 1)
+            , Query.findAll [ tag "button", kept ] >> Query.each (Query.hasNot [ attribute (Html.Attributes.disabled True) ])
             , Query.find [ id "prompt" ] >> Query.has [ attribute (Html.Attributes.disabled True) ]
             , off [ tag "input" ]
             , off [ id "ai-style" ]
