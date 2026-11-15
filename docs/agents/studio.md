@@ -10,6 +10,15 @@ The studio runs
 (`client/pipeline.worker.ts`). `client/Pipeline.elm` decides everything; the server takes
 no part.
 
+- `patches/` holds a Bun patch of the library (`patchedDependencies` in `package.json`),
+  measured on an M2 Max in Chrome 157, which has `subgroups` but no
+  `chromium-experimental-subgroup-matrix`: a tiled flash attention for head dim 128,
+  taller matmul tiles, a chunked matmul for the VAE attention, the text encoder's 4-bit
+  weights expanded to f16 before its matmuls, and the last prompt's encoding kept for a
+  repeat. A 1024 by 1024 picture went from 46 s to 24 s, and every preset takes 30 to
+  48% less time. It also fixes the VAE attention of pictures of 512 by 512 or less on such
+  GPUs: the library read V transposed. When the pinned commit moves, redo the patch with
+  `bun patch` and measure again.
 - `Main` keeps the pipeline in `model.pipeline`, not in a page: the model stays in the
   graphics card's memory across pages.
 - An event is applied only in the state that waits for it, so one that arrives late

@@ -25,6 +25,9 @@
   "trustedDependencies": [
     "elm",
   ],
+  "patchedDependencies": {
+    "bonsai-image-pipeline-lib@github:nishlumi/bonsai-image-pipeline-lib#4afa168": "patches/bonsai-image-pipeline-lib@github%3Anishlumi%2Fbonsai-image-pipeline-lib#4afa168.patch",
+  },
   "packages": {
     "@avh4/elm-format-darwin-arm64": ["@avh4/elm-format-darwin-arm64@0.8.8-1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-VDu3CRajhB/Sax+CEU4PhIzErBZv8vVxbk9Sk8seUHa1ngfICa3Ejoq3PhnoOFKYF1v1sSxNOC2RnUzvd/9bUw=="],
 

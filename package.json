@@ -45,5 +45,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vite-plugin-elm": "^3.0.1"
+  },
+  "patchedDependencies": {
+    "bonsai-image-pipeline-lib@github:nishlumi/bonsai-image-pipeline-lib#4afa168": "patches/bonsai-image-pipeline-lib@github%3Anishlumi%2Fbonsai-image-pipeline-lib#4afa168.patch"
   }
 }

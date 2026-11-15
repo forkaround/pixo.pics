@@ -1,0 +1,394 @@
+diff --git a/lib/bonsai-image.js b/lib/bonsai-image.js
+index 8e8f2b1ea2cb72d433b48a5030bdd92f98308fb2..d3af8cacea41f27bf449f55dd1ce26ad3e2db287 100644
+--- a/lib/bonsai-image.js
++++ b/lib/bonsai-image.js
+@@ -4073,6 +4073,107 @@ ${h}
+ }
+ `;
+ }
++function tiledFlashAttentionHd128() {
++  let e = (e, t, n = `
++`) => Array.from({ length: e }, (e, n) => t(n)).join(n),
++    t = [`x`, `y`, `z`, `w`],
++    n = (e) => `    workgroupBarrier();
++    for (var i: u32 = tid; i < BK * D4; i = i + WG) {
++      let r = i / D4;
++      let c = i - r * D4;
++      let key = kb + r;
++      var x = vec4<f16>(0.0h);
++      if (key < seq) { x = ${e}[(key * kh + hk) * D4 + c]; }
++      kt[r * KS + c] = x;
++    }
++    workgroupBarrier();`;
++  return `enable f16;
++enable subgroups;
++struct Params { seq: u32, qHeads: u32, kvHeads: u32, _pad0: u32 };
++@group(0) @binding(0) var<storage, read>       q: array<vec4<f16>>;
++@group(0) @binding(1) var<storage, read>       k: array<vec4<f16>>;
++@group(0) @binding(2) var<storage, read>       v: array<vec4<f16>>;
++@group(0) @binding(3) var<storage, read_write> out: array<vec4<f16>>;
++@group(0) @binding(4) var<uniform>             params: Params;
++
++const D4: u32 = 32u;
++const KS: u32 = 33u;
++const PS: u32 = 33u;
++const BQ: u32 = 64u;
++const BK: u32 = 32u;
++const WG: u32 = 128u;
++const SCALE: f32 = 0.0883883476;
++const NEG: f32 = -3.0e38;
++
++var<workgroup> kt: array<vec4<f16>, 1056>;
++var<workgroup> pt: array<vec4<f16>, 528>;
++
++fn max4(a: vec4<f32>) -> f32 { return max(max(a.x, a.y), max(a.z, a.w)); }
++fn sum4(a: vec4<f32>) -> f32 { return (a.x + a.y) + (a.z + a.w); }
++
++@compute @workgroup_size(128, 1, 1)
++fn main(
++  @builtin(workgroup_id) wg: vec3<u32>,
++  @builtin(local_invocation_index) tid: u32
++) {
++  let h = wg.y;
++  let qh = params.qHeads;
++  let kh = params.kvHeads;
++  let hk = h / (qh / kh);
++  let seq = params.seq;
++  let j = tid & 7u;
++  let prow = (tid >> 3u) * PS;
++  let qbase = wg.x * BQ;
++  let qrow = (tid >> 3u) * 4u;
++${e(4, (e) => `  let qg${e} = (min(qbase + qrow + ${e}u, seq - 1u) * qh + h) * D4;`)}
++${e(16, (e) => `  var o${e >> 2}_${e & 3}: vec4<f32> = vec4<f32>(0.0);`)}
++  var m = vec4<f32>(NEG);
++  var l = vec4<f32>(0.0);
++  for (var kb: u32 = 0u; kb < seq; kb = kb + BK) {
++${n(`k`)}
++${e(4, (e) => `    var s${e} = vec4<f32>(0.0);`)}
++    for (var d: u32 = 0u; d < D4; d = d + 1u) {
++${e(4, (e) => `      let qa${e} = q[qg${e} + d];`)}
++${e(4, (e) => `      let kk${e} = kt[(j * 4u + ${e}u) * KS + d];`)}
++${e(4, (n) => `      s${n} = s${n} + vec4<f32>(${e(4, (e) => `f32(dot(qa${n}, kk${e}))`, `, `)});`)}
++    }
++${e(4, (e) => `    s${e} = s${e} * SCALE;`)}
++    if (kb + BK > seq) {
++${e(4, (n) => `      if (kb + j * 4u + ${n}u >= seq) { ${e(4, (e) => `s${e}.${t[n]} = NEG;`, ` `)} }`)}
++    }
++    var mx = vec4<f32>(${e(4, (e) => `max4(s${e})`, `, `)});
++    mx = max(mx, subgroupShuffleXor(mx, 1u));
++    mx = max(mx, subgroupShuffleXor(mx, 2u));
++    mx = max(mx, subgroupShuffleXor(mx, 4u));
++    let mn = max(m, mx);
++    let alpha = exp(m - mn);
++${e(4, (e) => `    s${e} = exp(s${e} - vec4<f32>(mn.${t[e]}));`)}
++    var rs = vec4<f32>(${e(4, (e) => `sum4(s${e})`, `, `)});
++    rs = rs + subgroupShuffleXor(rs, 1u);
++    rs = rs + subgroupShuffleXor(rs, 2u);
++    rs = rs + subgroupShuffleXor(rs, 4u);
++    l = l * alpha + rs;
++    m = mn;
++${e(16, (e) => `    o${e >> 2}_${e & 3} = o${e >> 2}_${e & 3} * alpha.${t[e >> 2]};`)}
++${e(4, (n) => `    pt[prow + j * 4u + ${n}u] = vec4<f16>(vec4<f32>(${e(4, (e) => `s${e}.${t[n]}`, `, `)}));`)}
++${n(`v`)}
++    for (var key: u32 = 0u; key < BK; key = key + 1u) {
++      let pv = vec4<f32>(pt[prow + key]);
++${e(4, (e) => `      let v${e} = vec4<f32>(kt[key * KS + j + ${e * 8}u]);`)}
++${e(16, (e) => `      o${e >> 2}_${e & 3} = fma(v${e & 3}, vec4<f32>(pv.${t[e >> 2]}), o${e >> 2}_${e & 3});`)}
++    }
++  }
++${e(4, (n) => `  {
++    let gq = qbase + qrow + ${n}u;
++    if (gq < seq) {
++      let inv = 1.0 / l.${t[n]};
++      let ob = (gq * qh + h) * D4 + j;
++${e(4, (e) => `      out[ob + ${e * 8}u] = vec4<f16>(o${n}_${e} * inv);`)}
++    }
++  }`)}
++}
++`;
++}
+ function _n({ dtype: e = `float32` } = {}) {
+   let t = $t(e);
+   return `${en(e)}struct Params { totalElems: u32, aElems: u32, wgY: u32, _pad0: u32 };
+@@ -5398,9 +5499,11 @@ async function En(
+       `gpuDenseF16PackedVec4NDualNMatmul requires f16 input, weight, and output tensors`,
+     );
+   let d =
+-    i >= 128
+-      ? { mTile: 88, nTile: 16, rowPerThread: 11, kTile: 32 }
+-      : { mTile: 32, nTile: 16, rowPerThread: 4, kTile: 32 };
++    i >= 1024
++      ? { mTile: 120, nTile: 16, rowPerThread: 15, kTile: 32 }
++      : i >= 128
++        ? { mTile: 88, nTile: 16, rowPerThread: 11, kTile: 32 }
++        : { mTile: 32, nTile: 16, rowPerThread: 4, kTile: 32 };
+   ((s ??= d.mTile), (c ??= d.nTile), (l ??= d.rowPerThread), (u ??= d.kTile));
+   let f = o % (c * 8) == 0,
+     p = `dense_f16_packed_vec4n_dual_${a}_${o}_tm${s}_tn${c}_rpt${l}_tk${u}_fn${+!!f}`,
+@@ -5587,9 +5690,11 @@ async function On(
+       `gpuDenseF16PackedVec4NSwiGluMatmul requires f16 input, weight, and output tensors`,
+     );
+   let d =
+-    i >= 128
+-      ? { mTile: 88, nTile: 16, rowPerThread: 11, kTile: 32 }
+-      : { mTile: 32, nTile: 16, rowPerThread: 4, kTile: 32 };
++    i >= 1024
++      ? { mTile: 120, nTile: 16, rowPerThread: 15, kTile: 32 }
++      : i >= 128
++        ? { mTile: 88, nTile: 16, rowPerThread: 11, kTile: 32 }
++        : { mTile: 32, nTile: 16, rowPerThread: 4, kTile: 32 };
+   ((s ??= d.mTile), (c ??= d.nTile), (l ??= d.rowPerThread), (u ??= d.kTile));
+   let f = o % (c * 4) == 0,
+     p = `dense_f16_packed_swiglu_${a}_${o}_tm${s}_tn${c}_rpt${l}_tk${u}_fn${+!!f}`,
+@@ -5962,6 +6067,35 @@ async function Wn(
+ ) {
+   let u = t.dtype,
+     d = i.dtype;
++  if (
++    !l &&
++    a >= 8 &&
++    c === 128 &&
++    u === `float16` &&
++    d === `float16` &&
++    e.caps().subgroups &&
++    (e.host?.adapter?.info?.subgroupMinSize ?? 0) >= 8
++  ) {
++    let l = Qt(
++      e,
++      [{ u32: a }, { u32: o }, { u32: s }, { u32: 0 }],
++      `flash-attn-params`,
++    );
++    await e.runProgram({
++      name: `flash_attention`,
++      source: tiledFlashAttentionHd128(),
++      cacheKey: `bonsai_flash_attn_tiled_hd128`,
++      bindings: [
++        { tensor: t, type: `read-only-storage` },
++        { tensor: n, type: `read-only-storage` },
++        { tensor: r, type: `read-only-storage` },
++        { tensor: i, type: `storage` },
++        { buffer: l, type: `uniform` },
++      ],
++      workgroups: [Math.ceil(a / 64), o, 1],
++    });
++    return;
++  }
+   if (!l && a >= 8) {
+     let l = !!e.caps().subgroups,
+       f =
+@@ -6474,6 +6608,71 @@ async function Qn(
+     workgroups: [S, C, 1],
+   });
+ }
++async function dequantToKOutVec4(
++  e,
++  { bitsT: t, sbT: n, outT: r, inFeatures: i, outFeatures: a, bits: o, groupSize: s },
++) {
++  let c = 32 / o,
++    l = i / c,
++    u = n.dtype === `float16` ? `f16` : `f32`,
++    d = `dequant_kout_vec4_${u}_b${o}_g${s}_i${i}_o${a}`,
++    f = (e) => [0, 1, 2, 3].map(e).join(`, `),
++    p = `enable f16;
++@group(0) @binding(0) var<storage, read>       bits_buf: array<u32>;
++@group(0) @binding(1) var<storage, read>       sb: array<${u}>;
++@group(0) @binding(2) var<storage, read_write> out: array<vec4<f16>>;
++const N_V4: u32 = ${a / 4}u;
++const WORDS_PER_ROW: u32 = ${l}u;
++const NUM_GROUPS: u32 = ${i / s}u;
++const MASK: u32 = ${(1 << o) - 1}u;
++@compute @workgroup_size(64, 1, 1)
++fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
++  let nq = gid.x;
++  let kw = gid.y;
++  if (nq >= N_V4) { return; }
++  let n0 = nq * 4u;
++  let g = (kw * ${c}u) / ${s}u;
++${[0, 1, 2, 3].map((e) => `  let w${e} = bits_buf[(n0 + ${e}u) * WORDS_PER_ROW + kw];
++  let s${e} = f32(sb[((n0 + ${e}u) * NUM_GROUPS + g) * 2u]);
++  let b${e} = f32(sb[((n0 + ${e}u) * NUM_GROUPS + g) * 2u + 1u]);`).join(`
++`)}
++${Array.from({ length: c }, (e, t) => `  out[(kw * ${c}u + ${t}u) * N_V4 + nq] = vec4<f16>(${f((e) => `f16(s${e} * f32((w${e} >> ${t * o}u) & MASK) + b${e})`)});`).join(`
++`)}
++}
++`;
++  await e.runProgram({
++    name: `dequant_kout_vec4`,
++    source: p,
++    cacheKey: d,
++    bindings: [
++      { tensor: t, type: `read-only-storage` },
++      { tensor: n, type: `read-only-storage` },
++      { tensor: r, type: `storage` },
++    ],
++    workgroups: [Math.ceil(a / 256), l, 1],
++  });
++}
++function denseScratchF16(e, t) {
++  let n = e.host,
++    r = n.__bonsaiDenseScratch;
++  if (!r || r.size < t) {
++    r?.destroy();
++    r = n.__bonsaiDenseScratch = new o({
++      runtime: e,
++      dtype: `float16`,
++      shape: [t],
++      buffer: n.createBuffer({
++        label: `dense-f16-scratch`,
++        size: t * 2,
++        usage:
++          GPUBufferUsage.STORAGE |
++          GPUBufferUsage.COPY_SRC |
++          GPUBufferUsage.COPY_DST,
++      }),
++    });
++  }
++  return r;
++}
+ async function $n(
+   e,
+   {
+@@ -6517,6 +6716,39 @@ async function $n(
+     });
+     return;
+   }
++  if (
++    a >= 32 &&
++    e.caps().f16 &&
++    u === `float16` &&
++    f === `float16` &&
++    (d === `float16` || d === `float32`) &&
++    [1, 2, 4, 8].includes(c) &&
++    o % 64 == 0 &&
++    s % 4 == 0 &&
++    l % (32 / c) == 0 &&
++    o % l == 0
++  ) {
++    let p = denseScratchF16(e, o * s);
++    (await dequantToKOutVec4(e, {
++      bitsT: n,
++      sbT: r,
++      outT: p,
++      inFeatures: o,
++      outFeatures: s,
++      bits: c,
++      groupSize: l,
++    }),
++      await ir(e, {
++        aT: t,
++        wT: p,
++        outT: i,
++        M: a,
++        inFeatures: o,
++        outFeatures: s,
++        accumDtype: `float32`,
++      }));
++    return;
++  }
+   let p, m;
+   if (s % 64 == 0) ((p = a >= 4 ? 4 : a >= 2 ? 2 : 1), (m = 64));
+   else if (s % 32 == 0)
+@@ -8736,7 +8968,7 @@ var Nr = class e {
+         }
+         if (i && e.dtype === `float16` && o.dtype === `float16`) {
+           i.denseLayout === `k-out-vec4n`
+-            ? s >= 128 && l === c && u >= c * 3
++            ? s >= 128 && l % 32 == 0 && u % 4 == 0
+               ? await En(a, {
+                   aT: e,
+                   wT: i,
+@@ -13173,6 +13405,7 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid:
+       await Bn(a, { xT: m, yT: _, count: o * n }));
+     let v = a.empty(c, [o, 1, n], `vae-attn-out`);
+     if (
++      a.caps().subgroupMatrix &&
+       a.caps().f16 &&
+       h.dtype === `float16` &&
+       g.dtype === `float16` &&
+@@ -13222,6 +13455,54 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid:
+             inFeatures: o,
+             outFeatures: n,
+           });
++    } else if (
++      a.caps().f16 &&
++      h.dtype === `float16` &&
++      g.dtype === `float16` &&
++      _.dtype === `float16` &&
++      c === `float16` &&
++      n % 32 == 0 &&
++      o % 64 == 0
++    ) {
++      let e = Math.min(o, 2048),
++        t = await this._transposeNcToCn({ inT: g, rows: o, cols: n }),
++        r = a.empty(`float16`, [e, n], `vae-attn-q-chunk`),
++        i = a.empty(`float16`, [e, o], `vae-attn-logits`),
++        s = a.empty(`float16`, [e, n], `vae-attn-out-chunk`);
++      for (let l = 0; l < o; l += e) {
++        let u = Math.min(e, o - l);
++        (await a.copyBufferToBuffer({
++          src: h,
++          dst: r,
++          srcOffset: l * n * 2,
++          byteLength: u * n * 2,
++        }),
++          await ir(a, {
++            aT: r,
++            wT: t,
++            outT: i,
++            M: u,
++            inFeatures: n,
++            outFeatures: o,
++            accumDtype: `float32`,
++          }),
++          await Hn(a, { xT: i, rows: u, cols: o, scale: 1 / Math.sqrt(n) }),
++          await ir(a, {
++            aT: i,
++            wT: _,
++            outT: s,
++            M: u,
++            inFeatures: o,
++            outFeatures: n,
++            accumDtype: `float32`,
++          }),
++          await a.copyBufferToBuffer({
++            src: s,
++            dst: v,
++            dstOffset: l * n * 2,
++            byteLength: u * n * 2,
++          }));
++      }
+     } else
+       await Wn(a, {
+         qT: h,
+@@ -13543,12 +13824,16 @@ var PipelineBase = class {
+         if (f.shape.length !== 2)
+           throw Error(`encoderHiddenStatesT must have shape [seq, stackDim]`);
+         (([p, m] = f.shape), a?.(`text encode cache`));
+-      } else
+-        ({
+-          hiddenStackT: f,
+-          seq: p,
+-          stackDim: m,
+-        } = await this.encodePrompt(e, { log: a, scope: c }));
++      } else {
++        let t = this.promptCache;
++        (t && t.prompt === e
++          ? a?.(`text encode cache`)
++          : (t?.hiddenStackT?.destroy?.(),
++            (this.promptCache = null),
++            (t = this.promptCache =
++              { prompt: e, ...(await this.encodePrompt(e, { log: a })) })),
++          ({ hiddenStackT: f, seq: p, stackDim: m } = t));
++      }
+       if (m !== d.joint_attention_dim)
+         throw Error(
+           `text stackDim ${m} != joint_attention_dim ${d.joint_attention_dim}`,
+@@ -13623,6 +13908,8 @@ var PipelineBase = class {
+     destroy() {
+       this.destroyed ||
+         ((this.destroyed = !0),
++        this.promptCache?.hiddenStackT?.destroy?.(),
++        (this.promptCache = null),
+         this.rt.clearTransientCaches?.(),
+         this.textEncoder?.destroy?.(),
+         this.transformer?.destroy?.(),
