@@ -63,7 +63,8 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
 
 1. A variant of `Api.Route` in `shared/Api.elm`: keep `Api.parse` in step with
    `Api.method` and `Api.path`.
-2. A branch in `Main.handle`, and one in `brokenAnswer`.
+2. A branch in `Main.handle`, one in `brokenAnswer`, and one in `routePolicy` (its rate
+   limit: `RateLimit.requests` unless it needs its own).
 3. A function in its flow (`api/src/Flow/`) that returns a `Reply Msg`. A new flow is a
    new module and a new `Main.Msg` variant.
 4. In `tests/ApiTest.elm`, which walks the routes with `next`: chain the new route after
@@ -78,7 +79,9 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
 - One policy per key, each a function in `api/src/RateLimit.elm` that takes what it limits
   (`ClientAddress`, `Email`); a key is written nowhere else. Name it after what it limits
   and whom, like `magic-link:email:<email>`.
-- `Main` counts every request against `RateLimit.requests` before routing it. A flow
+- `Main` counts every request against its route's policy before routing it
+  (`routePolicy`: `RateLimit.requests`, or `RateLimit.webhooks` for Paddle's webhook; an
+  unknown path counts against `requests`). A flow
   limits its route further with `Reply.Limit policies next`: every policy is counted or
   none is, and a refusal answers 429 with the longest wait, before any query.
 - The time comes from `Effect.Clock`, in epoch milliseconds: never `//` or `modBy` on
