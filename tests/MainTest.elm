@@ -919,24 +919,24 @@ suite =
         , describe "Routing"
             [ test "says so at an unknown address" <|
                 \() ->
-                    startAt "/nowhere" defaultFlags
+                    startAt "/nowhere/at/all" defaultFlags
                         |> ProgramTest.expectViewHas [ text "There is nothing at this address." ]
             , test "offers the account at an unknown address when signed in" <|
                 \() ->
-                    startAt "/nowhere" defaultFlags
+                    startAt "/nowhere/at/all" defaultFlags
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
                         |> ProgramTest.clickLink "Account" "/settings/account"
                         |> ProgramTest.expectViewHas [ text "Signed in as ada (ada@example.com)" ]
             , test "offers to sign in or sign up at an unknown address when signed out" <|
                 \() ->
-                    startAt "/nowhere" defaultFlags
+                    startAt "/nowhere/at/all" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
                         |> ProgramTest.ensureViewHas [ text "Create an account" ]
                         |> ProgramTest.clickLink "Log in" "/login"
                         |> ProgramTest.expectViewHas [ text "Use your passkey, or get a link by email." ]
             , test "offers to check the session again at an unknown address" <|
                 \() ->
-                    startAt "/nowhere" defaultFlags
+                    startAt "/nowhere/at/all" defaultFlags
                         |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" Test.Http.networkError
                         |> ProgramTest.clickButton "Try again"
                         |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
@@ -1140,6 +1140,137 @@ suite =
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.field "tag" Decode.string)
                             (Expect.equal [])
+            ]
+        , describe "Explore feed"
+            [ test "shows the published pictures, each with its author" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed" (feedPage [ feedPicture feedIdA "ada" "a red fox" [ "fox" ], feedPicture feedIdB "ada" "a blue whale" [] ] Nothing)
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a red fox") ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a blue whale") ]
+                        |> ProgramTest.expectViewHas [ tag "a", attribute (Html.Attributes.href "/ada"), containing [ text "ada" ] ]
+            , test "loads more pictures after the last one" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed" (feedPage [ feedPicture feedIdA "ada" "a red fox" [ "fox" ] ] (Just feedIdA))
+                        |> ProgramTest.clickButton "Load more"
+                        |> ProgramTest.ensureViewHas [ text "Loading more…" ]
+                        |> ProgramTest.ensureHttpRequest "GET" ("/api/feed/" ++ feedIdA) (\_ -> Expect.pass)
+                        |> ProgramTest.simulateHttpOk "GET" ("/api/feed/" ++ feedIdA) (feedPage [ feedPicture feedIdB "ada" "a blue whale" [] ] Nothing)
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a red fox") ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a blue whale") ]
+                        |> ProgramTest.ensureViewHasNot [ text "Load more" ]
+                        |> ProgramTest.expectViewHasNot [ text "Loading more…" ]
+            , test "says so and keeps the mosaic when the feed can't load" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/feed" (response 503 """{"error":"Unavailable right now."}""")
+                        |> ProgramTest.ensureViewHas [ text "Can't load the feed" ]
+                        |> ProgramTest.expectViewHas [ attribute (Html.Attributes.attribute "aria-hidden" "true"), containing [ tag "img" ] ]
+            , test "shows the most used tags, and filters by one" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.ensureViewHas [ tag "button", containing [ text "All" ] ]
+                        |> ProgramTest.clickButton "fox"
+                        |> ProgramTest.ensureHttpRequest "GET" "/api/feed/tag/fox" (\_ -> Expect.pass)
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-pressed" "true"), containing [ text "fox" ] ]
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tag/fox" (feedPage [ feedPicture feedIdB "ada" "a fox in a den" [ "fox" ] ] Nothing)
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a fox in a den") ]
+                        |> ProgramTest.ensureViewHasNot [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a red fox") ]
+                        |> ProgramTest.clickButton "All"
+                        |> ProgramTest.expectHttpRequest "GET" "/api/feed" (\_ -> Expect.pass)
+            , test "ignores an answer for a tag that is no longer chosen" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tags" """[{"tag":"fox","pictures":2}]"""
+                        |> ProgramTest.clickButton "fox"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed" (feedPage [ feedPicture feedIdA "ada" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.expectViewHasNot [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a red fox") ]
+            , test "says when no picture has the tag" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "fox"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tag/fox" (feedPage [] Nothing)
+                        |> ProgramTest.expectViewHas [ text "No pictures with this tag yet" ]
+            , test "leaves no pending load more behind when another tag is chosen" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "Load more"
+                        |> ProgramTest.clickButton "fox"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tag/fox" (feedPage [ feedPicture feedIdB "ada" "a fox in a den" [ "fox" ] ] (Just feedIdB))
+                        |> ProgramTest.simulateHttpOk "GET" ("/api/feed/" ++ feedIdA) (feedPage [ feedPicture feedIdB "ada" "a blue whale" [] ] Nothing)
+                        |> ProgramTest.expectViewHasNot [ text "Loading more…" ]
+            , test "loads more under the chosen tag" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "fox"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tag/fox" (feedPage [ feedPicture feedIdB "ada" "a fox in a den" [ "fox" ] ] (Just feedIdB))
+                        |> ProgramTest.clickButton "Load more"
+                        |> ProgramTest.expectHttpRequest "GET" ("/api/feed/tag/fox/" ++ feedIdB) (\_ -> Expect.pass)
+            , test "filters by a tag picked in the picture, and shows it in the row" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inFeedPicture (ProgramTest.clickButton "snow")
+                        |> ProgramTest.ensureHttpRequest "GET" "/api/feed/tag/snow" (\_ -> Expect.pass)
+                        |> ProgramTest.ensureViewHasNot [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Show details") ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-pressed" "true"), containing [ text "snow" ] ]
+            , test "closes the picture when its own tag is already chosen" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "fox"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tag/fox" (feedPage [ feedPicture feedIdA "ada" "a red fox" [ "fox", "snow" ] ] Nothing)
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inFeedPicture (ProgramTest.clickButton "fox")
+                        |> ProgramTest.expectViewHasNot [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Show details") ]
+            ]
+        , describe "Profile"
+            [ test "asks for the profile of the name in the address" <|
+                \() ->
+                    startAt "/ada" defaultFlags
+                        |> ProgramTest.expectHttpRequest "GET" "/api/profiles/ada" (\_ -> Expect.pass)
+            , test "says so when there is no such profile" <|
+                \() ->
+                    startAt "/ada" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/profiles/ada" (response 404 """{"error":"No such profile."}""")
+                        |> ProgramTest.expectViewHas [ text "Not found" ]
+            , test "shows the name and the pictures" <|
+                \() ->
+                    startAt "/ada" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/profiles/ada" (profilePage "ada" [ feedPicture feedIdA "ada" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.ensureViewHas [ tag "h1", containing [ text "ada" ] ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a red fox") ]
+            , test "offers Unpublish on one's own profile, which removes the picture" <|
+                \() ->
+                    startAt "/ada" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
+                        |> ProgramTest.simulateHttpOk "GET" "/api/profiles/ada" (profilePage "ada" [ feedPicture feedIdA "ada" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inProfilePicture (ProgramTest.clickButton "Unpublish")
+                        |> ProgramTest.ensureHttpRequest "DELETE" ("/api/pictures/" ++ feedIdA) (\_ -> Expect.pass)
+                        |> ProgramTest.simulateHttpResponse "DELETE" ("/api/pictures/" ++ feedIdA) (response 200 "{}")
+                        |> ProgramTest.ensureViewHas [ text "Unpublished" ]
+                        |> ProgramTest.expectViewHasNot [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Open a red fox") ]
+            , test "offers no Unpublish to a visitor who is signed out" <|
+                \() ->
+                    startAt "/ada" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.simulateHttpOk "GET" "/api/profiles/ada" (profilePage "ada" [ feedPicture feedIdA "ada" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Show details") ]
+                        |> ProgramTest.expectViewHasNot [ tag "button", containing [ text "Unpublish" ] ]
+            , test "offers no Unpublish on someone else's profile" <|
+                \() ->
+                    startAt "/grace" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
+                        |> ProgramTest.simulateHttpOk "GET" "/api/profiles/grace" (profilePage "grace" [ feedPicture feedIdA "grace" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Show details") ]
+                        |> ProgramTest.expectViewHasNot [ tag "button", containing [ text "Unpublish" ] ]
+            , test "still opens the studio at /studio" <|
+                \() ->
+                    startAt "/studio" defaultFlags
+                        |> ProgramTest.expectViewHas [ text "Nothing here yet" ]
             ]
         , describe "Studio"
             [ test "asks the browser whether it can run the model" <|
@@ -2867,6 +2998,67 @@ proLibraryOf pictures =
         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryLoaded pictures)
         |> ProgramTest.clickButton "Open a red fox in the snow"
         |> ProgramTest.ensureOutgoingPortValues "interopFromElm" Decode.value (\_ -> Expect.pass)
+
+
+feedIdA : String
+feedIdA =
+    "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11"
+
+
+feedIdB : String
+feedIdB =
+    "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+
+feedPicture : String -> String -> String -> List String -> String
+feedPicture id username prompt tags =
+    """{"id":"""
+        ++ quoted id
+        ++ ""","url":"https://img.pixo.pics/"""
+        ++ id
+        ++ """.jpg","username":"""
+        ++ quoted username
+        ++ ""","prompt":"""
+        ++ quoted prompt
+        ++ ""","width":512,"height":512,"steps":4,"seed":7,"model":"m","tags":["""
+        ++ String.join "," (List.map quoted tags)
+        ++ """],"publishedAt":"2026-11-17T10:00:00Z"}"""
+
+
+feedPage : List String -> Maybe String -> String
+feedPage pictures next =
+    """{"pictures":["""
+        ++ String.join "," pictures
+        ++ """],"next":"""
+        ++ Maybe.withDefault "null" (Maybe.map quoted next)
+        ++ "}"
+
+
+profilePage : String -> List String -> Maybe String -> String
+profilePage username pictures next =
+    """{"username":""" ++ quoted username ++ ""","pictures":[""" ++ String.join "," pictures ++ """],"next":""" ++ Maybe.withDefault "null" (Maybe.map quoted next) ++ "}"
+
+
+quoted : String -> String
+quoted value =
+    Encode.encode 0 (Encode.string value)
+
+
+exploring : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+exploring =
+    startAt "/" defaultFlags
+        |> ProgramTest.simulateHttpOk "GET" "/api/feed" (feedPage [ feedPicture feedIdA "ada" "a red fox" [ "fox", "snow" ] ] (Just feedIdA))
+        |> ProgramTest.simulateHttpOk "GET" "/api/feed/tags" """[{"tag":"fox","pictures":2}]"""
+
+
+inFeedPicture : (ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+inFeedPicture =
+    ProgramTest.within (Query.find [ tag "elmcn-dialog", id "feed-picture" ])
+
+
+inProfilePicture : (ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+inProfilePicture =
+    ProgramTest.within (Query.find [ tag "elmcn-dialog", id "profile-picture" ])
 
 
 inPicture : (ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)

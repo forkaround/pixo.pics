@@ -1,4 +1,4 @@
-module ExploreView exposing (Invitation(..), gallery, mosaic, view)
+module ExploreView exposing (Invitation(..), decorative, gallery, mosaic, view)
 
 import Html exposing (Html, div, h2, img, p, span, text)
 import Html.Attributes exposing (alt, attribute, class, height, href, id, src, style, width)
@@ -17,8 +17,8 @@ gallery =
     "gallery"
 
 
-view : Invitation -> Html msg
-view invitation =
+view : Invitation -> Html msg -> Html msg
+view invitation pictures =
     div [ class "flex flex-1 flex-col" ]
         [ banner invitation
         , div [ id gallery, class "flex flex-col gap-6 p-4 pt-8" ]
@@ -26,10 +26,15 @@ view invitation =
                 [ h2 [ class "text-2xl font-semibold tracking-tight" ] [ text "See what people are making" ]
                 , p [ class "text-sm text-pretty text-muted-foreground" ] [ text "Every picture here was made in a browser." ]
                 ]
-            , div [ class "columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5", attribute "aria-hidden" "true" ]
-                mosaic
+            , pictures
             ]
         ]
+
+
+decorative : Html msg
+decorative =
+    div [ class "columns-2 gap-4 md:columns-3 xl:columns-4 2xl:columns-5", attribute "aria-hidden" "true" ]
+        mosaic
 
 
 mosaic : List (Html msg)
