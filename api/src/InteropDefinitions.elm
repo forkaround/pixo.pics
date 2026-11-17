@@ -64,6 +64,12 @@ type alias Flags =
     , paddleWebhookSecret : Maybe String
     , paddleClientToken : Maybe String
     , paddleProPriceId : Maybe String
+    , r2AccountId : Maybe String
+    , r2AccessKeyId : Maybe String
+    , r2SecretAccessKey : Maybe String
+    , r2Bucket : Maybe String
+    , r2UploadBucket : Maybe String
+    , imagesOrigin : Maybe String
     }
 
 
@@ -283,3 +289,9 @@ flags =
         |> TsDecode.andMap (TsDecode.field "paddleWebhookSecret" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "paddleClientToken" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "paddleProPriceId" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "r2AccountId" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "r2AccessKeyId" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "r2SecretAccessKey" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "r2Bucket" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "r2UploadBucket" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "imagesOrigin" (TsDecode.nullable TsDecode.string))

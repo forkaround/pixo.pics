@@ -5,6 +5,7 @@ import Data.Origin exposing (Origin)
 import Services.Mailer as Mailer
 import Services.Neon as Neon
 import Services.Paddle as Paddle
+import Services.R2 as R2
 
 
 type alias Server =
@@ -13,4 +14,5 @@ type alias Server =
     , origin : Origin
     , paddle : Maybe Paddle.Config
     , release : Api.Release
+    , storage : Maybe R2.Config
     }

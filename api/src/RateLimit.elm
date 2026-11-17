@@ -1,4 +1,4 @@
-module RateLimit exposing (Limits, Policy, check, checkouts, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, portals, requests, size, sweep, webhooks)
+module RateLimit exposing (Limits, Policy, check, checkouts, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, portals, publishes, requests, size, sweep, webhooks)
 
 import Data.ClientAddress as ClientAddress exposing (ClientAddress)
 import Data.Email as Email exposing (Email)
@@ -57,6 +57,11 @@ checkouts address =
 portals : ClientAddress -> Policy
 portals address =
     Policy { key = "portal:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 900 }
+
+
+publishes : ClientAddress -> Policy
+publishes address =
+    Policy { key = "publish:ip:" ++ ClientAddress.toString address, limit = 30, windowSeconds = 3600 }
 
 
 empty : Limits
