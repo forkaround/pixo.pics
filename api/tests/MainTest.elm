@@ -961,6 +961,118 @@ suite =
                             , [ ( "error", "R2 delete failed: R2 answered 403: <Error/>" ) ]
                             )
             ]
+        , describe "GET /api/feed"
+            [ test "answers 503 without R2 settings" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> request "first" "GET" [ "api", "feed" ]
+                        |> expectSent (responses >> List.map .status) [ 503 ]
+            , test "asks for the newest page and answers the pictures, cached for everyone" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "feed" ]
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT * FROM feed_pictures($1, $2::uuid, $3)", [ Nothing, Nothing, Just "30" ] ))
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (feedRows [ feedRow pictureId ])
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = sharedHeaders 60
+                              , body = """{"pictures":[{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","username":"ada","prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","tags":["fox"],"publishedAt":"2026-11-17T10:00:00Z"}],"next":null}"""
+                              }
+                            ]
+            , test "points to the last picture when the page is full" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "feed" ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (feedRows (List.repeat 29 (feedRow pictureId) ++ [ feedRow otherPictureId ]))
+                        |> expectSent (responses >> List.map (.body >> Decode.decodeString (Decode.field "next" Decode.string) >> Result.toMaybe))
+                            [ Just otherPictureId ]
+            , test "passes the picture to start after" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "feed", pictureId ]
+                        |> ProgramTest.expectHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT * FROM feed_pictures($1, $2::uuid, $3)", [ Nothing, Just pictureId, Just "30" ] ))
+            , test "passes the tag" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "feed", "tag", "fox" ]
+                        |> ProgramTest.expectHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT * FROM feed_pictures($1, $2::uuid, $3)", [ Just "fox", Nothing, Just "30" ] ))
+            , test "passes a tag with a space" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "feed", "tag", "sea life" ]
+                        |> ProgramTest.expectHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT * FROM feed_pictures($1, $2::uuid, $3)", [ Just "sea life", Nothing, Just "30" ] ))
+            , test "answers 404 at a tag that is not written canonically" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "feed", "tag", "Fox" ]
+                        |> expectSent (responses >> List.map .status) [ 404 ]
+            , test "reads the same with or without a session cookie and sets none" <|
+                \() ->
+                    startPublishing
+                        |> requestWith { resolve = "first", method = "GET", path = [ "api", "feed" ], headers = pictureHeaders, body = "" }
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT * FROM feed_pictures($1, $2::uuid, $3)", [ Nothing, Nothing, Just "30" ] ))
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (feedRows [])
+                        |> expectSent (responses >> List.map (.headers >> List.any (\( name, _ ) -> name == "set-cookie")))
+                            [ False ]
+            ]
+        , describe "GET /api/feed/tags"
+            [ test "asks for the top 20 and answers them, cached for five minutes" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> request "first" "GET" [ "api", "feed", "tags" ]
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT tag, pictures FROM feed_tags($1)", [ Just "20" ] ))
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"tag":"fox","pictures":"12"},{"tag":"x","pictures":"3"}],"rowCount":2}"""
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = sharedHeaders 300
+                              , body = """[{"tag":"fox","pictures":12}]"""
+                              }
+                            ]
+            ]
+        , describe "GET /api/profiles/<name>"
+            [ test "answers 503 without R2 settings" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> request "first" "GET" [ "api", "profiles", "ada" ]
+                        |> expectSent (responses >> List.map .status) [ 503 ]
+            , test "runs one plain query and answers the page, cached for everyone" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "profiles", "ada" ]
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT username, pictures FROM profile($1, $2::uuid, $3)", [ Just "ada", Nothing, Just "30" ] ))
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (profileRows [ profilePicture pictureId ])
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = sharedHeaders 60
+                              , body = """{"username":"ada","pictures":[{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","username":"ada","prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","tags":["fox"],"publishedAt":"2026-11-17T10:00:00Z"}],"next":null}"""
+                              }
+                            ]
+            , test "passes the picture to start after" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "profiles", "ada", pictureId ]
+                        |> ProgramTest.expectHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT username, pictures FROM profile($1, $2::uuid, $3)", [ Just "ada", Just pictureId, Just "30" ] ))
+            , test "sends the same query whether or not a cookie comes with it" <|
+                \() ->
+                    startPublishing
+                        |> requestWith { resolve = "first", method = "GET", path = [ "api", "profiles", "ada" ], headers = pictureHeaders, body = "" }
+                        |> ProgramTest.expectHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT username, pictures FROM profile($1, $2::uuid, $3)", [ Just "ada", Nothing, Just "30" ] ))
+            , test "answers 404 for no such profile, not cached" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "profiles", "ada" ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[],"rowCount":0}"""
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"No such profile."}""" } ]
+            , test "answers 404 at a reserved name" <|
+                \() ->
+                    startPublishing
+                        |> request "first" "GET" [ "api", "profiles", "studio" ]
+                        |> expectSent (responses >> List.map .status) [ 404 ]
+            ]
         , describe "DELETE /api/auth/session"
             [ test "ends the session and clears the cookie" <|
                 \() ->
@@ -2480,6 +2592,45 @@ portalRequest =
 deleteAccount : List ( String, String ) -> App -> App
 deleteAccount headers =
     requestWith { resolve = "first", method = "DELETE", path = [ "api", "auth", "account" ], headers = headers, body = "" }
+
+
+sharedHeaders : Int -> List ( String, String )
+sharedHeaders seconds =
+    [ ( "content-type", "application/json" )
+    , ( "cache-control", "public, max-age=0, s-maxage=" ++ String.fromInt seconds ++ ", stale-while-revalidate=" ++ String.fromInt seconds )
+    ]
+
+
+expectPlainQuery : ( String, List (Maybe String) ) -> Test.Http.HttpRequest x a -> Expectation
+expectPlainQuery expected =
+    Test.Http.expectJsonBody
+        (Decode.map2 Tuple.pair
+            (Decode.field "query" Decode.string)
+            (Decode.field "params" (Decode.list (Decode.nullable Decode.string)))
+        )
+        (Expect.equal expected)
+
+
+feedRow : String -> String
+feedRow id =
+    """{"id":"%1","username":"ada","prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":"7","model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","tags":["fox"],"published_at":"2026-11-17T10:00:00Z"}"""
+        |> String.replace "%1" id
+
+
+feedRows : List String -> String
+feedRows rows =
+    """{"rows":[""" ++ String.join "," rows ++ """],"rowCount":""" ++ String.fromInt (List.length rows) ++ "}"
+
+
+profilePicture : String -> String
+profilePicture id =
+    """{"id":"%1","prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","tags":["fox"],"published_at":"2026-11-17T10:00:00Z","sort_at":"2026-11-17T11:00:00+01:00"}"""
+        |> String.replace "%1" id
+
+
+profileRows : List String -> String
+profileRows pictures =
+    """{"rows":[{"username":"ada","pictures":[""" ++ String.join "," pictures ++ """]}],"rowCount":1}"""
 
 
 pictureId : String

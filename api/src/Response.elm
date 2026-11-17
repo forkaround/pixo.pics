@@ -1,4 +1,4 @@
-module Response exposing (Response, accepted, error, health, invalidLink, json, notRouted, notSignedIn, tooManyRequests, unavailable, withHeader)
+module Response exposing (Response, accepted, error, health, invalidLink, json, notRouted, notSignedIn, shared, tooManyRequests, unavailable, withHeader)
 
 import Api
 import Json.Encode as Encode
@@ -20,6 +20,17 @@ json : Int -> Encode.Value -> Response
 json status value =
     { status = status
     , headers = [ ( "content-type", "application/json" ), ( "cache-control", "no-store" ) ]
+    , body = Encode.encode 0 value
+    }
+
+
+shared : Int -> Encode.Value -> Response
+shared seconds value =
+    { status = 200
+    , headers =
+        [ ( "content-type", "application/json" )
+        , ( "cache-control", "public, max-age=0, s-maxage=" ++ String.fromInt seconds ++ ", stale-while-revalidate=" ++ String.fromInt seconds )
+        ]
     , body = Encode.encode 0 value
     }
 

@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions, unconfirmed)
+module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), PictureRow, ProfileRow, Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, feed, feedTags, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, profile, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions, unconfirmed)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -8,7 +8,7 @@ import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.PictureId as PictureId exposing (PictureId)
 import Data.Publication exposing (Publication)
 import Data.SessionToken as SessionToken exposing (SessionToken)
-import Data.Tag as Tag
+import Data.Tag as Tag exposing (Tag)
 import Data.UserId as UserId exposing (UserId)
 import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
@@ -655,3 +655,96 @@ beforeDeletion token =
                     (Decode.field "pictures" (Decode.list PictureId.decoder))
                 )
             )
+
+
+type alias PictureRow =
+    { id : PictureId
+    , username : Username
+    , prompt : String
+    , width : Int
+    , height : Int
+    , steps : Int
+    , seed : Int
+    , model : String
+    , tags : List Tag
+    , publishedAt : String
+    }
+
+
+type alias ProfileRow =
+    { username : Username
+    , pictures : List PictureRow
+    }
+
+
+feed : Maybe Tag -> Maybe PictureId -> Int -> Neon.Query (List PictureRow)
+feed tag before limit =
+    Neon.select "SELECT * FROM feed_pictures($1, $2::uuid, $3)"
+        [ Neon.nullable (Tag.toString >> Neon.text) tag
+        , Neon.nullable (PictureId.toString >> Neon.text) before
+        , Neon.int limit
+        ]
+        (Decode.field "username" Username.decoder
+            |> Decode.andThen (pictureRow seedAsText)
+        )
+
+
+feedTags : Int -> Neon.Query (List Api.TagCount)
+feedTags limit =
+    Neon.select "SELECT tag, pictures FROM feed_tags($1)"
+        [ Neon.int limit ]
+        (Decode.map2 (\tag pictures -> Maybe.map2 Api.TagCount tag (String.toInt pictures))
+            (Decode.field "tag" (Decode.map Tag.fromString Decode.string))
+            (Decode.field "pictures" Decode.string)
+        )
+        |> Neon.map (List.filterMap identity)
+
+
+profile : Username -> Maybe PictureId -> Int -> Neon.Query (Maybe ProfileRow)
+profile name before limit =
+    Neon.selectOne "SELECT username, pictures FROM profile($1, $2::uuid, $3)"
+        [ Neon.text (Username.toString name)
+        , Neon.nullable (PictureId.toString >> Neon.text) before
+        , Neon.int limit
+        ]
+        (Decode.field "username" Username.decoder
+            |> Decode.andThen
+                (\username ->
+                    Decode.map (ProfileRow username)
+                        (Decode.field "pictures" (Decode.list (pictureRow Decode.int username)))
+                )
+        )
+
+
+seedAsText : Decoder Int
+seedAsText =
+    Decode.string
+        |> Decode.andThen
+            (\text ->
+                case String.toInt text of
+                    Just seed ->
+                        Decode.succeed seed
+
+                    Nothing ->
+                        Decode.fail "Expected a seed."
+            )
+
+
+pictureRow : Decoder Int -> Username -> Decoder PictureRow
+pictureRow seed username =
+    Decode.succeed PictureRow
+        |> andMap (Decode.field "id" PictureId.decoder)
+        |> andMap (Decode.succeed username)
+        |> andMap (Decode.field "prompt" Decode.string)
+        |> andMap (Decode.field "width" Decode.int)
+        |> andMap (Decode.field "height" Decode.int)
+        |> andMap (Decode.field "steps" Decode.int)
+        |> andMap (Decode.field "seed" seed)
+        |> andMap (Decode.field "model" Decode.string)
+        |> andMap (Decode.field "tags" (Decode.map (List.filterMap Tag.fromString) (Decode.list Decode.string)))
+        |> andMap (Decode.field "published_at" Decode.string)
+
+
+andMap : Decoder a -> Decoder (a -> b) -> Decoder b
+andMap =
+    Decode.map2 (|>)

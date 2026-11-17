@@ -7,6 +7,7 @@ import Data.Origin as Origin
 import Db
 import Effect exposing (Effect(..), log, respond)
 import Flow.Billing
+import Flow.Feed
 import Flow.Health
 import Flow.MagicLink
 import Flow.PasskeySignIn
@@ -147,6 +148,7 @@ type Msg
     | PasskeySignIn Flow.PasskeySignIn.Msg
     | Billing Flow.Billing.Msg
     | Pictures Flow.Pictures.Msg
+    | Feed Flow.Feed.Msg
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
@@ -240,6 +242,15 @@ brokenAnswer { problem, release } found =
         Api.DeletePicture _ ->
             Response.unavailable
 
+        Api.GetFeed _ _ ->
+            Response.unavailable
+
+        Api.GetFeedTags ->
+            Response.unavailable
+
+        Api.GetProfile _ _ ->
+            Response.unavailable
+
 
 reply : Time.Posix -> Interop.Resolver -> Reply Msg -> RateLimit.Limits -> ( RateLimit.Limits, Effect Msg )
 reply time resolver answer limits =
@@ -297,6 +308,9 @@ running server limits msg =
 
         Pictures flowMsg ->
             ( limits, Effect.map Pictures (Flow.Pictures.update server flowMsg) )
+
+        Feed flowMsg ->
+            ( limits, Effect.map Feed (Flow.Feed.update server flowMsg) )
 
         DatabaseFailed { resolver, step, problem } ->
             ( limits
@@ -430,6 +444,15 @@ routePolicy found address =
         Api.DeletePicture _ ->
             RateLimit.requests address
 
+        Api.GetFeed _ _ ->
+            RateLimit.requests address
+
+        Api.GetFeedTags ->
+            RateLimit.requests address
+
+        Api.GetProfile _ _ ->
+            RateLimit.requests address
+
 
 route : Server -> Request -> Reply Msg
 route server request =
@@ -503,3 +526,12 @@ handle server request r =
 
         Api.DeletePicture id ->
             Reply.map Pictures (Flow.Pictures.unpublish id server request)
+
+        Api.GetFeed tag before ->
+            Reply.map Feed (Flow.Feed.feed tag before server request)
+
+        Api.GetFeedTags ->
+            Reply.map Feed (Flow.Feed.tags server request)
+
+        Api.GetProfile name before ->
+            Reply.map Feed (Flow.Feed.profile name before server request)
