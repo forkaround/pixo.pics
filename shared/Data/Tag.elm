@@ -1,4 +1,7 @@
-module Data.Tag exposing (Tag, fromString, toString)
+module Data.Tag exposing (Tag, decoder, encode, fromString, toString)
+
+import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 
 
 type Tag
@@ -33,6 +36,25 @@ fromString raw =
 toString : Tag -> String
 toString (Tag value) =
     value
+
+
+decoder : Decoder Tag
+decoder =
+    Decode.string
+        |> Decode.andThen
+            (\value ->
+                case fromString value of
+                    Just tag ->
+                        Decode.succeed tag
+
+                    Nothing ->
+                        Decode.fail "Expected a tag."
+            )
+
+
+encode : Tag -> Encode.Value
+encode (Tag value) =
+    Encode.string value
 
 
 allowed : Char -> Bool

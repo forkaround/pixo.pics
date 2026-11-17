@@ -2,6 +2,8 @@ module ApiTest exposing (suite)
 
 import Api
 import Data.CredentialId as CredentialId
+import Data.PictureId as PictureId
+import Data.Tag as Tag
 import Expect
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -35,6 +37,10 @@ suite =
                    , test "finds no passkey to delete at an empty id" <|
                         \() ->
                             Api.parse "DELETE" [ "api", "auth", "passkeys", "" ]
+                                |> Expect.equal (Err Api.NotFound)
+                   , test "finds no picture to delete at a bad id" <|
+                        \() ->
+                            Api.parse "DELETE" [ "api", "pictures", "nope" ]
                                 |> Expect.equal (Err Api.NotFound)
                    , test "finds nothing at an unknown path" <|
                         \() ->
@@ -94,6 +100,57 @@ suite =
                     Decode.decodeString (Api.responseDecoder Api.portal) """{"url":"https://example.com/x"}"""
                         |> Result.map (Api.encodeResponse Api.portal >> Encode.encode 0)
                         |> Expect.equal (Ok """{"url":"https://example.com/x"}""")
+            ]
+        , describe "publish"
+            [ test "sends the metadata and the tags as JSON" <|
+                \() ->
+                    Api.encodeBody Api.publish
+                        { prompt = "a red fox"
+                        , width = 1024
+                        , height = 1024
+                        , steps = 4
+                        , seed = 7
+                        , model = "prism-ml/bonsai-image-ternary-4B-mlx-2bit"
+                        , bytes = 312345
+                        , tags = List.filterMap Tag.fromString [ "fox", "snow" ]
+                        }
+                        |> Maybe.map (Encode.encode 0)
+                        |> Expect.equal (Just """{"prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","bytes":312345,"tags":["fox","snow"]}""")
+            , test "decodes the body it encodes" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.publish) """{"prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"m","bytes":12,"tags":["fox"]}"""
+                        |> Result.map (\p -> ( p.prompt, p.bytes, List.map Tag.toString p.tags ))
+                        |> Expect.equal (Ok ( "a red fox", 12, [ "fox" ] ))
+            , test "refuses a body with one invalid tag" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.publish) """{"prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"m","bytes":12,"tags":["fox","x"]}"""
+                        |> Result.toMaybe
+                        |> Expect.equal Nothing
+            , test "answers with the link and its headers" <|
+                \() ->
+                    let
+                        json =
+                            """{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://acc.r2.cloudflarestorage.com/pixo-uploads/incoming/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg?X-Amz-Algorithm=x","headers":[["content-type","image/jpeg"]]}"""
+                    in
+                    Decode.decodeString (Api.responseDecoder Api.publish) json
+                        |> Result.map (Api.encodeResponse Api.publish >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
+            ]
+        , describe "confirm"
+            [ test "answers with the public address" <|
+                \() ->
+                    let
+                        json =
+                            """{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","publishedAt":"2026-11-17T10:00:00Z"}"""
+                    in
+                    case PictureId.fromString exampleId of
+                        Just id ->
+                            Decode.decodeString (Api.responseDecoder (Api.confirm id)) json
+                                |> Result.map (Api.encodeResponse (Api.confirm id) >> Encode.encode 0)
+                                |> Expect.equal (Ok json)
+
+                        Nothing ->
+                            Expect.fail "The example id should parse."
             ]
         , describe "verification"
             [ test "encodes what it decodes" <|
@@ -260,7 +317,21 @@ next route =
             Just Api.PostPortal
 
         Api.PostPortal ->
+            Just Api.PostPicture
+
+        Api.PostPicture ->
+            Maybe.map Api.PostPicturePublished (PictureId.fromString exampleId)
+
+        Api.PostPicturePublished id ->
+            Just (Api.DeletePicture id)
+
+        Api.DeletePicture _ ->
             Nothing
+
+
+exampleId : String
+exampleId =
+    "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11"
 
 
 assertion : Api.Assertion

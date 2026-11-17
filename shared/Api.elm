@@ -13,6 +13,8 @@ module Api exposing
     , PasskeyOptions
     , Plan(..)
     , Portal
+    , Publication
+    , Published
     , Problem(..)
     , Release
     , Route(..)
@@ -20,12 +22,14 @@ module Api exposing
     , SignInOptions
     , SignUp
     , Status(..)
+    , Upload
     , Verification
     , addPasskey
     , bodyDecoder
     , checkNames
     , checkout
     , checks
+    , confirm
     , deleteAccount
     , deletePasskey
     , encodeBody
@@ -43,6 +47,7 @@ module Api exposing
     , passkeys
     , path
     , portal
+    , publish
     , responseDecoder
     , route
     , session
@@ -50,6 +55,7 @@ module Api exposing
     , signOut
     , signUp
     , toString
+    , unpublish
     , verification
     , verify
     )
@@ -57,6 +63,8 @@ module Api exposing
 import Data.Challenge as Challenge exposing (Challenge)
 import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
+import Data.PictureId as PictureId exposing (PictureId)
+import Data.Tag as Tag exposing (Tag)
 import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
@@ -85,6 +93,9 @@ type Route
     | PostBillingWebhook
     | PostCheckout
     | PostPortal
+    | PostPicture
+    | PostPicturePublished PictureId
+    | DeletePicture PictureId
 
 
 type Method
@@ -152,6 +163,15 @@ method r =
         PostPortal ->
             Post
 
+        PostPicture ->
+            Post
+
+        PostPicturePublished _ ->
+            Post
+
+        DeletePicture _ ->
+            Delete
+
 
 path : Route -> List String
 path r =
@@ -211,6 +231,15 @@ segments r =
 
         PostPortal ->
             [ "billing", "portal" ]
+
+        PostPicture ->
+            [ "pictures" ]
+
+        PostPicturePublished id ->
+            [ "pictures", PictureId.toString id, "published" ]
+
+        DeletePicture id ->
+            [ "pictures", PictureId.toString id ]
 
 
 toString : Route -> String
@@ -299,8 +328,24 @@ routesAt rest =
         [ "billing", "portal" ] ->
             [ PostPortal ]
 
+        [ "pictures" ] ->
+            [ PostPicture ]
+
+        [ "pictures", id ] ->
+            routeWithPicture DeletePicture id
+
+        [ "pictures", id, "published" ] ->
+            routeWithPicture PostPicturePublished id
+
         _ ->
             []
+
+
+routeWithPicture : (PictureId -> Route) -> String -> List Route
+routeWithPicture toRoute segment =
+    PictureId.fromString segment
+        |> Maybe.map (\id -> [ toRoute id ])
+        |> Maybe.withDefault []
 
 
 deletePasskeyAt : String -> List Route
@@ -361,6 +406,21 @@ checkout =
 portal : Endpoint () Portal
 portal =
     Endpoint { route = PostPortal, body = NoBody (), response = portalCodec }
+
+
+publish : Endpoint Publication Upload
+publish =
+    Endpoint { route = PostPicture, body = JsonBody publicationCodec, response = uploadCodec }
+
+
+confirm : PictureId -> Endpoint () Published
+confirm id =
+    Endpoint { route = PostPicturePublished id, body = NoBody (), response = publishedCodec }
+
+
+unpublish : PictureId -> Endpoint () ()
+unpublish id =
+    Endpoint { route = DeletePicture id, body = NoBody (), response = emptyCodec }
 
 
 signOut : Endpoint () ()
@@ -658,6 +718,109 @@ portalCodec : Codec Portal
 portalCodec =
     { encode = \p -> Encode.object [ ( "url", Encode.string p.url ) ]
     , decoder = Decode.map Portal (Decode.field "url" Decode.string)
+    }
+
+
+type alias Publication =
+    { prompt : String
+    , width : Int
+    , height : Int
+    , steps : Int
+    , seed : Int
+    , model : String
+    , bytes : Int
+    , tags : List Tag
+    }
+
+
+publicationCodec : Codec Publication
+publicationCodec =
+    { encode =
+        \p ->
+            Encode.object
+                [ ( "prompt", Encode.string p.prompt )
+                , ( "width", Encode.int p.width )
+                , ( "height", Encode.int p.height )
+                , ( "steps", Encode.int p.steps )
+                , ( "seed", Encode.int p.seed )
+                , ( "model", Encode.string p.model )
+                , ( "bytes", Encode.int p.bytes )
+                , ( "tags", Encode.list Tag.encode p.tags )
+                ]
+    , decoder =
+        Decode.succeed Publication
+            |> andMap (Decode.field "prompt" Decode.string)
+            |> andMap (Decode.field "width" Decode.int)
+            |> andMap (Decode.field "height" Decode.int)
+            |> andMap (Decode.field "steps" Decode.int)
+            |> andMap (Decode.field "seed" Decode.int)
+            |> andMap (Decode.field "model" Decode.string)
+            |> andMap (Decode.field "bytes" Decode.int)
+            |> andMap (Decode.field "tags" (Decode.list Tag.decoder))
+    }
+
+
+andMap : Decoder a -> Decoder (a -> b) -> Decoder b
+andMap =
+    Decode.map2 (|>)
+
+
+type alias Upload =
+    { id : PictureId
+    , url : String
+    , headers : List ( String, String )
+    }
+
+
+uploadCodec : Codec Upload
+uploadCodec =
+    { encode =
+        \u ->
+            Encode.object
+                [ ( "id", PictureId.encode u.id )
+                , ( "url", Encode.string u.url )
+                , ( "headers"
+                  , Encode.list
+                        (\( name, value ) -> Encode.list Encode.string [ name, value ])
+                        u.headers
+                  )
+                ]
+    , decoder =
+        Decode.map3 Upload
+            (Decode.field "id" PictureId.decoder)
+            (Decode.field "url" Decode.string)
+            (Decode.field "headers" (Decode.list headerDecoder))
+    }
+
+
+headerDecoder : Decoder ( String, String )
+headerDecoder =
+    Decode.map2 Tuple.pair
+        (Decode.index 0 Decode.string)
+        (Decode.index 1 Decode.string)
+
+
+type alias Published =
+    { id : PictureId
+    , url : String
+    , publishedAt : String
+    }
+
+
+publishedCodec : Codec Published
+publishedCodec =
+    { encode =
+        \p ->
+            Encode.object
+                [ ( "id", PictureId.encode p.id )
+                , ( "url", Encode.string p.url )
+                , ( "publishedAt", Encode.string p.publishedAt )
+                ]
+    , decoder =
+        Decode.map3 Published
+            (Decode.field "id" PictureId.decoder)
+            (Decode.field "url" Decode.string)
+            (Decode.field "publishedAt" Decode.string)
     }
 
 
