@@ -1,4 +1,4 @@
-module Page.Account exposing (Model, Msg, Outcome(..), enrolment, init, load, outcome, toasts, update, view)
+module Page.Account exposing (Model, Msg, Outcome(..), checkoutClosed, enrolment, init, load, outcome, toasts, update, view)
 
 import Api
 import ApiClient
@@ -9,6 +9,7 @@ import Enrolment
 import Html exposing (Html, div, li, p, span, text, ul)
 import Html.Attributes exposing (attribute, class, disabled, href)
 import Html.Events exposing (onClick)
+import InteropDefinitions as Interop
 import Path
 import Phosphor exposing (IconWeight(..))
 import RelativeTime
@@ -37,7 +38,14 @@ type alias Model =
     , deletion : AccountDeletion
     , now : Maybe Time.Posix
     , ceremony : Ceremony
+    , billing : BillingAction
     }
+
+
+type BillingAction
+    = Idle
+    | Upgrading
+    | Managing
 
 
 type AccountDeletion
@@ -54,6 +62,7 @@ init =
     , deletion = KeepAccount
     , now = Nothing
     , ceremony = Resting
+    , billing = Idle
     }
 
 
@@ -80,6 +89,11 @@ type Msg
     | DeleteConfirmed
     | DeleteRetried
     | GotDeleted (Result ApiClient.Error ())
+    | UpgradeClicked
+    | GotCheckout (Result ApiClient.Error Api.Checkout)
+    | ManageClicked
+    | GotPortal (Result ApiClient.Error Api.Portal)
+    | CheckoutClosed
 
 
 type Outcome
@@ -90,6 +104,11 @@ type Outcome
 enrolment : Enrolment.Msg -> Msg
 enrolment =
     GotEnrolment
+
+
+checkoutClosed : Msg
+checkoutClosed =
+    CheckoutClosed
 
 
 outcome : Msg -> Outcome
@@ -222,10 +241,61 @@ update session msg model =
                 _ ->
                     ( { model | deletion = KeepAccount }, deletionFailure DeleteRequested error )
 
+        UpgradeClicked ->
+            if model.billing == Idle then
+                ( { model | billing = Upgrading }, Request (ApiClient.request Api.checkout () GotCheckout) )
+
+            else
+                ( model, NoEffect )
+
+        GotCheckout (Ok checkout) ->
+            ( model
+            , SendToJs
+                (Interop.OpenCheckout
+                    { transactionId = checkout.transactionId
+                    , clientToken = checkout.clientToken
+                    , environment = checkout.environment
+                    }
+                )
+            )
+
+        GotCheckout (Err error) ->
+            ( { model | billing = Idle }
+            , Effect.failure { id = checkoutToast, title = "Couldn't start the checkout", retry = Just UpgradeClicked } error
+            )
+
+        CheckoutClosed ->
+            ( { model | billing = Idle }, NoEffect )
+
+        ManageClicked ->
+            if model.billing == Idle then
+                ( { model | billing = Managing }, Request (ApiClient.request Api.portal () GotPortal) )
+
+            else
+                ( model, NoEffect )
+
+        GotPortal (Ok opened) ->
+            ( model, Load opened.url )
+
+        GotPortal (Err error) ->
+            ( { model | billing = Idle }
+            , Effect.failure { id = portalToast, title = "Couldn't open billing", retry = Just ManageClicked } error
+            )
+
 
 toasts : List String
 toasts =
-    [ passkeysToast, removalToast, deletionToast, Enrolment.toast ]
+    [ passkeysToast, removalToast, deletionToast, checkoutToast, portalToast, Enrolment.toast ]
+
+
+checkoutToast : String
+checkoutToast =
+    "checkout"
+
+
+portalToast : String
+portalToast =
+    "portal"
 
 
 passkeysToast : String
@@ -257,14 +327,18 @@ deletionFailure retry =
 -- VIEW
 
 
-view : Session -> Model -> List (Html Msg)
-view session account =
+view : Session -> Maybe Api.Billing -> Model -> List (Html Msg)
+view session billing account =
     case session of
         Session.SignedIn _ ->
-            [ viewPasskeys session account.ceremony account, viewDeleteAccount (Just account.deletion) ]
+            [ viewPro billing account.billing
+            , viewPasskeys session account.ceremony account
+            , viewDeleteAccount (Just account.deletion)
+            ]
 
         Session.Unknown ->
-            [ viewPasskeys session Resting { account | passkeys = Loading }
+            [ viewPro Nothing Idle
+            , viewPasskeys session Resting { account | passkeys = Loading }
             , viewDeleteAccount Nothing
             ]
 
@@ -281,6 +355,116 @@ view session account =
                     ]
                 |> Empty.toHtml [ class "border" ]
             ]
+
+
+viewPro : Maybe Api.Billing -> BillingAction -> Html Msg
+viewPro billing action =
+    Card.new
+        |> Card.title [ Html.h3 [] [ text "Pro" ] ]
+        |> Card.description
+            [ case billing of
+                Nothing ->
+                    span [ class "flex h-5 items-center", attribute "aria-hidden" "true" ]
+                        [ Skeleton.view [ class "h-3.5 w-80 max-w-full" ] ]
+
+                Just found ->
+                    text
+                        (case found.plan of
+                            Api.Free ->
+                                "$5 a month. Publish to your profile and the feed, and sync to Dropbox or Google Drive."
+
+                            Api.Pro ->
+                                "You have Pro."
+                        )
+            ]
+        |> Card.content []
+            (case billing of
+                Just found ->
+                    if found.plan == Api.Pro then
+                        List.filterMap identity
+                            [ Just (p [ class "text-sm text-muted-foreground" ] [ text (proDates found) ])
+                            , if found.pastDue then
+                                Just (p [ class "text-sm text-muted-foreground" ] [ text "Your last payment failed. Update your payment method in Manage." ])
+
+                              else
+                                Nothing
+                            ]
+
+                    else
+                        []
+
+                Nothing ->
+                    []
+            )
+        |> Card.footer [ class "justify-end gap-2" ]
+            (case billing of
+                Nothing ->
+                    [ Button.new
+                        |> Button.text "Upgrade"
+                        |> Button.small
+                        |> viewButtonSkeleton []
+                    ]
+
+                Just found ->
+                    case found.plan of
+                        Api.Free ->
+                            List.filterMap identity
+                                [ if found.canManage then
+                                    Just (viewManageButton "Invoices" True action)
+
+                                  else
+                                    Nothing
+                                , Just
+                                    (Button.new
+                                        |> Button.text
+                                            (if action == Upgrading then
+                                                "Upgrading…"
+
+                                             else
+                                                "Upgrade"
+                                            )
+                                        |> Button.small
+                                        |> Button.toHtml [ onClick UpgradeClicked, disabled (action /= Idle) ]
+                                    )
+                                ]
+
+                        Api.Pro ->
+                            [ viewManageButton "Manage" False action ]
+            )
+        |> Card.toHtml [ class "w-full [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]" ]
+
+
+viewManageButton : String -> Bool -> BillingAction -> Html Msg
+viewManageButton label outlined action =
+    Button.new
+        |> Button.text
+            (if action == Managing then
+                "Managing…"
+
+             else
+                label
+            )
+        |> (if outlined then
+                Button.outline
+
+            else
+                identity
+           )
+        |> Button.small
+        |> Button.toHtml [ onClick ManageClicked, disabled (action /= Idle) ]
+
+
+proDates : Api.Billing -> String
+proDates found =
+    case ( found.endsAt, found.renewsAt ) of
+        ( Just ends, _ ) ->
+            "Ends on " ++ String.left 10 ends ++ "."
+
+        ( Nothing, Just renews ) ->
+            "Renews on " ++ String.left 10 renews ++ "."
+
+        ( Nothing, Nothing ) ->
+            ""
 
 
 viewDeleteAccount : Maybe AccountDeletion -> Html Msg
