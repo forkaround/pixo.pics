@@ -20,6 +20,72 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: apply_paddle_subscription(text, uuid, text, text, text, timestamp with time zone, text, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_paddle_subscription(p_subscription_id text, p_user_id uuid, p_customer_id text, p_status text, p_price_id text, p_period_ends_at timestamp with time zone, p_scheduled_change text, p_scheduled_change_at timestamp with time zone, p_paddle_updated_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  UPDATE subscriptions AS s
+  SET paddle_customer_id = p_customer_id,
+      status = p_status,
+      price_id = p_price_id,
+      current_period_ends_at = p_period_ends_at,
+      scheduled_change = p_scheduled_change,
+      scheduled_change_at = p_scheduled_change_at,
+      paddle_updated_at = p_paddle_updated_at,
+      updated_at = now()
+  WHERE s.paddle_subscription_id = p_subscription_id
+    AND s.paddle_updated_at <= p_paddle_updated_at;
+
+  IF FOUND THEN
+    RETURN 'applied';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM subscriptions AS s WHERE s.paddle_subscription_id = p_subscription_id) THEN
+    RETURN 'stale';
+  END IF;
+
+  INSERT INTO subscriptions (
+    paddle_subscription_id, user_id, paddle_customer_id, status, price_id,
+    current_period_ends_at, scheduled_change, scheduled_change_at, paddle_updated_at
+  )
+  SELECT p_subscription_id, u.id, p_customer_id, p_status, p_price_id,
+    p_period_ends_at, p_scheduled_change, p_scheduled_change_at, p_paddle_updated_at
+  FROM users AS u
+  WHERE u.id = p_user_id
+  ON CONFLICT (paddle_subscription_id) DO NOTHING;
+
+  IF FOUND THEN
+    RETURN 'applied';
+  END IF;
+
+  UPDATE subscriptions AS s
+  SET paddle_customer_id = p_customer_id,
+      status = p_status,
+      price_id = p_price_id,
+      current_period_ends_at = p_period_ends_at,
+      scheduled_change = p_scheduled_change,
+      scheduled_change_at = p_scheduled_change_at,
+      paddle_updated_at = p_paddle_updated_at,
+      updated_at = now()
+  WHERE s.paddle_subscription_id = p_subscription_id
+    AND s.paddle_updated_at <= p_paddle_updated_at;
+
+  IF FOUND THEN
+    RETURN 'applied';
+  ELSIF EXISTS (SELECT 1 FROM subscriptions AS s WHERE s.paddle_subscription_id = p_subscription_id) THEN
+    RETURN 'stale';
+  END IF;
+
+  RETURN 'unmatched';
+END;
+$$;
+
+
+--
 -- Name: authenticate(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -281,6 +347,23 @@ $$;
 
 
 --
+-- Name: is_pro(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_pro(p_user_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM subscriptions AS s
+    WHERE s.user_id = p_user_id
+      AND s.status IN ('active', 'trialing', 'past_due')
+  );
+$$;
+
+
+--
 -- Name: magic_link(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -461,6 +544,33 @@ ALTER TABLE ONLY public.sessions FORCE ROW LEVEL SECURITY;
 
 
 --
+-- Name: subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.subscriptions (
+    paddle_subscription_id text NOT NULL,
+    user_id uuid NOT NULL,
+    paddle_customer_id text NOT NULL,
+    status text NOT NULL,
+    price_id text NOT NULL,
+    current_period_ends_at timestamp with time zone,
+    scheduled_change text,
+    scheduled_change_at timestamp with time zone,
+    paddle_updated_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT subscriptions_check CHECK (((scheduled_change IS NULL) = (scheduled_change_at IS NULL))),
+    CONSTRAINT subscriptions_paddle_customer_id_check CHECK ((paddle_customer_id ~ '^ctm_[a-z0-9]+$'::text)),
+    CONSTRAINT subscriptions_paddle_subscription_id_check CHECK ((paddle_subscription_id ~ '^sub_[a-z0-9]+$'::text)),
+    CONSTRAINT subscriptions_price_id_check CHECK ((price_id ~ '^pri_[a-z0-9]+$'::text)),
+    CONSTRAINT subscriptions_scheduled_change_check CHECK ((scheduled_change = ANY (ARRAY['cancel'::text, 'pause'::text, 'resume'::text]))),
+    CONSTRAINT subscriptions_status_check CHECK ((status = ANY (ARRAY['active'::text, 'canceled'::text, 'past_due'::text, 'paused'::text, 'trialing'::text])))
+);
+
+ALTER TABLE ONLY public.subscriptions FORCE ROW LEVEL SECURITY;
+
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -524,6 +634,14 @@ ALTER TABLE ONLY public.sessions
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: subscriptions subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.subscriptions
+    ADD CONSTRAINT subscriptions_pkey PRIMARY KEY (paddle_subscription_id);
 
 
 --
@@ -594,6 +712,13 @@ CREATE INDEX sessions_user_id_idx ON public.sessions USING btree (user_id);
 
 
 --
+-- Name: subscriptions_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX subscriptions_user_id_idx ON public.subscriptions USING btree (user_id);
+
+
+--
 -- Name: webauthn_challenges_expires_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -621,6 +746,14 @@ ALTER TABLE ONLY public.passkeys
 
 ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: subscriptions subscriptions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.subscriptions
+    ADD CONSTRAINT subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -652,6 +785,13 @@ CREATE POLICY own_rows ON public.sessions USING ((user_id = ( SELECT (NULLIF(cur
 
 
 --
+-- Name: subscriptions own_rows; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY own_rows ON public.subscriptions USING ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif"))) WITH CHECK ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif")));
+
+
+--
 -- Name: users own_rows; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -678,6 +818,12 @@ ALTER TABLE public.passkeys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: subscriptions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: users; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -694,6 +840,14 @@ ALTER TABLE public.webauthn_challenges ENABLE ROW LEVEL SECURITY;
 --
 
 GRANT USAGE ON SCHEMA public TO api;
+
+
+--
+-- Name: FUNCTION apply_paddle_subscription(p_subscription_id text, p_user_id uuid, p_customer_id text, p_status text, p_price_id text, p_period_ends_at timestamp with time zone, p_scheduled_change text, p_scheduled_change_at timestamp with time zone, p_paddle_updated_at timestamp with time zone); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.apply_paddle_subscription(p_subscription_id text, p_user_id uuid, p_customer_id text, p_status text, p_price_id text, p_period_ends_at timestamp with time zone, p_scheduled_change text, p_scheduled_change_at timestamp with time zone, p_paddle_updated_at timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.apply_paddle_subscription(p_subscription_id text, p_user_id uuid, p_customer_id text, p_status text, p_price_id text, p_period_ends_at timestamp with time zone, p_scheduled_change text, p_scheduled_change_at timestamp with time zone, p_paddle_updated_at timestamp with time zone) TO api;
 
 
 --
@@ -750,6 +904,14 @@ GRANT ALL ON FUNCTION public.delete_account(p_token text) TO api;
 
 REVOKE ALL ON FUNCTION public.delete_expired() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.delete_expired() TO api;
+
+
+--
+-- Name: FUNCTION is_pro(p_user_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.is_pro(p_user_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.is_pro(p_user_id uuid) TO api;
 
 
 --
@@ -838,6 +1000,13 @@ GRANT SELECT(created_at) ON TABLE public.sessions TO api;
 --
 
 GRANT SELECT(expires_at) ON TABLE public.sessions TO api;
+
+
+--
+-- Name: TABLE subscriptions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT ON TABLE public.subscriptions TO api;
 
 
 --
