@@ -23,8 +23,9 @@ The Elm browser app in `client/`: pages, the session, ports and UI.
 - Addresses are written only with `Path.toString`: links, `PushUrl`, the server's emails.
 - `client/main.css` is the only stylesheet, linked from `index.html`: don't import CSS
   from TypeScript. Inter is served with the app; Explore's Unsplash photos, and Paddle.js
-  once a checkout opens (`client/paddle.ts`), are the only things a page asks another site
-  for. A published picture is the exception that leaves the app: the browser uploads it
+  once a checkout opens (`client/paddle.ts`: from Upgrade, or when a page loads with
+  Paddle's `?_ptxn=` link, decided in `Main.init`), are the only things a page asks another
+  site for. A published picture is the exception that leaves the app: the browser uploads it
   straight to R2 (`client/send.ts`).
 - Inputs with a placeholder keep their label, `sr-only`: screen readers and the tests'
   `fillIn` need it.

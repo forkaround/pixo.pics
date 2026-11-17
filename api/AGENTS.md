@@ -62,6 +62,9 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   browser's) and the browser opens Paddle.js with its id and the public client token. The app
   never trusts the checkout's own `completed` event: it polls `GET /api/auth/session` with
   growing waits.
+- Paddle's default payment link is `/settings/account`. Paddle appends `?_ptxn=<transaction>`
+  to it in its emails (payment-method updates) and in every transaction's `checkout.url`; the
+  browser opens that checkout on any page, signed in or not.
 - Billing travels with the session (`Api.Me`): no route of its own, so a page load costs one
   request.
 - An account with a renewing subscription can't be deleted (`'renewing'`, 409): cancel first.

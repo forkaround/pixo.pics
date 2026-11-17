@@ -37,6 +37,9 @@ production, any other branch to a preview. The Neon project `pixo` (`small-lab-6
   `PADDLE_WEBHOOK_SECRET` are secrets. Paddle cannot pass Vercel Authentication: a sandbox
   notification destination for a preview needs `?x-vercel-protection-bypass=<secret>` on
   its URL.
+- `PADDLE_CLIENT_TOKEN` and `PADDLE_ENVIRONMENT` are also read at build time
+  (`vite.config.ts`, `define`) and baked into the browser bundle, so changing them needs a
+  redeploy. Only those two: never expose another `PADDLE_*` there.
 - `R2_*` and `IMAGES_ORIGIN` are per environment: Production uses the bucket behind
   img.pixo.pics and a private upload bucket; Preview a separate pair. `R2_SECRET_ACCESS_KEY`
   is a secret. Picture bytes never reach the function.
