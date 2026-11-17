@@ -66,6 +66,22 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   request.
 - An account with a renewing subscription can't be deleted (`'renewing'`, 409): cancel first.
 
+## Cloud sync
+
+- A Pro user connects Dropbox or Google Drive once; the server keeps the refresh token,
+  encrypted in `sync_connections` with `pgp_sym_encrypt` under `SYNC_TOKEN_KEY`, and the
+  signed-in browser asks for a short-lived access token whenever it syncs. Rotating the key
+  means re-encrypting every row or reconnecting everyone. The key is a query parameter, never
+  part of the SQL text.
+- The authorization code flow uses PKCE (S256) and a `state` that is single use, bound to the
+  user and valid for 10 minutes: Postgres makes both, and `finishSync` checks and spends the
+  state in one `DELETE ... RETURNING`. Scopes are the narrowest: Dropbox App folder, Google
+  `drive.file`.
+- Access tokens go only to the signed-in Pro owner and are never logged, nor are refresh
+  tokens, codes, verifiers or the key. Connections travel with the session (`Api.Me`).
+  Disconnecting revokes the token at the provider, then forgets it; a failed revoke is only
+  logged.
+
 ## Pictures
 
 - Publishing never sends picture bytes through the server. `POST /api/pictures` checks the
