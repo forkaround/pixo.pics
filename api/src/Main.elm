@@ -1,10 +1,12 @@
 module Main exposing (Model, Msg(..), init, main, update)
 
 import Api
+import Data.ClientAddress exposing (ClientAddress)
 import Data.Email as Email
 import Data.Origin as Origin
 import Db
 import Effect exposing (Effect(..), log, respond)
+import Flow.Billing
 import Flow.Health
 import Flow.MagicLink
 import Flow.PasskeySignIn
@@ -21,6 +23,7 @@ import Server exposing (Server)
 import Services.BrevoMailer as BrevoMailer
 import Services.LogMailer as LogMailer
 import Services.Neon as Neon
+import Services.Paddle as Paddle
 import Task
 import Time
 
@@ -76,8 +79,20 @@ init flags =
             in
             case ( Origin.parse config.origin, Db.connect config, mailer ) of
                 ( Ok origin, Ok db, Ok ( chosen, notice ) ) ->
-                    ( Running { db = db, mailer = chosen, origin = origin, release = release } RateLimit.empty
-                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice ]
+                    let
+                        ( paddle, billingNotice ) =
+                            case Paddle.config config of
+                                Ok Nothing ->
+                                    ( Nothing, log Interop.Warn "No PADDLE_* settings, so billing routes answer 503." )
+
+                                Ok found ->
+                                    ( found, NoEffect )
+
+                                Err problem ->
+                                    ( Nothing, log Interop.Error problem )
+                    in
+                    ( Running { db = db, mailer = chosen, origin = origin, paddle = paddle, release = release } RateLimit.empty
+                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice ]
                     )
 
                 ( Err problem, _, _ ) ->
@@ -117,6 +132,7 @@ type Msg
     | Session Flow.Session.Msg
     | Passkeys Flow.Passkeys.Msg
     | PasskeySignIn Flow.PasskeySignIn.Msg
+    | Billing Flow.Billing.Msg
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
@@ -192,6 +208,9 @@ brokenAnswer { problem, release } found =
         Api.PostPasskeySignInOptions ->
             Response.unavailable
 
+        Api.PostBillingWebhook ->
+            Response.unavailable
+
 
 reply : Time.Posix -> Interop.Resolver -> Reply Msg -> RateLimit.Limits -> ( RateLimit.Limits, Effect Msg )
 reply time resolver answer limits =
@@ -220,7 +239,7 @@ running server limits msg =
         Arrived resolver request time ->
             reply time
                 resolver
-                (Limit [ RateLimit.requests (Request.clientAddress request) ] (route server request))
+                (Limit [ policyFor request ] (route server request))
                 (RateLimit.sweep time limits)
 
         Health flowMsg ->
@@ -240,6 +259,12 @@ running server limits msg =
 
         PasskeySignIn flowMsg ->
             ( limits, Effect.map PasskeySignIn (Flow.PasskeySignIn.update server flowMsg) )
+
+        GotInterop (Ok (Interop.WebhookChecked resolver body valid)) ->
+            ( limits, Effect.map Billing (Flow.Billing.webhookChecked server resolver body valid) )
+
+        Billing flowMsg ->
+            ( limits, Effect.map Billing (Flow.Billing.update server flowMsg) )
 
         DatabaseFailed { resolver, step, problem } ->
             ( limits
@@ -300,6 +325,65 @@ perform effect =
 -- ROUTES
 
 
+policyFor : Request -> RateLimit.Policy
+policyFor request =
+    case Api.parse request.method request.path of
+        Ok found ->
+            routePolicy found (Request.clientAddress request)
+
+        Err _ ->
+            RateLimit.requests (Request.clientAddress request)
+
+
+routePolicy : Api.Route -> ClientAddress -> RateLimit.Policy
+routePolicy found address =
+    case found of
+        Api.PostBillingWebhook ->
+            RateLimit.webhooks address
+
+        Api.GetHealth ->
+            RateLimit.requests address
+
+        Api.PostSignUp ->
+            RateLimit.requests address
+
+        Api.PostSignIn ->
+            RateLimit.requests address
+
+        Api.GetSession ->
+            RateLimit.requests address
+
+        Api.DeleteSession ->
+            RateLimit.requests address
+
+        Api.DeleteAccount ->
+            RateLimit.requests address
+
+        Api.GetVerification ->
+            RateLimit.requests address
+
+        Api.PostVerification ->
+            RateLimit.requests address
+
+        Api.GetPasskeys ->
+            RateLimit.requests address
+
+        Api.PostPasskey ->
+            RateLimit.requests address
+
+        Api.PostPasskeyOptions ->
+            RateLimit.requests address
+
+        Api.DeletePasskey _ ->
+            RateLimit.requests address
+
+        Api.PostPasskeySignIn ->
+            RateLimit.requests address
+
+        Api.PostPasskeySignInOptions ->
+            RateLimit.requests address
+
+
 route : Server -> Request -> Reply Msg
 route server request =
     case Api.parse request.method request.path of
@@ -354,3 +438,6 @@ handle server request r =
 
         Api.PostPasskeySignIn ->
             Reply.map PasskeySignIn (Flow.PasskeySignIn.authenticate server request)
+
+        Api.PostBillingWebhook ->
+            Reply.map Billing (Flow.Billing.webhook server request)

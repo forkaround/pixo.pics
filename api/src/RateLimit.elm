@@ -1,4 +1,4 @@
-module RateLimit exposing (Limits, Policy, check, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, requests, size, sweep)
+module RateLimit exposing (Limits, Policy, check, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, requests, size, sweep, webhooks)
 
 import Data.ClientAddress as ClientAddress exposing (ClientAddress)
 import Data.Email as Email exposing (Email)
@@ -27,6 +27,11 @@ requests address =
 healthChecks : ClientAddress -> Policy
 healthChecks address =
     Policy { key = "health:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 60 }
+
+
+webhooks : ClientAddress -> Policy
+webhooks address =
+    Policy { key = "webhooks:ip:" ++ ClientAddress.toString address, limit = 600, windowSeconds = 60 }
 
 
 magicLinksByAddress : ClientAddress -> Policy

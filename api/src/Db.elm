@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), account, addPasskey, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, magicLink, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
+module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), account, addPasskey, applySubscription, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, magicLink, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -392,3 +392,30 @@ deleteAccount token =
     Neon.one "SELECT delete_account($1) AS deleted"
         [ Neon.text (SessionToken.toString token) ]
         (Decode.field "deleted" Decode.bool)
+
+
+applySubscription :
+    { id : String
+    , userId : Maybe UserId
+    , customerId : String
+    , status : String
+    , priceId : String
+    , periodEnds : Maybe String
+    , scheduledChange : Maybe String
+    , scheduledChangeAt : Maybe String
+    , updatedAt : String
+    }
+    -> Neon.Query String
+applySubscription subscription =
+    Neon.one "SELECT apply_paddle_subscription($1, $2::uuid, $3, $4, $5, $6::timestamptz, $7, $8::timestamptz, $9::timestamptz) AS outcome"
+        [ Neon.text subscription.id
+        , Neon.nullable (UserId.toString >> Neon.text) subscription.userId
+        , Neon.text subscription.customerId
+        , Neon.text subscription.status
+        , Neon.text subscription.priceId
+        , Neon.nullable Neon.text subscription.periodEnds
+        , Neon.nullable Neon.text subscription.scheduledChange
+        , Neon.nullable Neon.text subscription.scheduledChangeAt
+        , Neon.text subscription.updatedAt
+        ]
+        (Decode.field "outcome" Decode.string)

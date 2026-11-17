@@ -25,12 +25,14 @@ interop =
 type ToElm
     = GotRequest Resolver Request
     | SignatureChecked Resolver SignIn Bool
+    | WebhookChecked Resolver String Bool
 
 
 type FromElm
     = Respond Resolver Response
     | Log Level String
     | VerifySignature Resolver { key : WebAuthn.Key, signed : String, signature : String, signIn : SignIn }
+    | VerifyWebhook Resolver { secret : String, signed : String, signatures : List String, body : String }
 
 
 type alias SignIn =
@@ -57,6 +59,11 @@ type alias Flags =
     , releaseUrl : Maybe String
     , region : Maybe String
     , local : Bool
+    , paddleEnvironment : Maybe String
+    , paddleApiKey : Maybe String
+    , paddleWebhookSecret : Maybe String
+    , paddleClientToken : Maybe String
+    , paddleProPriceId : Maybe String
     }
 
 
@@ -87,6 +94,12 @@ toElm =
                         (TsDecode.field "backedUp" TsDecode.bool)
                     )
                 )
+                (TsDecode.field "valid" TsDecode.bool)
+          )
+        , ( "WebhookChecked"
+          , TsDecode.map3 WebhookChecked
+                (TsDecode.field "resolve" resolverDecoder)
+                (TsDecode.field "body" TsDecode.string)
                 (TsDecode.field "valid" TsDecode.bool)
           )
         ]
@@ -146,7 +159,7 @@ requestDecoder =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\respond log verifySignature value ->
+        (\respond log verifySignature verifyWebhook value ->
             case value of
                 Respond resolver response ->
                     respond ( resolver, response )
@@ -156,6 +169,9 @@ fromElm =
 
                 VerifySignature resolver check ->
                     verifySignature ( resolver, check )
+
+                VerifyWebhook resolver check ->
+                    verifyWebhook ( resolver, check )
         )
         |> TsEncode.variantObject "Respond"
             [ TsEncode.required "resolve" Tuple.first resolverEncoder
@@ -183,6 +199,13 @@ fromElm =
                     , TsEncode.required "backedUp" .backedUp TsEncode.bool
                     ]
                 )
+            ]
+        |> TsEncode.variantObject "VerifyWebhook"
+            [ TsEncode.required "resolve" Tuple.first resolverEncoder
+            , TsEncode.required "secret" (Tuple.second >> .secret) TsEncode.string
+            , TsEncode.required "signed" (Tuple.second >> .signed) TsEncode.string
+            , TsEncode.required "signatures" (Tuple.second >> .signatures) (TsEncode.list TsEncode.string)
+            , TsEncode.required "body" (Tuple.second >> .body) TsEncode.string
             ]
         |> TsEncode.buildUnion
 
@@ -255,3 +278,8 @@ flags =
         (TsDecode.field "releaseUrl" (TsDecode.nullable TsDecode.string))
         (TsDecode.field "region" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "local" TsDecode.bool)
+        |> TsDecode.andMap (TsDecode.field "paddleEnvironment" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "paddleApiKey" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "paddleWebhookSecret" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "paddleClientToken" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "paddleProPriceId" (TsDecode.nullable TsDecode.string))

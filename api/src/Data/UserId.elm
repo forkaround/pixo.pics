@@ -1,4 +1,4 @@
-module Data.UserId exposing (UserId, decoder, toString)
+module Data.UserId exposing (UserId, decoder, fromString, toString)
 
 import Json.Decode as Decode exposing (Decoder)
 
@@ -9,11 +9,29 @@ type UserId
 
 fromString : String -> Maybe UserId
 fromString value =
-    if String.isEmpty value then
-        Nothing
+    let
+        lower =
+            String.toLower value
+    in
+    if String.length lower == 36 && List.all (isUuidChar lower) (List.range 0 35) then
+        Just (UserId lower)
 
     else
-        Just (UserId value)
+        Nothing
+
+
+isUuidChar : String -> Int -> Bool
+isUuidChar value index =
+    case String.uncons (String.dropLeft index value) of
+        Just ( c, _ ) ->
+            if List.member index [ 8, 13, 18, 23 ] then
+                c == '-'
+
+            else
+                Char.isDigit c || (c >= 'a' && c <= 'f')
+
+        Nothing ->
+            False
 
 
 toString : UserId -> String
@@ -31,5 +49,5 @@ decoder =
                         Decode.succeed id
 
                     Nothing ->
-                        Decode.fail "Expected a user id, not an empty string."
+                        Decode.fail "Expected a user id, a UUID."
             )

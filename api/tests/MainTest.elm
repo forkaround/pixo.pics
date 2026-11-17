@@ -49,6 +49,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint notExempt
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "Health check slow: the database took 1500 ms." )
                               ]
                             , [ health "first"
@@ -62,7 +63,7 @@ suite =
                         |> request "first" "GET" [ "api", "health" ]
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"exempt":true}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "error" ]
+                            ( [ "info", "warn", "error" ]
                             , [ health "first" 503 (failed "Database sent an unexpected result") ]
                             )
             , test "answers the 11th check in a minute from one address with 429, without the database or a log" <|
@@ -72,7 +73,7 @@ suite =
                         |> healthFrom "203.0.113.7" "11"
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 10)
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info" ]
+                            ( [ "info", "warn" ]
                             , [ { resolve = "11"
                                 , status = 429
                                 , headers = ( "retry-after", "6" ) :: jsonHeaders
@@ -173,7 +174,7 @@ suite =
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "prints the sign-up link instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -279,6 +280,7 @@ suite =
                             )
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "error", "Magic link failed at its email: Brevo refused the email with HTTP 401 (unauthorized): Key not found" )
                               ]
                             , [ { resolve = "first"
@@ -294,10 +296,10 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "error" ], [ 503 ] )
             , test "answers 503 when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -312,7 +314,7 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/verify"
             [ test "says who asked for the link, without using it" <|
@@ -403,7 +405,7 @@ suite =
                         |> verify "POST" [ ( "authorization", "Bearer Zm9vYmFy" ) ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/signin"
             [ test "emails a sign-in link to an address that has an account" <|
@@ -475,7 +477,7 @@ suite =
                         |> signIn """{"email":"ada@example.com"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/session"
             [ test "answers with the account of the session in the cookie" <|
@@ -529,6 +531,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "error", "Session lookup failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -609,6 +612,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "error", "Sign-out failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -685,7 +689,7 @@ suite =
                         |> passkeys "POST" [ "api", "auth", "passkeys", "options" ] ""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/passkeys"
             [ test "saves the credential, named after what made it, once its challenge is used" <|
@@ -733,10 +737,10 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "error" ], [ added ] )
+                            ( [ "info", "warn", "error" ], [ added ] )
             , test "prints the notice instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -747,7 +751,7 @@ suite =
                                 , responses values
                                 )
                             )
-                            ( [ "info", "warn", "info" ], True, [ added ] )
+                            ( [ "info", "warn", "warn", "info" ], True, [ added ] )
             , test "answers 409 when the challenge is expired, used or unknown" <|
                 \() ->
                     start (Just databaseUrl)
@@ -769,6 +773,7 @@ suite =
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "Passkey refused: The client data comes from https://evil.example, not from https://pixo.pics." )
                               ]
                             , [ { resolve = "first"
@@ -942,6 +947,7 @@ suite =
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
+                              , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "Passkey sign-in refused: The signature does not match the passkey." )
                               ]
                             , [ notVerified ]
@@ -971,7 +977,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST"
                             endpoint
                             """{"rows":[{"outcome":"no-passkey","session_token":null,"email":null,"username":null}],"rowCount":1}"""
-                        |> expectSent (\values -> ( logs values |> List.drop 1, responses values ))
+                        |> expectSent (\values -> ( logs values |> List.drop 2, responses values ))
                             ( [ ( "warn", "Passkey sign-in refused: The passkey is gone, or its counter did not move forward." ) ]
                             , [ notVerified ]
                             )
@@ -987,17 +993,124 @@ suite =
                         |> passkeySignIn "{}"
                         |> expectSent (responses >> List.map .status) [ 400 ]
             ]
+        , describe "POST /api/billing/webhook"
+            [ test "answers 503 when Paddle is not configured" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> webhook "first" freshSignature
+                        |> expectResponses [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Unavailable right now."}""" } ]
+            , test "answers 400 without a paddle-signature header" <|
+                \() ->
+                    startPaid
+                        |> requestWith { resolve = "first", method = "POST", path = [ "api", "billing", "webhook" ], headers = [], body = subscriptionUpdated }
+                        |> expectSent (responses >> List.map .status) [ 400 ]
+            , test "answers 401 and sends nothing to check when the timestamp is 6 seconds old" <|
+                \() ->
+                    startPaid
+                        |> ProgramTest.advanceTime 6000
+                        |> webhook "first" freshSignature
+                        |> expectSent (\values -> ( List.map .status (responses values), List.length (webhookChecks values), levels values ))
+                            ( [ 401 ], 0, [ "info", "warn" ] )
+            , test "asks app.ts to check the timestamp and the body with the configured secret" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> expectSent webhookChecks
+                            [ { resolve = "first"
+                              , secret = "pdl_ntfset_test"
+                              , signed = "0:" ++ subscriptionUpdated
+                              , signatures = [ String.repeat 64 "a" ]
+                              }
+                            ]
+            , test "answers 401 and warns when the check fails" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked subscriptionUpdated False
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                            ( [ 401 ], [ ( "warn", "Paddle webhook refused: the signature does not match." ) ] )
+            , test "applies a subscription for the Pro price" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked subscriptionUpdated True
+                        |> ProgramTest.expectHttpRequest "POST"
+                            endpoint
+                            (Test.Http.expectJsonBody
+                                (Decode.field "params" (Decode.list (Decode.nullable Decode.string)))
+                                (Expect.equal
+                                    [ Just "sub_01hv8x2a0e9xjn3k0q0p1y3z4b"
+                                    , Just "6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"
+                                    , Just "ctm_01hv8x2a0e9xjn3k0q0p1y3z4c"
+                                    , Just "active"
+                                    , Just "pri_pro"
+                                    , Just "2026-12-17T10:00:00Z"
+                                    , Nothing
+                                    , Nothing
+                                    , Just "2026-11-17T10:00:00.500000Z"
+                                    ]
+                                )
+                            )
+            , test "answers 200 once the subscription is applied" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked subscriptionUpdated True
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"applied"}],"rowCount":1}"""
+                        |> expectSent (\values -> ( responses values, List.drop 1 (logs values) ))
+                            ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
+                            , [ ( "info", "Paddle subscription.updated evt_01hv8x2a0e9xjn3k0q0p1y3z4a applied." ) ]
+                            )
+            , test "answers 200 without a query for another price" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked (eventBody "subscription.updated" "pri_other") True
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectSent (responses >> List.map .status) [ 200 ]
+            , test "answers 200 without a query for another kind of event" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked """{"event_id":"evt_01hv8x2a0e9xjn3k0q0p1y3z4a","event_type":"transaction.completed","occurred_at":"2026-11-17T10:00:01.000000Z","data":{"id":"txn_01hv8x2a0e9xjn3k0q0p1y3z4a"}}""" True
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectSent (responses >> List.map .status) [ 200 ]
+            , test "answers 200 and warns when no account is named" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked subscriptionUpdated True
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"unmatched"}],"rowCount":1}"""
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                            ( [ 200 ]
+                            , [ ( "warn", "Paddle subscription.updated evt_01hv8x2a0e9xjn3k0q0p1y3z4a names no account; skipped." ) ]
+                            )
+            , test "answers 503 when Neon fails" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked subscriptionUpdated True
+                        |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
+                        |> expectSent (responses >> List.map .status) [ 503 ]
+            , test "accepts 40 webhooks from one address within a minute" <|
+                \() ->
+                    startPaid
+                        |> repeat 40 (\resolve -> webhook resolve freshSignature)
+                        |> expectSent (\values -> ( List.length (webhookChecks values), List.filter (\{ status } -> status == 429) (responses values) ))
+                            ( 40, [] )
+            ]
         , describe "init"
             [ test "warns that emails are printed when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing }
                         |> expectSent logs
                             [ ( "info", "Sending queries to " ++ endpoint )
                             , ( "warn", "No BREVO_API_KEY, so emails are printed here instead of sent." )
+                            , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                             ]
             , test "is broken, and logs why, when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1005,7 +1118,7 @@ suite =
                             )
             , test "fails the health check when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectResponses
                             [ health "first"
@@ -1014,7 +1127,7 @@ suite =
                             ]
             , test "is broken, and logs why, when the sender isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1022,7 +1135,7 @@ suite =
                             )
             , test "is broken, and logs why, when the sender is not an address" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: EMAIL_FROM is not an email address." ) ]
@@ -1030,7 +1143,7 @@ suite =
                             )
             , test "answers 503 and logs why when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
@@ -1038,12 +1151,12 @@ suite =
                             )
             , test "fails the health check when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectSent (responses >> List.map .status) [ 503 ]
             , test "still answers 404 at an unknown path when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing }
                         |> request "first" "GET" [ "api", "nowhere" ]
                         |> expectSent (responses >> List.map .status) [ 404 ]
             ]
@@ -1117,6 +1230,15 @@ type Sent
     = Responded Response
     | Logged ( String, String )
     | Asked Check
+    | AskedWebhook WebhookCheck
+
+
+type alias WebhookCheck =
+    { resolve : String
+    , secret : String
+    , signed : String
+    , signatures : List String
+    }
 
 
 type alias Check =
@@ -1384,12 +1506,72 @@ jsonHeaders =
     [ ( "content-type", "application/json" ), ( "cache-control", "no-store" ) ]
 
 
+paddleConfig : { environment : String, apiKey : String, webhookSecret : String, clientToken : String, proPriceId : String }
+paddleConfig =
+    { environment = "sandbox", apiKey = "pdl_sdbx_apikey_test", webhookSecret = "pdl_ntfset_test", clientToken = "test_token", proPriceId = "pri_pro" }
+
+
+startPaid : App
+startPaid =
+    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig }
+
+
+freshSignature : String
+freshSignature =
+    "ts=0;h1=" ++ String.repeat 64 "a"
+
+
+subscriptionUpdated : String
+subscriptionUpdated =
+    eventBody "subscription.updated" "pri_pro"
+
+
+eventBody : String -> String -> String
+eventBody eventType priceId =
+    """{"event_id":"evt_01hv8x2a0e9xjn3k0q0p1y3z4a","event_type":\""""
+        ++ eventType
+        ++ """","occurred_at":"2026-11-17T10:00:01.000000Z","data":{"id":"sub_01hv8x2a0e9xjn3k0q0p1y3z4b","status":"active","customer_id":"ctm_01hv8x2a0e9xjn3k0q0p1y3z4c","custom_data":{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"},"items":[{"price":{"id":\""""
+        ++ priceId
+        ++ """"}}],"current_billing_period":{"starts_at":"2026-11-17T10:00:00Z","ends_at":"2026-12-17T10:00:00Z"},"scheduled_change":null,"updated_at":"2026-11-17T10:00:00.500000Z"}}"""
+
+
+webhook : String -> String -> App -> App
+webhook resolve header =
+    requestWith
+        { resolve = resolve
+        , method = "POST"
+        , path = [ "api", "billing", "webhook" ]
+        , headers = [ ( "paddle-signature", header ), ( "x-real-ip", "203.0.113.9" ) ]
+        , body = subscriptionUpdated
+        }
+
+
+webhookChecked : String -> Bool -> App -> App
+webhookChecked body valid =
+    ProgramTest.simulateIncomingPort "interopToElm"
+        (Encode.object
+            [ ( "tag", Encode.string "WebhookChecked" )
+            , ( "resolve", Encode.string "first" )
+            , ( "body", Encode.string body )
+            , ( "valid", Encode.bool valid )
+            ]
+        )
+
+
 start : Maybe String -> App
 start url =
-    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False }
+    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
 
 
-startWith : { databaseUrl : Maybe String, brevoApiKey : Maybe String, emailFrom : Maybe String, origin : String, local : Bool } -> App
+startWith :
+    { databaseUrl : Maybe String
+    , brevoApiKey : Maybe String
+    , emailFrom : Maybe String
+    , origin : String
+    , local : Bool
+    , paddle : Maybe { environment : String, apiKey : String, webhookSecret : String, clientToken : String, proPriceId : String }
+    }
+    -> App
 startWith config =
     ProgramTest.createWorker
         { init = Main.init
@@ -1408,8 +1590,18 @@ startWith config =
                 , ( "releaseUrl", Encode.null )
                 , ( "region", Encode.string "arn1" )
                 , ( "local", Encode.bool config.local )
+                , ( "paddleEnvironment", paddleFlag .environment config.paddle )
+                , ( "paddleApiKey", paddleFlag .apiKey config.paddle )
+                , ( "paddleWebhookSecret", paddleFlag .webhookSecret config.paddle )
+                , ( "paddleClientToken", paddleFlag .clientToken config.paddle )
+                , ( "paddleProPriceId", paddleFlag .proPriceId config.paddle )
                 ]
             )
+
+
+paddleFlag : (a -> String) -> Maybe a -> Encode.Value
+paddleFlag pick paddle =
+    Maybe.withDefault Encode.null (Maybe.map (pick >> Encode.string) paddle)
 
 
 repeat : Int -> (String -> App -> App) -> App -> App
@@ -1511,6 +1703,19 @@ checks =
         )
 
 
+webhookChecks : List Sent -> List WebhookCheck
+webhookChecks =
+    List.filterMap
+        (\value ->
+            case value of
+                AskedWebhook check ->
+                    Just check
+
+                _ ->
+                    Nothing
+        )
+
+
 logs : List Sent -> List ( String, String )
 logs =
     List.filterMap
@@ -1579,6 +1784,15 @@ sent =
                                         (Decode.field "backedUp" Decode.bool)
                                     )
                                 )
+                            )
+
+                    "VerifyWebhook" ->
+                        Decode.map AskedWebhook
+                            (Decode.map4 WebhookCheck
+                                (Decode.field "resolve" Decode.string)
+                                (Decode.field "secret" Decode.string)
+                                (Decode.field "signed" Decode.string)
+                                (Decode.field "signatures" (Decode.list Decode.string))
                             )
 
                     _ ->

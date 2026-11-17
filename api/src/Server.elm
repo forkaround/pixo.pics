@@ -4,11 +4,13 @@ import Api
 import Data.Origin exposing (Origin)
 import Services.Mailer as Mailer
 import Services.Neon as Neon
+import Services.Paddle as Paddle
 
 
 type alias Server =
     { db : Neon.Connection
     , mailer : Mailer.Mailer
     , origin : Origin
+    , paddle : Maybe Paddle.Config
     , release : Api.Release
     }

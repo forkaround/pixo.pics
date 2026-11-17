@@ -75,6 +75,7 @@ type Route
     | DeletePasskey CredentialId
     | PostPasskeySignIn
     | PostPasskeySignInOptions
+    | PostBillingWebhook
 
 
 type Method
@@ -133,6 +134,9 @@ method r =
         PostPasskeySignInOptions ->
             Post
 
+        PostBillingWebhook ->
+            Post
+
 
 path : Route -> List String
 path r =
@@ -183,6 +187,9 @@ segments r =
 
         PostPasskeySignInOptions ->
             [ "auth", "signin", "passkey", "options" ]
+
+        PostBillingWebhook ->
+            [ "billing", "webhook" ]
 
 
 toString : Route -> String
@@ -261,6 +268,9 @@ routesAt rest =
 
         [ "auth", "signin", "passkey", "options" ] ->
             [ PostPasskeySignInOptions ]
+
+        [ "billing", "webhook" ] ->
+            [ PostBillingWebhook ]
 
         _ ->
             []
