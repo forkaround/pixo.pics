@@ -41,6 +41,20 @@ suite =
                             Url.fromString "https://pixo.pics/login?from=email"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just Path.SignIn)
+                   , test "reads what a provider sends back to the sync page" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/settings/sync?code=a&state=b"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just (Path.Sync { code = Just "a", state = Just "b", error = Nothing }))
+                   , test "reads a declined connection" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/settings/sync?error=access_denied&state=b"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just (Path.Sync { code = Nothing, state = Just "b", error = Just "access_denied" }))
+                   , test "never writes the query of the sync page back" <|
+                        \() ->
+                            Path.toString (Path.Sync { code = Just "a", state = Just "b", error = Nothing })
+                                |> Expect.equal "/settings/sync"
                    , test "takes an unknown address for not found" <|
                         \() ->
                             Url.fromString "https://pixo.pics/nowhere/at/all"
@@ -130,6 +144,9 @@ next path =
             Just Path.Account
 
         Path.Account ->
+            Just (Path.Sync { code = Nothing, state = Nothing, error = Nothing })
+
+        Path.Sync _ ->
             Just Path.SignUp
 
         Path.SignUp ->

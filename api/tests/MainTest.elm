@@ -19,6 +19,7 @@ import Test.Http
 import Time
 import TsJson.Decode as TsDecode
 import TsJson.Encode as TsEncode
+import Url
 
 
 suite : Test
@@ -53,6 +54,7 @@ suite =
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                              , ( "warn", "No sync settings, so sync routes answer 503." )
                               , ( "warn", "Health check slow: the database took 1500 ms." )
                               ]
                             , [ health "first"
@@ -66,7 +68,7 @@ suite =
                         |> request "first" "GET" [ "api", "health" ]
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"exempt":true}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "warn", "warn", "error" ]
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ]
                             , [ health "first" 503 (failed "Database sent an unexpected result") ]
                             )
             , test "answers the 11th check in a minute from one address with 429, without the database or a log" <|
@@ -76,7 +78,7 @@ suite =
                         |> healthFrom "203.0.113.7" "11"
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 10)
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "warn", "warn" ]
+                            ( [ "info", "warn", "warn", "warn", "warn" ]
                             , [ { resolve = "11"
                                 , status = 429
                                 , headers = ( "retry-after", "6" ) :: jsonHeaders
@@ -177,7 +179,7 @@ suite =
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "prints the sign-up link instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -286,6 +288,7 @@ suite =
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                              , ( "warn", "No sync settings, so sync routes answer 503." )
                               , ( "error", "Magic link failed at its email: Brevo refused the email with HTTP 401 (unauthorized): Key not found" )
                               ]
                             , [ { resolve = "first"
@@ -301,10 +304,10 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ], [ 503 ] )
             , test "answers 503 when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -319,7 +322,7 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/verify"
             [ test "says who asked for the link, without using it" <|
@@ -410,7 +413,7 @@ suite =
                         |> verify "POST" [ ( "authorization", "Bearer Zm9vYmFy" ) ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/signin"
             [ test "emails a sign-in link to an address that has an account" <|
@@ -482,7 +485,7 @@ suite =
                         |> signIn """{"email":"ada@example.com"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/session"
             [ test "answers with the account and the billing of the session in the cookie" <|
@@ -504,6 +507,7 @@ suite =
                                     [ ( "SELECT authenticate($1) AS user_id", [ "c2Vzc2lvbg" ] )
                                     , ( "SELECT email, username FROM users", [] )
                                     , ( subscriptionsQuery, [] )
+                                    , ( syncConnectionsQuery, [] )
                                     ]
                                 )
                             )
@@ -512,7 +516,7 @@ suite =
                             [ { resolve = "first"
                               , status = 200
                               , headers = jsonHeaders
-                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false}}"""
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false},"sync":[]}"""
                               }
                             ]
             , test "answers Pro with the date it renews" <|
@@ -524,7 +528,7 @@ suite =
                             [ { resolve = "first"
                               , status = 200
                               , headers = jsonHeaders
-                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}"""
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true},"sync":[]}"""
                               }
                             ]
             , test "answers Pro with the date it ends when it is set to cancel" <|
@@ -536,7 +540,7 @@ suite =
                             [ { resolve = "first"
                               , status = 200
                               , headers = jsonHeaders
-                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":null,"endsAt":"2026-12-17T10:00:00Z","pastDue":false,"canManage":true}}"""
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":null,"endsAt":"2026-12-17T10:00:00Z","pastDue":false,"canManage":true},"sync":[]}"""
                               }
                             ]
             , test "answers Pro and past due when the last payment failed" <|
@@ -548,7 +552,7 @@ suite =
                             [ { resolve = "first"
                               , status = 200
                               , headers = jsonHeaders
-                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":true,"canManage":true}}"""
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":true,"canManage":true},"sync":[]}"""
                               }
                             ]
             , test "answers Free with a portal after the subscription ended" <|
@@ -560,14 +564,14 @@ suite =
                             [ { resolve = "first"
                               , status = 200
                               , headers = jsonHeaders
-                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":true}}"""
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":true},"sync":[]}"""
                               }
                             ]
             , test "answers 401 when the session is over" <|
                 \() ->
                     start (Just databaseUrl)
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[]},{"rows":[]}]}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[]},{"rows":[]},{"rows":[]}]}"""
                         |> expectResponses
                             [ { resolve = "first", status = 401, headers = jsonHeaders, body = """{"error":"Not signed in."}""" } ]
             , test "answers 401 at once without a cookie" <|
@@ -586,6 +590,7 @@ suite =
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                              , ( "warn", "No sync settings, so sync routes answer 503." )
                               , ( "error", "Session lookup failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -706,7 +711,7 @@ suite =
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [ pictureId ])
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 4 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 5 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "Can't delete an account with published pictures without R2 settings." ) ]
                             )
@@ -959,7 +964,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint (foundAnswer "true")
                         |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 403, headers = [], body = "<Error/>" })
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "R2 delete failed: R2 answered 403: <Error/>" ) ]
                             )
@@ -1031,7 +1036,7 @@ suite =
                         |> reportRequest "first" """{"reason":"spam"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (reportedRows "reported" "true" "\"ada\"")
                         |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
-                        |> expectSent (\values -> ( List.map .status (responses values), List.map Tuple.first (List.drop 1 (logs values)) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.map Tuple.first (List.drop 2 (logs values)) ))
                             ( [ 202 ], [ "error" ] )
             , test "answers 429 to the 11th report in an hour from one address" <|
                 \() ->
@@ -1190,6 +1195,7 @@ suite =
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                              , ( "warn", "No sync settings, so sync routes answer 503." )
                               , ( "error", "Sign-out failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -1266,7 +1272,7 @@ suite =
                         |> passkeys "POST" [ "api", "auth", "passkeys", "options" ] ""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/passkeys"
             [ test "saves the credential, named after what made it, once its challenge is used" <|
@@ -1314,10 +1320,10 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "warn", "warn", "error" ], [ added ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "error" ], [ added ] )
             , test "prints the notice instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -1328,7 +1334,7 @@ suite =
                                 , responses values
                                 )
                             )
-                            ( [ "info", "warn", "warn", "warn", "warn", "info" ], True, [ added ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "warn", "info" ], True, [ added ] )
             , test "answers 409 when the challenge is expired, used or unknown" <|
                 \() ->
                     start (Just databaseUrl)
@@ -1353,6 +1359,7 @@ suite =
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                              , ( "warn", "No sync settings, so sync routes answer 503." )
                               , ( "warn", "Passkey refused: The client data comes from https://evil.example, not from https://pixo.pics." )
                               ]
                             , [ { resolve = "first"
@@ -1529,6 +1536,7 @@ suite =
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                              , ( "warn", "No sync settings, so sync routes answer 503." )
                               , ( "warn", "Passkey sign-in refused: The signature does not match the passkey." )
                               ]
                             , [ notVerified ]
@@ -1558,7 +1566,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST"
                             endpoint
                             """{"rows":[{"outcome":"no-passkey","session_token":null,"email":null,"username":null}],"rowCount":1}"""
-                        |> expectSent (\values -> ( logs values |> List.drop 4, responses values ))
+                        |> expectSent (\values -> ( logs values |> List.drop 5, responses values ))
                             ( [ ( "warn", "Passkey sign-in refused: The passkey is gone, or its counter did not move forward." ) ]
                             , [ notVerified ]
                             )
@@ -1637,7 +1645,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST"
                             "https://sandbox-api.paddle.com/transactions"
                             (Test.Http.httpResponse { statusCode = 400, headers = [], body = """{"error":{"type":"request_error","code":"bad_request","detail":"Invalid price."}}""" })
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "Paddle checkout failed: Paddle answered 400 (bad_request): Invalid price." ) ]
                             )
@@ -1718,7 +1726,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST"
                             "https://sandbox-api.paddle.com/customers/ctm_01hv8x2a0e9xjn3k0q0p1y3z4c/portal-sessions"
                             Test.Http.networkError
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "Paddle portal failed: Could not reach Paddle." ) ]
                             )
@@ -1740,7 +1748,7 @@ suite =
                         |> ProgramTest.advanceTime 6000
                         |> webhook "first" freshSignature
                         |> expectSent (\values -> ( List.map .status (responses values), List.length (webhookChecks values), levels values ))
-                            ( [ 401 ], 0, [ "info", "warn", "warn" ] )
+                            ( [ 401 ], 0, [ "info", "warn", "warn", "warn" ] )
             , test "asks app.ts to check the timestamp and the body with the configured secret" <|
                 \() ->
                     startPaid
@@ -1757,14 +1765,14 @@ suite =
                     startPaid
                         |> webhook "first" freshSignature
                         |> webhookChecked """{"event_id":"evt_1","event_type":"subscription.updated","data":{"id":"sub_1","status":"active"}}""" True
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
                             ( [ 400 ], [ ( "error", "Paddle webhook did not decode at data." ) ] )
             , test "answers 401 and warns when the check fails" <|
                 \() ->
                     startPaid
                         |> webhook "first" freshSignature
                         |> webhookChecked subscriptionUpdated False
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
                             ( [ 401 ], [ ( "warn", "Paddle webhook refused: the signature does not match." ) ] )
             , test "applies a subscription for the Pro price" <|
                 \() ->
@@ -1794,7 +1802,7 @@ suite =
                         |> webhook "first" freshSignature
                         |> webhookChecked subscriptionUpdated True
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"applied"}],"rowCount":1}"""
-                        |> expectSent (\values -> ( responses values, List.drop 2 (logs values) ))
+                        |> expectSent (\values -> ( responses values, List.drop 3 (logs values) ))
                             ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
                             , [ ( "info", "Paddle subscription.updated evt_01hv8x2a0e9xjn3k0q0p1y3z4a applied." ) ]
                             )
@@ -1818,7 +1826,7 @@ suite =
                         |> webhook "first" freshSignature
                         |> webhookChecked subscriptionUpdated True
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"unmatched"}],"rowCount":1}"""
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
                             ( [ 200 ]
                             , [ ( "warn", "Paddle subscription.updated evt_01hv8x2a0e9xjn3k0q0p1y3z4a names no account; skipped." ) ]
                             )
@@ -1836,20 +1844,280 @@ suite =
                         |> expectSent (\values -> ( List.length (webhookChecks values), List.filter (\{ status } -> status == 429) (responses values) ))
                             ( 40, [] )
             ]
+        , describe "Cloud sync"
+            [ test "lists the connections in the session answer" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (sessionAnswerWith "" """{"provider":"dropbox","connected_at":"2026-11-17T10:00:00Z"}""")
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false},"sync":[{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}]}"""
+                              }
+                            ]
+            , test "start answers Dropbox's address with the state and the challenge of the stored attempt" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "start" ] ""
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [], [ "dropbox" ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (startAnswer attemptRow)
+                        |> expectSent (responses >> List.map (\answer -> ( answer.status, Maybe.map addressParts (decodedUrl answer.body) )))
+                            [ ( 200
+                              , Just
+                                    ( "https://www.dropbox.com/oauth2/authorize"
+                                    , [ ( "client_id", "dbx-id" )
+                                      , ( "code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM" )
+                                      , ( "code_challenge_method", "S256" )
+                                      , ( "redirect_uri", "https://pixo.pics/settings/sync" )
+                                      , ( "response_type", "code" )
+                                      , ( "state", attemptState )
+                                      , ( "token_access_type", "offline" )
+                                      ]
+                                    )
+                              )
+                            ]
+            , test "start answers 403 for a user who is not Pro" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "start" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (startAnswer "")
+                        |> expectResponses
+                            [ { resolve = "first", status = 403, headers = jsonHeaders, body = """{"error":"Sync needs Pro."}""" } ]
+            , test "start answers 401 without a cookie and asks nothing" <|
+                \() ->
+                    startSyncing
+                        |> requestWith { resolve = "first", method = "POST", path = [ "api", "sync", "dropbox", "start" ], headers = [ ( "x-real-ip", "203.0.113.9" ) ], body = "" }
+                        |> expectResponses
+                            [ { resolve = "first", status = 401, headers = jsonHeaders, body = """{"error":"Not signed in."}""" } ]
+            , test "start answers 404 for a provider that is not set up" <|
+                \() ->
+                    startSyncingWith { dropbox = Just { id = "dbx-id", secret = "dbx-secret" }, google = Nothing, key = Just syncKey }
+                        |> syncRequest "POST" [ "api", "sync", "google-drive", "start" ] ""
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"This provider is not set up."}""" } ]
+            , test "answers 503 to every sync route without sync settings" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "start" ] ""
+                        |> syncRequest "POST" [ "api", "sync", "finish" ] """{"state":"s","code":"c"}"""
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "token" ] ""
+                        |> syncRequest "DELETE" [ "api", "sync", "dropbox" ] ""
+                        |> expectSent (responses >> List.map .status) [ 503, 503, 503, 503 ]
+            , test "answers 429 to the 11th start in 15 minutes from one address" <|
+                \() ->
+                    startSyncing
+                        |> repeat 10 (\resolve -> syncRequestAs resolve "POST" [ "api", "sync", "dropbox", "start" ] "")
+                        |> syncRequestAs "11" "POST" [ "api", "sync", "dropbox", "start" ] ""
+                        |> expectSent (\values -> List.filter (\{ status } -> status == 429) (responses values))
+                            [ { resolve = "11"
+                              , status = 429
+                              , headers = ( "retry-after", "90" ) :: jsonHeaders
+                              , body = """{"error":"Too many attempts."}"""
+                              }
+                            ]
+            , test "finish answers 400 for a state that is unknown, used or expired" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "finish" ] finishBody
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [ attemptState ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows "")
+                        |> ProgramTest.ensureHttpRequests "POST" "https://api.dropboxapi.com/oauth2/token" (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 400, headers = jsonHeaders, body = """{"error":"This connection link expired. Try again."}""" } ]
+            , test "finish answers 400 for a body that is not a state and a code" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "finish" ] """{"state":"s"}"""
+                        |> expectResponses
+                            [ { resolve = "first", status = 400, headers = jsonHeaders, body = """{"error":"Expected a JSON object with a state and a code."}""" } ]
+            , test "finish exchanges the code with the verifier, keeps the refresh token encrypted and answers the connection" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "finish" ] finishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows ("""{"provider":"dropbox","verifier":\"""" ++ attemptVerifier ++ "\"}"))
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "https://api.dropboxapi.com/oauth2/token"
+                            (expectForm
+                                [ ( "code", "the-code" )
+                                , ( "grant_type", "authorization_code" )
+                                , ( "redirect_uri", "https://pixo.pics/settings/sync" )
+                                , ( "code_verifier", attemptVerifier )
+                                , ( "client_id", "dbx-id" )
+                                , ( "client_secret", "dbx-secret" )
+                                ]
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://api.dropboxapi.com/oauth2/token"
+                            (Test.Http.httpResponse { statusCode = 200, headers = [], body = """{"access_token":"sl.access","expires_in":14400,"refresh_token":"dbx-refresh-1","token_type":"bearer"}""" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [ "dropbox", "dbx-refresh-1", syncKey ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"connected_at":"2026-11-17T10:00:00Z"}""")
+                        |> expectSent (\values -> ( responses values, leaks values ))
+                            ( [ { resolve = "first"
+                                , status = 200
+                                , headers = jsonHeaders
+                                , body = """{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}"""
+                                }
+                              ]
+                            , []
+                            )
+            , test "finish answers 502 when the provider gives no refresh token" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "finish" ] finishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows ("""{"provider":"google-drive","verifier":\"""" ++ attemptVerifier ++ "\"}"))
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://oauth2.googleapis.com/token"
+                            (Test.Http.httpResponse { statusCode = 200, headers = [], body = """{"access_token":"ya29.x","expires_in":3599}""" })
+                        |> expectSent (\values -> ( responses values, List.drop 4 (logs values), leaks values ))
+                            ( [ { resolve = "first", status = 502, headers = jsonHeaders, body = """{"error":"Google Drive gave no lasting access. Try again."}""" } ]
+                            , [ ( "warn", "Google Drive answered the code exchange without lasting access." ) ]
+                            , []
+                            )
+            , test "finish answers 502 and logs why when the provider refuses the code" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "finish" ] finishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows ("""{"provider":"dropbox","verifier":\"""" ++ attemptVerifier ++ "\"}"))
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://api.dropboxapi.com/oauth2/token"
+                            (Test.Http.httpResponse { statusCode = 400, headers = [], body = """{"error":"invalid_request","error_description":"the-code dbx-secret"}""" })
+                        |> expectSent (\values -> ( responses values, List.filter (\( level, _ ) -> level == "error") (logs values), leaks values ))
+                            ( [ { resolve = "first", status = 502, headers = jsonHeaders, body = """{"error":"Couldn't connect to Dropbox."}""" } ]
+                            , [ ( "error", "Dropbox code request failed: Dropbox answered 400 (invalid_request)." ) ]
+                            , []
+                            )
+            , test "token refreshes at Google and answers the access token alone" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "google-drive", "token" ] ""
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [ "google-drive", syncKey ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"pro":true,"refresh_token":"1//g-refresh"}""")
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "https://oauth2.googleapis.com/token"
+                            (expectForm
+                                [ ( "grant_type", "refresh_token" )
+                                , ( "refresh_token", "1//g-refresh" )
+                                , ( "client_id", "g-id" )
+                                , ( "client_secret", "g-secret" )
+                                ]
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://oauth2.googleapis.com/token"
+                            (Test.Http.httpResponse { statusCode = 200, headers = [], body = """{"access_token":"ya29.x","expires_in":3599,"token_type":"Bearer"}""" })
+                        |> expectSent (\values -> ( responses values, leaks values ))
+                            ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = """{"accessToken":"ya29.x","expiresIn":3599}""" } ]
+                            , []
+                            )
+            , test "token keeps a new refresh token when the provider rotates it" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "token" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"pro":true,"refresh_token":"dbx-old"}""")
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://api.dropboxapi.com/oauth2/token"
+                            (Test.Http.httpResponse { statusCode = 200, headers = [], body = """{"access_token":"sl.new","expires_in":14400,"refresh_token":"dbx-new"}""" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [ "dropbox", "dbx-new", syncKey ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"connected_at":"2026-11-17T10:00:00Z"}""")
+                        |> expectResponses
+                            [ { resolve = "first", status = 200, headers = jsonHeaders, body = """{"accessToken":"sl.new","expiresIn":14400}""" } ]
+            , test "token deletes the connection and answers 409 when the provider says invalid_grant" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "google-drive", "token" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"pro":true,"refresh_token":"1//g-refresh"}""")
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://oauth2.googleapis.com/token"
+                            (Test.Http.httpResponse { statusCode = 400, headers = [], body = """{"error":"invalid_grant","error_description":"Token has been expired or revoked."}""" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [ "google-drive", syncKey ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"refresh_token":"1//g-refresh"}""")
+                        |> expectSent (\values -> ( responses values, leaks values ))
+                            ( [ { resolve = "first", status = 409, headers = jsonHeaders, body = """{"error":"Google Drive access was removed. Connect again."}""" } ]
+                            , []
+                            )
+            , test "token answers 403 without calling the provider when the user is not Pro" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "google-drive", "token" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"pro":false,"refresh_token":"1//g-refresh"}""")
+                        |> ProgramTest.ensureHttpRequests "POST" "https://oauth2.googleapis.com/token" (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 403, headers = jsonHeaders, body = """{"error":"Sync needs Pro."}""" } ]
+            , test "token answers 404 when the provider is not connected" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "token" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows "")
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"Not connected."}""" } ]
+            , test "token answers 502 and logs why when the provider is down" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "token" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"pro":true,"refresh_token":"dbx-old"}""")
+                        |> ProgramTest.simulateHttpResponse "POST" "https://api.dropboxapi.com/oauth2/token" (Test.Http.httpResponse { statusCode = 503, headers = [], body = "" })
+                        |> expectSent (\values -> ( responses values, List.filter (\( level, _ ) -> level == "error") (logs values), leaks values ))
+                            ( [ { resolve = "first", status = 502, headers = jsonHeaders, body = """{"error":"Couldn't reach Dropbox."}""" } ]
+                            , [ ( "error", "Dropbox token request failed: Dropbox answered 503." ) ]
+                            , []
+                            )
+            , test "disconnect revokes the refresh token at Google and answers 200 after dropping it" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "DELETE" [ "api", "sync", "google-drive" ] ""
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectParams [ [ "c2Vzc2lvbg" ], [ "google-drive", syncKey ] ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"refresh_token":"1//g-refresh"}""")
+                        |> ProgramTest.ensureHttpRequest "POST" "https://oauth2.googleapis.com/revoke" (expectForm [ ( "token", "1//g-refresh" ) ])
+                        |> ProgramTest.simulateHttpResponse "POST" "https://oauth2.googleapis.com/revoke" (Test.Http.httpResponse { statusCode = 200, headers = [], body = "{}" })
+                        |> expectSent (\values -> ( responses values, leaks values ))
+                            ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ], [] )
+            , test "disconnect answers 200 even when Google refuses the revoke" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "DELETE" [ "api", "sync", "google-drive" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"refresh_token":"1//g-refresh"}""")
+                        |> ProgramTest.simulateHttpResponse "POST" "https://oauth2.googleapis.com/revoke" (Test.Http.httpResponse { statusCode = 400, headers = [], body = """{"error":"invalid_token"}""" })
+                        |> expectSent (\values -> ( responses values, List.drop 4 (logs values), leaks values ))
+                            ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
+                            , [ ( "warn", "Google Drive could not be revoked: Google Drive answered 400 (invalid_token)." ) ]
+                            , []
+                            )
+            , test "disconnect refreshes at Dropbox, then revokes with the access token" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "DELETE" [ "api", "sync", "dropbox" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows """{"refresh_token":"dbx-refresh-1"}""")
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://api.dropboxapi.com/oauth2/token"
+                            (Test.Http.httpResponse { statusCode = 200, headers = [], body = """{"access_token":"sl.short","expires_in":14400}""" })
+                        |> ProgramTest.ensureHttpRequest "POST" "https://api.dropboxapi.com/2/auth/token/revoke" (Test.Http.hasHeader "authorization" "Bearer sl.short")
+                        |> ProgramTest.simulateHttpResponse "POST" "https://api.dropboxapi.com/2/auth/token/revoke" (Test.Http.httpResponse { statusCode = 200, headers = [], body = "null" })
+                        |> expectSent (\values -> ( responses values, leaks values ))
+                            ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ], [] )
+            , test "disconnect answers 200 without calling a provider when nothing was connected" <|
+                \() ->
+                    startSyncing
+                        |> syncRequest "DELETE" [ "api", "sync", "dropbox" ] ""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (signedInRows "")
+                        |> expectResponses
+                            [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
+            ]
         , describe "init"
             [ test "warns that emails are printed when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> expectSent logs
                             [ ( "info", "Sending queries to " ++ endpoint )
                             , ( "warn", "No BREVO_API_KEY, so emails are printed here instead of sent." )
                             , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                             , ( "warn", "No R2_* settings, so publishing answers 503." )
                             , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
+                            , ( "warn", "No sync settings, so sync routes answer 503." )
                             ]
             , test "is broken, and logs why, when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1857,7 +2125,7 @@ suite =
                             )
             , test "fails the health check when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectResponses
                             [ health "first"
@@ -1866,7 +2134,7 @@ suite =
                             ]
             , test "is broken, and logs why, when the sender isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1874,7 +2142,7 @@ suite =
                             )
             , test "is broken, and logs why, when the sender is not an address" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: EMAIL_FROM is not an email address." ) ]
@@ -1882,7 +2150,7 @@ suite =
                             )
             , test "answers 503 and logs why when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
@@ -1890,21 +2158,31 @@ suite =
                             )
             , test "fails the health check when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectSent (responses >> List.map .status) [ 503 ]
             , test "still answers 404 at an unknown path when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
                         |> request "first" "GET" [ "api", "nowhere" ]
                         |> expectSent (responses >> List.map .status) [ 404 ]
             ]
         , describe "moderation settings"
             [ test "logs an error and sends no report email when MODERATION_EMAIL is not an address" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Just "mod" }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Just "mod", sync = Nothing }
                         |> expectSent (logs >> List.filter (Tuple.first >> (==) "error"))
                             [ ( "error", "MODERATION_EMAIL is not an email address." ) ]
+            ]
+        , describe "sync settings"
+            [ test "logs an error and answers 503 on sync routes when the key is missing" <|
+                \() ->
+                    startSyncingWith { dropbox = Just { id = "dbx-id", secret = "dbx-secret" }, google = Nothing, key = Nothing }
+                        |> syncRequest "POST" [ "api", "sync", "dropbox", "start" ] ""
+                        |> expectSent (\values -> ( List.filter (\( level, _ ) -> level == "error") (logs values), List.map .status (responses values) ))
+                            ( [ ( "error", "SYNC_TOKEN_KEY must be set, with at least 32 characters, when a Dropbox or Google client is." ) ]
+                            , [ 503 ]
+                            )
             ]
         , describe "every route"
             [ test "answers 429 to the 31st request in a minute from one address, whatever it asks" <|
@@ -2259,7 +2537,7 @@ paddleConfig =
 
 startPaid : App
 startPaid =
-    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig, storage = Nothing, moderationEmail = Just "mod@pixo.pics" }
+    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig, storage = Nothing, moderationEmail = Just "mod@pixo.pics", sync = Nothing }
 
 
 freshSignature : String
@@ -2306,7 +2584,7 @@ webhookChecked body valid =
 
 start : Maybe String -> App
 start url =
-    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
+    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Nothing }
 
 
 startWith :
@@ -2318,6 +2596,7 @@ startWith :
     , paddle : Maybe { environment : String, apiKey : String, webhookSecret : String, clientToken : String, proPriceId : String }
     , storage : Maybe { accountId : String, accessKeyId : String, secretAccessKey : String, bucket : String, uploadBucket : String, imagesOrigin : String }
     , moderationEmail : Maybe String
+    , sync : Maybe { dropbox : Maybe { id : String, secret : String }, google : Maybe { id : String, secret : String }, key : Maybe String }
     }
     -> App
 startWith config =
@@ -2350,6 +2629,11 @@ startWith config =
                 , ( "r2UploadBucket", paddleFlag .uploadBucket config.storage )
                 , ( "imagesOrigin", paddleFlag .imagesOrigin config.storage )
                 , ( "moderationEmail", Maybe.withDefault Encode.null (Maybe.map Encode.string config.moderationEmail) )
+                , ( "dropboxClientId", syncFlag (.dropbox >> Maybe.map .id) config.sync )
+                , ( "dropboxClientSecret", syncFlag (.dropbox >> Maybe.map .secret) config.sync )
+                , ( "googleClientId", syncFlag (.google >> Maybe.map .id) config.sync )
+                , ( "googleClientSecret", syncFlag (.google >> Maybe.map .secret) config.sync )
+                , ( "syncTokenKey", syncFlag .key config.sync )
                 ]
             )
 
@@ -2365,7 +2649,137 @@ startPublishing =
         , paddle = Just paddleConfig
         , storage = Just { accountId = "acc", accessKeyId = "key", secretAccessKey = "secret", bucket = "pictures", uploadBucket = "uploads", imagesOrigin = "https://img.pixo.pics" }
         , moderationEmail = Just "mod@pixo.pics"
+        , sync = Nothing
         }
+
+
+syncKey : String
+syncKey =
+    "0123456789abcdef0123456789abcdef0123"
+
+
+startSyncing : App
+startSyncing =
+    startSyncingWith { dropbox = Just { id = "dbx-id", secret = "dbx-secret" }, google = Just { id = "g-id", secret = "g-secret" }, key = Just syncKey }
+
+
+startSyncingWith : { dropbox : Maybe { id : String, secret : String }, google : Maybe { id : String, secret : String }, key : Maybe String } -> App
+startSyncingWith sync =
+    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing, sync = Just sync }
+
+
+syncRequest : String -> List String -> String -> App -> App
+syncRequest =
+    syncRequestAs "first"
+
+
+syncRequestAs : String -> String -> List String -> String -> App -> App
+syncRequestAs resolve method path body =
+    requestWith
+        { resolve = resolve
+        , method = method
+        , path = path
+        , headers = [ ( "cookie", "session=c2Vzc2lvbg" ), ( "x-real-ip", "203.0.113.9" ) ]
+        , body = body
+        }
+
+
+attemptState : String
+attemptState =
+    "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9"
+
+
+attemptVerifier : String
+attemptVerifier =
+    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+
+
+attemptRow : String
+attemptRow =
+    """{"state":\"""" ++ attemptState ++ """","verifier":\"""" ++ attemptVerifier ++ """"}"""
+
+
+startAnswer : String -> String
+startAnswer rows =
+    """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[],"rowCount":0},{"rows":[""" ++ rows ++ """]}]}"""
+
+
+finishBody : String
+finishBody =
+    """{"state":\"""" ++ attemptState ++ """","code":"the-code"}"""
+
+
+decodedUrl : String -> Maybe String
+decodedUrl body =
+    Decode.decodeString (Decode.field "url" Decode.string) body
+        |> Result.toMaybe
+
+
+addressParts : String -> ( String, List ( String, String ) )
+addressParts address =
+    case String.split "?" address of
+        [ base, query ] ->
+            ( base, List.sort (formPairs query) )
+
+        _ ->
+            ( address, [] )
+
+
+formPairs : String -> List ( String, String )
+formPairs text =
+    String.split "&" text
+        |> List.filterMap
+            (\pair ->
+                case String.split "=" pair of
+                    [ name, value ] ->
+                        Maybe.map2 Tuple.pair (Url.percentDecode name) (Url.percentDecode value)
+
+                    _ ->
+                        Nothing
+            )
+
+
+expectForm : List ( String, String ) -> Test.Http.HttpRequest x a -> Expectation
+expectForm expected made =
+    formPairs made.body
+        |> Expect.equal expected
+
+
+expectParams : List (List String) -> Test.Http.HttpRequest x a -> Expectation
+expectParams expected =
+    Test.Http.expectJsonBody
+        (Decode.field "queries"
+            (Decode.list
+                (Decode.map2 Tuple.pair
+                    (Decode.field "query" Decode.string)
+                    (Decode.field "params" (Decode.list Decode.string))
+                )
+            )
+        )
+        (\found ->
+            Expect.all
+                [ List.map Tuple.second >> Expect.equal expected
+                , List.map Tuple.first
+                    >> List.filter (\sql -> String.contains syncKey sql || String.contains "refresh-" sql)
+                    >> Expect.equal []
+                ]
+                found
+        )
+
+
+leaks : List Sent -> List ( String, String )
+leaks values =
+    logs values
+        |> List.filter
+            (\( _, line ) ->
+                List.any (\secret -> String.contains secret line)
+                    [ "refresh", "ya29", "sl.", "the-code", syncKey, "dbx-secret", "g-secret", attemptVerifier ]
+            )
+
+
+syncFlag : (a -> Maybe String) -> Maybe a -> Encode.Value
+syncFlag pick sync =
+    Maybe.withDefault Encode.null (Maybe.map Encode.string (Maybe.andThen pick sync))
 
 
 paddleFlag : (a -> String) -> Maybe a -> Encode.Value
@@ -2631,6 +3045,11 @@ simulateSubscriptions _ =
         (Decode.decodeValue (TsDecode.decoder Interop.interop.toElm) >> Main.GotInterop)
 
 
+syncConnectionsQuery : String
+syncConnectionsQuery =
+    "SELECT provider, to_char(connected_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS connected_at FROM sync_connections ORDER BY provider"
+
+
 subscriptionsQuery : String
 subscriptionsQuery =
     "SELECT status, scheduled_change, to_char(scheduled_change_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS scheduled_change_at, to_char(current_period_ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS current_period_ends_at, paddle_customer_id, paddle_subscription_id FROM subscriptions ORDER BY (status IN ('active', 'trialing', 'past_due')) DESC, paddle_updated_at DESC"
@@ -2648,7 +3067,12 @@ deletionAnswer outcome =
 
 sessionAnswer : String -> String
 sessionAnswer rows =
-    """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"email":"ada@example.com","username":"ada"}]},{"rows":[""" ++ rows ++ """]}]}"""
+    sessionAnswerWith rows ""
+
+
+sessionAnswerWith : String -> String -> String
+sessionAnswerWith rows connections =
+    """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"email":"ada@example.com","username":"ada"}]},{"rows":[""" ++ rows ++ """]},{"rows":[""" ++ connections ++ """]}]}"""
 
 
 subscriptionRow : String -> String -> String -> String -> String

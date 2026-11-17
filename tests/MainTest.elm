@@ -599,6 +599,104 @@ suite =
                         |> ProgramTest.ensureViewHas [ text "Signed in as ada (ada@example.com)" ]
                         |> ProgramTest.expectViewHas [ text "Apple Passwords" ]
             ]
+        , describe "Sync"
+            [ test "offers Pro to a Free account" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
+                        |> ProgramTest.ensureViewHas [ text "Needs Pro." ]
+                        |> ProgramTest.expectViewHas [ tag "a", attribute (Html.Attributes.href "/settings/account"), containing [ text "Get Pro" ] ]
+            , test "shows a Connect button for each provider to a Pro account" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Connect Dropbox") ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Connect Google Drive") ]
+            , test "asks a signed-out visitor to log in" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.expectViewHas [ text "Log in to sync your library." ]
+            , test "shows the connection that came with the session and sends no request of its own" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" meSyncing
+                        |> ProgramTest.ensureViewHas [ text "Connected 2026-11-17" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Disconnect Dropbox") ]
+                        |> ProgramTest.ensureHttpRequests "POST" "/api/sync/finish" (List.length >> Expect.equal 0)
+                        |> ProgramTest.expectHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 0)
+            , test "asks for the provider's address and goes there" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.clickButton "Connect Dropbox"
+                        |> ProgramTest.ensureViewHas [ text "Connecting…" ]
+                        |> ProgramTest.ensureHttpRequest "POST" "/api/sync/dropbox/start" (.body >> Expect.equal "")
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/dropbox/start" """{"url":"https://www.dropbox.com/oauth2/authorize?state=s"}"""
+                        |> ProgramTest.expectPageChange "https://www.dropbox.com/oauth2/authorize?state=s"
+            , test "shows a toast when the connection can't start" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.clickButton "Connect Dropbox"
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/sync/dropbox/start" (response 403 """{"error":"Sync needs Pro."}""")
+                        |> ProgramTest.ensureViewHas [ text "Couldn't connect" ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Connect Dropbox") ]
+            , test "finishes a connection the provider sent the user back with, once" <|
+                \() ->
+                    startAt "/settings/sync?code=c&state=s" defaultFlags
+                        |> ProgramTest.ensureHttpRequest "POST" "/api/sync/finish" (.body >> Expect.equal """{"state":"s","code":"c"}""")
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/sync")
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/finish" """{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}"""
+                        |> ProgramTest.ensureHttpRequests "POST" "/api/sync/finish" (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureViewHas [ text "Dropbox connected" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Disconnect Dropbox") ]
+                        |> ProgramTest.expectHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 1)
+            , test "shows the connection at once, even when the session answer said there were none" <|
+                \() ->
+                    startAt "/settings/sync?code=c&state=s" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/finish" """{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}"""
+                        |> ProgramTest.ensureViewHas [ text "Connected 2026-11-17" ]
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" meSyncing
+                        |> ProgramTest.expectViewHas [ text "Connected 2026-11-17" ]
+            , test "shows a toast when the finish fails" <|
+                \() ->
+                    startAt "/settings/sync?code=c&state=s" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/sync/finish" (response 400 """{"error":"This connection link expired. Try again."}""")
+                        |> ProgramTest.expectViewHas [ text "Couldn't connect", text "This connection link expired. Try again." ]
+            , test "says so when the user declined, and posts nothing to finish" <|
+                \() ->
+                    startAt "/settings/sync?error=access_denied&state=s" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.ensureViewHas [ text "Connection cancelled" ]
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/sync")
+                        |> ProgramTest.expectHttpRequests "POST" "/api/sync/finish" (List.length >> Expect.equal 0)
+            , test "disconnects and asks for the session again" <|
+                \() ->
+                    startAt "/settings/sync" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" meSyncing
+                        |> ProgramTest.clickButton "Disconnect Dropbox"
+                        |> ProgramTest.ensureViewHas [ text "Disconnecting…" ]
+                        |> ProgramTest.ensureHttpRequest "DELETE" "/api/sync/dropbox" (.body >> Expect.equal "")
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/sync/dropbox" "{}"
+                        |> ProgramTest.ensureViewHas [ text "Dropbox disconnected" ]
+                        |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Connect Dropbox") ]
+                        |> ProgramTest.expectHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 1)
+            , test "ends disconnected after a connect and a disconnect in one visit" <|
+                \() ->
+                    startAt "/settings/sync?code=c&state=s" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/finish" """{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}"""
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" meSyncing
+                        |> ProgramTest.clickButton "Disconnect Dropbox"
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/sync/dropbox" "{}"
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+                        |> ProgramTest.ensureViewHasNot [ text "Connected 2026-11-17" ]
+                        |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Connect Dropbox") ]
+            ]
         , describe "Passkeys"
             [ test "keeps the skeleton and loads the passkeys again on request" <|
                 \() ->
@@ -3198,6 +3296,9 @@ simulateEffects effect =
         Effect.PushUrl url ->
             SimulatedEffect.Navigation.pushUrl url
 
+        Effect.ReplaceUrl url ->
+            SimulatedEffect.Navigation.replaceUrl url
+
         Effect.Load url ->
             SimulatedEffect.Navigation.load url
 
@@ -3586,22 +3687,27 @@ passkeyOptions =
 
 me : String
 me =
-    """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false}}"""
+    """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false},"sync":[]}"""
+
+
+meSyncing : String
+meSyncing =
+    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true},"sync":[{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}]}"""
 
 
 mePro : String
 mePro =
-    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}"""
+    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true},"sync":[]}"""
 
 
 meEnding : String
 meEnding =
-    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":null,"endsAt":"2026-12-17T10:00:00Z","pastDue":false,"canManage":true}}"""
+    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":null,"endsAt":"2026-12-17T10:00:00Z","pastDue":false,"canManage":true},"sync":[]}"""
 
 
 mePastDue : String
 mePastDue =
-    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":true,"canManage":true}}"""
+    """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":true,"canManage":true},"sync":[]}"""
 
 
 checkout : String

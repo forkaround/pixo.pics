@@ -71,6 +71,11 @@ type alias Flags =
     , r2UploadBucket : Maybe String
     , imagesOrigin : Maybe String
     , moderationEmail : Maybe String
+    , dropboxClientId : Maybe String
+    , dropboxClientSecret : Maybe String
+    , googleClientId : Maybe String
+    , googleClientSecret : Maybe String
+    , syncTokenKey : Maybe String
     }
 
 
@@ -297,3 +302,8 @@ flags =
         |> TsDecode.andMap (TsDecode.field "r2UploadBucket" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "imagesOrigin" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "moderationEmail" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "dropboxClientId" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "dropboxClientSecret" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "googleClientId" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "googleClientSecret" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "syncTokenKey" (TsDecode.nullable TsDecode.string))

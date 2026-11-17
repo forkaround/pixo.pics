@@ -26,6 +26,11 @@ module Api exposing
     , SignInOptions
     , SignUp
     , Status(..)
+    , SyncConnection
+    , SyncFinish
+    , SyncProvider(..)
+    , SyncStart
+    , SyncToken
     , TagCount
     , Upload
     , Verification
@@ -55,6 +60,10 @@ module Api exposing
     , path
     , portal
     , profile
+    , providerFromString
+    , providerName
+    , providerToString
+    , providers
     , publish
     , report
     , responseDecoder
@@ -63,6 +72,10 @@ module Api exposing
     , signIn
     , signOut
     , signUp
+    , syncFinish
+    , syncStart
+    , syncStop
+    , syncToken
     , toString
     , unpublish
     , verification
@@ -109,6 +122,10 @@ type Route
     | GetFeedTags
     | GetProfile Username (Maybe PictureId)
     | PostReport PictureId
+    | PostSyncStart SyncProvider
+    | PostSyncFinish
+    | PostSyncToken SyncProvider
+    | DeleteSync SyncProvider
 
 
 type Method
@@ -196,6 +213,18 @@ method r =
 
         PostReport _ ->
             Post
+
+        PostSyncStart _ ->
+            Post
+
+        PostSyncFinish ->
+            Post
+
+        PostSyncToken _ ->
+            Post
+
+        DeleteSync _ ->
+            Delete
 
 
 path : Route -> List String
@@ -287,6 +316,18 @@ segments r =
 
         PostReport id ->
             [ "pictures", PictureId.toString id, "reports" ]
+
+        PostSyncStart p ->
+            [ "sync", providerToString p, "start" ]
+
+        PostSyncFinish ->
+            [ "sync", "finish" ]
+
+        PostSyncToken p ->
+            [ "sync", providerToString p, "token" ]
+
+        DeleteSync p ->
+            [ "sync", providerToString p ]
 
 
 toString : Route -> String
@@ -387,6 +428,18 @@ routesAt rest =
         [ "pictures", id, "reports" ] ->
             routeWithPicture PostReport id
 
+        [ "sync", "finish" ] ->
+            [ PostSyncFinish ]
+
+        [ "sync", p ] ->
+            routeWithProvider DeleteSync p
+
+        [ "sync", p, "start" ] ->
+            routeWithProvider PostSyncStart p
+
+        [ "sync", p, "token" ] ->
+            routeWithProvider PostSyncToken p
+
         [ "feed" ] ->
             [ GetFeed Nothing Nothing ]
 
@@ -442,6 +495,13 @@ routeWithPicture : (PictureId -> Route) -> String -> List Route
 routeWithPicture toRoute segment =
     PictureId.fromString segment
         |> Maybe.map (\id -> [ toRoute id ])
+        |> Maybe.withDefault []
+
+
+routeWithProvider : (SyncProvider -> Route) -> String -> List Route
+routeWithProvider toRoute segment =
+    providerFromString segment
+        |> Maybe.map (\p -> [ toRoute p ])
         |> Maybe.withDefault []
 
 
@@ -538,6 +598,26 @@ profile name before =
 report : PictureId -> Endpoint Report ()
 report id =
     Endpoint { route = PostReport id, body = JsonBody reportCodec, response = emptyCodec }
+
+
+syncStart : SyncProvider -> Endpoint () SyncStart
+syncStart p =
+    Endpoint { route = PostSyncStart p, body = NoBody (), response = syncStartCodec }
+
+
+syncFinish : Endpoint SyncFinish SyncConnection
+syncFinish =
+    Endpoint { route = PostSyncFinish, body = JsonBody syncFinishCodec, response = syncConnectionCodec }
+
+
+syncToken : SyncProvider -> Endpoint () SyncToken
+syncToken p =
+    Endpoint { route = PostSyncToken p, body = NoBody (), response = syncTokenCodec }
+
+
+syncStop : SyncProvider -> Endpoint () ()
+syncStop p =
+    Endpoint { route = DeleteSync p, body = NoBody (), response = emptyCodec }
 
 
 signOut : Endpoint () ()
@@ -720,6 +800,142 @@ accountCodec =
 type alias Me =
     { account : Account
     , billing : Billing
+    , sync : List SyncConnection
+    }
+
+
+type SyncProvider
+    = Dropbox
+    | GoogleDrive
+
+
+type alias SyncConnection =
+    { provider : SyncProvider
+    , connectedAt : String
+    }
+
+
+type alias SyncStart =
+    { url : String
+    }
+
+
+type alias SyncFinish =
+    { state : String
+    , code : String
+    }
+
+
+type alias SyncToken =
+    { accessToken : String
+    , expiresIn : Int
+    }
+
+
+providers : List SyncProvider
+providers =
+    [ Dropbox, GoogleDrive ]
+
+
+providerToString : SyncProvider -> String
+providerToString provider =
+    case provider of
+        Dropbox ->
+            "dropbox"
+
+        GoogleDrive ->
+            "google-drive"
+
+
+providerFromString : String -> Maybe SyncProvider
+providerFromString value =
+    case value of
+        "dropbox" ->
+            Just Dropbox
+
+        "google-drive" ->
+            Just GoogleDrive
+
+        _ ->
+            Nothing
+
+
+providerName : SyncProvider -> String
+providerName provider =
+    case provider of
+        Dropbox ->
+            "Dropbox"
+
+        GoogleDrive ->
+            "Google Drive"
+
+
+providerDecoder : Decoder SyncProvider
+providerDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\value ->
+                case providerFromString value of
+                    Just provider ->
+                        Decode.succeed provider
+
+                    Nothing ->
+                        Decode.fail ("Unknown provider: " ++ value)
+            )
+
+
+syncConnectionCodec : Codec SyncConnection
+syncConnectionCodec =
+    { encode = encodeSyncConnection
+    , decoder =
+        Decode.map2 SyncConnection
+            (Decode.field "provider" providerDecoder)
+            (Decode.field "connectedAt" Decode.string)
+    }
+
+
+encodeSyncConnection : SyncConnection -> Encode.Value
+encodeSyncConnection c =
+    Encode.object
+        [ ( "provider", Encode.string (providerToString c.provider) )
+        , ( "connectedAt", Encode.string c.connectedAt )
+        ]
+
+
+syncStartCodec : Codec SyncStart
+syncStartCodec =
+    { encode = \s -> Encode.object [ ( "url", Encode.string s.url ) ]
+    , decoder = Decode.map SyncStart (Decode.field "url" Decode.string)
+    }
+
+
+syncFinishCodec : Codec SyncFinish
+syncFinishCodec =
+    { encode =
+        \f ->
+            Encode.object
+                [ ( "state", Encode.string f.state )
+                , ( "code", Encode.string f.code )
+                ]
+    , decoder =
+        Decode.map2 SyncFinish
+            (Decode.field "state" Decode.string)
+            (Decode.field "code" Decode.string)
+    }
+
+
+syncTokenCodec : Codec SyncToken
+syncTokenCodec =
+    { encode =
+        \t ->
+            Encode.object
+                [ ( "accessToken", Encode.string t.accessToken )
+                , ( "expiresIn", Encode.int t.expiresIn )
+                ]
+    , decoder =
+        Decode.map2 SyncToken
+            (Decode.field "accessToken" Decode.string)
+            (Decode.field "expiresIn" Decode.int)
     }
 
 
@@ -757,11 +973,13 @@ meCodec =
                 [ ( "email", Email.encode m.account.email )
                 , ( "username", Username.encode m.account.username )
                 , ( "billing", encodeBilling m.billing )
+                , ( "sync", Encode.list encodeSyncConnection m.sync )
                 ]
     , decoder =
-        Decode.map2 Me
+        Decode.map3 Me
             accountCodec.decoder
             (Decode.field "billing" billingDecoder)
+            (Decode.field "sync" (Decode.list syncConnectionCodec.decoder))
     }
 
 

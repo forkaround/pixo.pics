@@ -1,4 +1,4 @@
-module RateLimit exposing (Limits, Policy, check, checkouts, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, portals, publishes, reports, requests, size, sweep, webhooks)
+module RateLimit exposing (Limits, Policy, check, checkouts, describe, empty, healthChecks, magicLinksByAddress, magicLinksByEmail, passkeyChallenges, portals, publishes, reports, requests, size, sweep, syncStarts, syncTokens, webhooks)
 
 import Data.ClientAddress as ClientAddress exposing (ClientAddress)
 import Data.Email as Email exposing (Email)
@@ -67,6 +67,16 @@ publishes address =
 reports : ClientAddress -> Policy
 reports address =
     Policy { key = "report:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 3600 }
+
+
+syncStarts : ClientAddress -> Policy
+syncStarts address =
+    Policy { key = "sync-start:ip:" ++ ClientAddress.toString address, limit = 10, windowSeconds = 900 }
+
+
+syncTokens : ClientAddress -> Policy
+syncTokens address =
+    Policy { key = "sync-token:ip:" ++ ClientAddress.toString address, limit = 120, windowSeconds = 3600 }
 
 
 empty : Limits

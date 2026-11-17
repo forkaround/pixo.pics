@@ -17,7 +17,7 @@ import Time
 
 
 type Msg
-    = Found Interop.Resolver (Maybe ( Api.Account, List Db.Subscription ))
+    = Found Interop.Resolver (Maybe ( Api.Account, List Db.Subscription, List Api.SyncConnection ))
     | Ended Interop.Resolver
     | Deleted Interop.Resolver Db.Deletion
     | BeforeDeletion Interop.Resolver SessionToken (Maybe { renewing : Bool, pictures : List PictureId })
@@ -69,10 +69,10 @@ deletion server resolver token =
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
-        Found resolver (Just ( account, rows )) ->
+        Found resolver (Just ( account, rows, connections )) ->
             respond resolver
                 (Response.json 200
-                    (Api.encodeResponse Api.session { account = account, billing = Paddle.billingOf rows })
+                    (Api.encodeResponse Api.session { account = account, billing = Paddle.billingOf rows, sync = connections })
                 )
 
         Found resolver Nothing ->

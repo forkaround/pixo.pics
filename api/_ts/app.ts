@@ -141,6 +141,11 @@ const app = Elm.Main.init({
     r2UploadBucket: process.env.R2_UPLOAD_BUCKET || null,
     imagesOrigin: process.env.IMAGES_ORIGIN || null,
     moderationEmail: process.env.MODERATION_EMAIL || null,
+    dropboxClientId: process.env.DROPBOX_CLIENT_ID || null,
+    dropboxClientSecret: process.env.DROPBOX_CLIENT_SECRET || null,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
+    syncTokenKey: process.env.SYNC_TOKEN_KEY || null,
   },
 });
 

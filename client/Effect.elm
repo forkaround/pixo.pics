@@ -12,6 +12,7 @@ type Effect msg
     | Request (ApiClient.Request msg)
     | SendToJs Interop.FromElm
     | PushUrl String
+    | ReplaceUrl String
     | Load String
     | ReadTime (Time.Posix -> msg)
     | ScrollTo String
@@ -58,6 +59,9 @@ map toMsg effect =
 
         PushUrl url ->
             PushUrl url
+
+        ReplaceUrl url ->
+            ReplaceUrl url
 
         Load url ->
             Load url

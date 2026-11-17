@@ -96,14 +96,66 @@ suite =
         , describe "session"
             [ test "encodes what it decodes" <|
                 \() ->
-                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}"""
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true},"sync":[{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}]}"""
                         |> Result.map (Api.encodeResponse Api.session >> Encode.encode 0)
-                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}""")
+                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true},"sync":[{"provider":"dropbox","connectedAt":"2026-11-17T10:00:00Z"}]}""")
             , test "refuses an unknown plan" <|
                 \() ->
-                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"gold","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false}}"""
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"gold","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false},"sync":[]}"""
                         |> Result.toMaybe
                         |> Expect.equal Nothing
+            ]
+        , describe "sync"
+            [ test "round-trips both providers through their names" <|
+                \() ->
+                    List.map (Api.providerToString >> Api.providerFromString) Api.providers
+                        |> Expect.equal (List.map Just Api.providers)
+            , test "refuses a provider it does not know" <|
+                \() ->
+                    Api.providerFromString "box"
+                        |> Expect.equal Nothing
+            , test "refuses a session that lists an unknown provider" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false},"sync":[{"provider":"box","connectedAt":"2026-11-17T10:00:00Z"}]}"""
+                        |> Result.toMaybe
+                        |> Expect.equal Nothing
+            , test "refuses a session without a sync list" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false}}"""
+                        |> Result.toMaybe
+                        |> Expect.equal Nothing
+            , test "start answers the address to send the user to" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder (Api.syncStart Api.Dropbox)) """{"url":"https://example.com/x"}"""
+                        |> Result.map (Api.encodeResponse (Api.syncStart Api.Dropbox) >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"url":"https://example.com/x"}""")
+            , test "finish sends the state and the code" <|
+                \() ->
+                    Api.encodeBody Api.syncFinish { state = "s", code = "c" }
+                        |> Maybe.map (Encode.encode 0)
+                        |> Expect.equal (Just """{"state":"s","code":"c"}""")
+            , test "finish decodes the body it encodes" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.syncFinish) """{"state":"s","code":"c"}"""
+                        |> Expect.equal (Ok { state = "s", code = "c" })
+            , test "finish answers the connection" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder Api.syncFinish) """{"provider":"google-drive","connectedAt":"2026-11-17T10:00:00Z"}"""
+                        |> Result.map (Api.encodeResponse Api.syncFinish >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"provider":"google-drive","connectedAt":"2026-11-17T10:00:00Z"}""")
+            , test "token answers an access token and its lifetime" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder (Api.syncToken Api.GoogleDrive)) """{"accessToken":"ya29.x","expiresIn":3599}"""
+                        |> Result.map (Api.encodeResponse (Api.syncToken Api.GoogleDrive) >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"accessToken":"ya29.x","expiresIn":3599}""")
+            , test "finish is not a provider" <|
+                \() ->
+                    Api.parse "DELETE" [ "api", "sync", "finish" ]
+                        |> Expect.equal (Err (Api.MethodNotAllowed [ Api.Post ]))
+            , test "finds nothing at an unknown provider" <|
+                \() ->
+                    Api.parse "DELETE" [ "api", "sync", "box" ]
+                        |> Expect.equal (Err Api.NotFound)
             ]
         , describe "checkout"
             [ test "encodes what it decodes" <|
@@ -434,6 +486,27 @@ next route =
             Maybe.map Api.PostReport (PictureId.fromString exampleId)
 
         Api.PostReport _ ->
+            Just (Api.PostSyncStart Api.Dropbox)
+
+        Api.PostSyncStart Api.Dropbox ->
+            Just (Api.PostSyncStart Api.GoogleDrive)
+
+        Api.PostSyncStart Api.GoogleDrive ->
+            Just Api.PostSyncFinish
+
+        Api.PostSyncFinish ->
+            Just (Api.PostSyncToken Api.Dropbox)
+
+        Api.PostSyncToken Api.Dropbox ->
+            Just (Api.PostSyncToken Api.GoogleDrive)
+
+        Api.PostSyncToken Api.GoogleDrive ->
+            Just (Api.DeleteSync Api.Dropbox)
+
+        Api.DeleteSync Api.Dropbox ->
+            Just (Api.DeleteSync Api.GoogleDrive)
+
+        Api.DeleteSync Api.GoogleDrive ->
             Nothing
 
 

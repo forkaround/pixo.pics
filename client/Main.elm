@@ -30,6 +30,7 @@ import Page.Passkey
 import Page.Profile
 import Page.SignIn
 import Page.SignUp
+import Page.Sync
 import Page.Verify
 import Path
 import Phosphor exposing (IconWeight(..))
@@ -114,6 +115,7 @@ type Section
     = General Page.General.Model
     | Models
     | Account Page.Account.Model
+    | Sync Page.Sync.Model
 
 
 init : Decode.Value -> Url -> ( Model, Effect Msg )
@@ -188,6 +190,18 @@ open url opened =
                 Page.Account.load Page.Account.init
                     |> Tuple.mapBoth (\page -> { model | page = Settings (Account page) }) (Effect.map GotAccount)
 
+        Path.Sync back ->
+            case model.page of
+                Settings (Sync _) ->
+                    if back.code == Nothing && back.state == Nothing && back.error == Nothing then
+                        ( model, NoEffect )
+
+                    else
+                        openSync back model
+
+                _ ->
+                    openSync back model
+
         Path.Verify link ->
             Page.Verify.init link
                 |> Tuple.mapBoth (\page -> { model | page = Verify page }) (Effect.map GotVerify)
@@ -203,6 +217,12 @@ open url opened =
 
         Path.NotFound ->
             ( { model | page = NotFound }, NoEffect )
+
+
+openSync : Path.SyncReturn -> Model -> ( Model, Effect Msg )
+openSync back model =
+    Page.Sync.init back
+        |> Tuple.mapBoth (\page -> { model | page = Settings (Sync page) }) (Effect.map GotSync)
 
 
 runPipeline : Model -> ( Pipeline.Model, Maybe Pipeline.Command ) -> ( Model, Effect Msg )
@@ -367,6 +387,7 @@ type Msg
     | GotPasskey Page.Passkey.Msg
     | GotGeneral Page.General.Msg
     | GotAccount Page.Account.Msg
+    | GotSync Page.Sync.Msg
     | GotExplore Page.Explore.Msg
     | GotProfile Page.Profile.Msg
     | PathSelected Path.Path
@@ -717,8 +738,17 @@ step msg model =
             ( model, Load url )
 
         UrlChanged url ->
-            open url model
-                |> Tuple.mapSecond (\effect -> Batch (effect :: List.map Dismiss (pageToasts model.page)))
+            let
+                ( opened, effect ) =
+                    open url model
+            in
+            ( opened
+            , if isSync model.page && isSync opened.page then
+                effect
+
+              else
+                Batch (effect :: List.map Dismiss (pageToasts model.page))
+            )
 
         GotSignUp pageMsg ->
             case model.page of
@@ -910,6 +940,24 @@ step msg model =
                 _ ->
                     ( believed, NoEffect )
 
+        GotSync pageMsg ->
+            let
+                refreshed =
+                    case Page.Sync.outcome pageMsg of
+                        Page.Sync.Changed ->
+                            Request (ApiClient.request Api.session () GotSession)
+
+                        Page.Sync.Unchanged ->
+                            NoEffect
+            in
+            case model.page of
+                Settings (Sync page) ->
+                    Page.Sync.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { model | page = Settings (Sync next) }) (\effect -> Batch [ Effect.map GotSync effect, refreshed ])
+
+                _ ->
+                    ( model, refreshed )
+
         GotExplore pageMsg ->
             case model.page of
                 Explore page ->
@@ -1024,6 +1072,9 @@ perform key effect =
         PushUrl url ->
             Navigation.pushUrl key url
 
+        ReplaceUrl url ->
+            Navigation.replaceUrl key url
+
         Load url ->
             Navigation.load url
 
@@ -1121,6 +1172,9 @@ title page =
         Settings (Account _) ->
             "Account · pixo"
 
+        Settings (Sync _) ->
+            "Sync · pixo"
+
         SignUp _ ->
             "Sign up · pixo"
 
@@ -1188,6 +1242,7 @@ viewBody model =
                             [ viewDestination (isGeneral model.page) Path.General Phosphor.info "General"
                             , viewDestination (section == Models) Path.Models Phosphor.cube "Models"
                             , viewDestination (isAccount model.page) Path.Account Phosphor.userCircle "Account"
+                            , viewDestination (isSync model.page) (Path.Sync { code = Nothing, state = Nothing, error = Nothing }) Phosphor.cloudArrowUp "Sync"
                             ]
                         ]
                     ]
@@ -1232,6 +1287,11 @@ viewBody model =
                                         text "Manage your account and how you sign in."
                                 )
                                 (List.map (Html.map GotAccount) (Page.Account.view model.session (currentBilling model) account))
+
+                        Sync page ->
+                            viewSettingsPage "Sync"
+                                (text "Copy your library to your own cloud.")
+                                (List.map (Html.map GotSync) (Page.Sync.view model.session (currentMe model) page))
                     ]
                 ]
 
@@ -1279,6 +1339,9 @@ pageToasts page =
 
         Settings (Account _) ->
             Page.Account.toasts
+
+        Settings (Sync _) ->
+            Page.Sync.toasts
 
         Settings Models ->
             []
@@ -1427,6 +1490,16 @@ isAccount : Page -> Bool
 isAccount page =
     case page of
         Settings (Account _) ->
+            True
+
+        _ ->
+            False
+
+
+isSync : Page -> Bool
+isSync page =
+    case page of
+        Settings (Sync _) ->
             True
 
         _ ->
