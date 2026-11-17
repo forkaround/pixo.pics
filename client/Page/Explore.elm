@@ -10,6 +10,7 @@ import FeedView
 import Html exposing (Html, div, text)
 import Html.Attributes exposing (attribute, class, disabled)
 import Html.Events exposing (onClick)
+import Notice
 import Overlay exposing (glass)
 import UI.Button as Button
 import UI.Empty as Empty
@@ -38,6 +39,7 @@ type alias Model =
     , more : Bool
     , viewing : Maybe PictureId
     , detailed : Bool
+    , reporting : FeedView.Reporting
     }
 
 
@@ -50,6 +52,7 @@ init =
       , more = False
       , viewing = Nothing
       , detailed = False
+      , reporting = FeedView.Idle
       }
     , Batch [ fetch Nothing, fetchTags ]
     )
@@ -81,6 +84,10 @@ type Msg
     | Closed
     | Stepped Int
     | DetailsToggled
+    | ReportChosen
+    | ReportCancelled
+    | ReportSent PictureId String
+    | GotReported (Result ApiClient.Error ())
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
@@ -154,25 +161,25 @@ update msg model =
 
         TagChosen tag ->
             if tag == model.tag then
-                ( { model | viewing = Nothing }, NoEffect )
+                ( { model | viewing = Nothing, reporting = FeedView.Idle }, NoEffect )
 
             else
-                ( { model | tag = tag, feed = Loading, next = Nothing, more = False, viewing = Nothing }
+                ( { model | tag = tag, feed = Loading, next = Nothing, more = False, viewing = Nothing, reporting = FeedView.Idle }
                 , Batch [ Dismiss feedToast, fetch tag ]
                 )
 
         Opened id ->
-            ( { model | viewing = Just id }, NoEffect )
+            ( { model | viewing = Just id, reporting = FeedView.Idle }, NoEffect )
 
         Closed ->
-            ( { model | viewing = Nothing }, NoEffect )
+            ( { model | viewing = Nothing, reporting = FeedView.Idle }, NoEffect )
 
         Stepped offset ->
             case ( model.feed, model.viewing ) of
                 ( Loaded pictures, Just viewed ) ->
                     case FeedView.neighbour offset viewed pictures of
                         Just id ->
-                            ( { model | viewing = Just id }, NoEffect )
+                            ( { model | viewing = Just id, reporting = FeedView.Idle }, NoEffect )
 
                         Nothing ->
                             ( model, NoEffect )
@@ -182,6 +189,27 @@ update msg model =
 
         DetailsToggled ->
             ( { model | detailed = not model.detailed }, NoEffect )
+
+        ReportChosen ->
+            ( { model | reporting = FeedView.Choosing }, NoEffect )
+
+        ReportCancelled ->
+            ( { model | reporting = FeedView.Idle }, NoEffect )
+
+        ReportSent id reason ->
+            ( { model | reporting = FeedView.Sending }
+            , Request (ApiClient.request (Api.report id) { reason = reason } GotReported)
+            )
+
+        GotReported (Ok ()) ->
+            ( { model | reporting = FeedView.Idle }
+            , Notify { id = reportToast, tone = Notice.Success, title = "Reported", description = Nothing, retry = Notice.NoRetry }
+            )
+
+        GotReported (Err error) ->
+            ( { model | reporting = FeedView.Idle }
+            , Effect.failure { id = reportToast, title = "Couldn't send the report", retry = Nothing } error
+            )
 
 
 feedToast : String
@@ -194,9 +222,14 @@ tagsToast =
     "feed-tags"
 
 
+reportToast : String
+reportToast =
+    "report"
+
+
 toasts : List String
 toasts =
-    [ feedToast, tagsToast ]
+    [ feedToast, tagsToast, reportToast ]
 
 
 
@@ -326,13 +359,24 @@ lightbox to toastLayer model =
         , onStep = to << Stepped
         , toasts = toastLayer
         , detailed = model.detailed
+        , pinned = FeedView.reportPinned model.reporting
         }
         (case ( model.feed, model.viewing ) of
             ( Loaded pictures, Just viewed ) ->
                 pictures
                     |> List.filter (\picture -> picture.id == viewed)
                     |> List.head
-                    |> Maybe.map (\picture -> ( picture, List.map (Html.map to << tagButton) picture.tags ))
+                    |> Maybe.map
+                        (\picture ->
+                            ( picture
+                            , List.map (Html.map to << tagButton) picture.tags
+                                ++ List.map (Html.map to)
+                                    (FeedView.reportActions
+                                        { choose = ReportChosen, cancel = ReportCancelled, send = ReportSent picture.id }
+                                        model.reporting
+                                    )
+                            )
+                        )
 
             _ ->
                 Nothing

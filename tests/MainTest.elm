@@ -1215,6 +1215,39 @@ suite =
                         |> ProgramTest.ensureHttpRequest "GET" "/api/feed/tag/snow" (\_ -> Expect.pass)
                         |> ProgramTest.ensureViewHasNot [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Show details") ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-pressed" "true"), containing [ text "snow" ] ]
+            , test "reports a picture with the chosen reason, and says so" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inFeedPicture (ProgramTest.clickButton "Report")
+                        |> inFeedPicture (ProgramTest.ensureViewHas [ text "Why report this picture?" ])
+                        |> inFeedPicture (ProgramTest.clickButton "Spam")
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            ("/api/pictures/" ++ feedIdA ++ "/reports")
+                            (Test.Http.expectJsonBody (Decode.field "reason" Decode.string) (Expect.equal "spam"))
+                        |> inFeedPicture (ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.disabled True), containing [ text "Reporting…" ] ])
+                        |> ProgramTest.simulateHttpResponse "POST" ("/api/pictures/" ++ feedIdA ++ "/reports") (response 202 "{}")
+                        |> ProgramTest.ensureViewHas [ text "Reported" ]
+                        |> inFeedPicture (ProgramTest.ensureViewHasNot [ text "Reporting…" ])
+                        |> inFeedPicture (ProgramTest.ensureViewHas [ tag "button", containing [ text "Report" ] ])
+                        |> ProgramTest.expectViewHas [ text "Reported" ]
+            , test "goes back to the Report button when the reason is cancelled" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inFeedPicture (ProgramTest.clickButton "Report")
+                        |> inFeedPicture (ProgramTest.clickButton "Cancel")
+                        |> inFeedPicture (ProgramTest.ensureViewHasNot [ text "Why report this picture?" ])
+                        |> inFeedPicture (ProgramTest.ensureViewHas [ tag "button", containing [ text "Report" ] ])
+                        |> ProgramTest.expectViewHasNot [ text "Reported" ]
+            , test "says the report couldn't be sent when the server refuses it" <|
+                \() ->
+                    exploring
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inFeedPicture (ProgramTest.clickButton "Report")
+                        |> inFeedPicture (ProgramTest.clickButton "Other")
+                        |> ProgramTest.simulateHttpResponse "POST" ("/api/pictures/" ++ feedIdA ++ "/reports") (response 429 """{"error":"Too many attempts."}""")
+                        |> ProgramTest.expectViewHas [ text "Couldn't send the report" ]
             , test "closes the picture when its own tag is already chosen" <|
                 \() ->
                     exploring
@@ -1267,6 +1300,26 @@ suite =
                         |> ProgramTest.clickButton "Open a red fox"
                         |> ProgramTest.ensureViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Show details") ]
                         |> ProgramTest.expectViewHasNot [ tag "button", containing [ text "Unpublish" ] ]
+            , test "offers Report on someone else's picture" <|
+                \() ->
+                    startAt "/grace" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
+                        |> ProgramTest.simulateHttpOk "GET" "/api/profiles/grace" (profilePage "grace" [ feedPicture feedIdA "grace" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> inProfilePicture (ProgramTest.clickButton "Report")
+                        |> inProfilePicture (ProgramTest.clickButton "Illegal")
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            ("/api/pictures/" ++ feedIdA ++ "/reports")
+                            (Test.Http.expectJsonBody (Decode.field "reason" Decode.string) (Expect.equal "illegal"))
+                        |> ProgramTest.simulateHttpResponse "POST" ("/api/pictures/" ++ feedIdA ++ "/reports") (response 202 "{}")
+                        |> ProgramTest.expectViewHas [ text "Reported" ]
+            , test "offers no Report on one's own profile" <|
+                \() ->
+                    startAt "/ada" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
+                        |> ProgramTest.simulateHttpOk "GET" "/api/profiles/ada" (profilePage "ada" [ feedPicture feedIdA "ada" "a red fox" [ "fox" ] ] Nothing)
+                        |> ProgramTest.clickButton "Open a red fox"
+                        |> ProgramTest.expectViewHasNot [ tag "button", containing [ text "Report" ] ]
             , test "still opens the studio at /studio" <|
                 \() ->
                     startAt "/studio" defaultFlags
