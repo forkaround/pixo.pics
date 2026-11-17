@@ -20,6 +20,7 @@ module Api exposing
     , Publication
     , Published
     , Release
+    , Report
     , Route(..)
     , SignIn
     , SignInOptions
@@ -55,6 +56,7 @@ module Api exposing
     , portal
     , profile
     , publish
+    , report
     , responseDecoder
     , route
     , session
@@ -106,6 +108,7 @@ type Route
     | GetFeed (Maybe Tag) (Maybe PictureId)
     | GetFeedTags
     | GetProfile Username (Maybe PictureId)
+    | PostReport PictureId
 
 
 type Method
@@ -190,6 +193,9 @@ method r =
 
         GetProfile _ _ ->
             Get
+
+        PostReport _ ->
+            Post
 
 
 path : Route -> List String
@@ -278,6 +284,9 @@ segments r =
             "profiles"
                 :: Username.toString name
                 :: List.map PictureId.toString (Maybe.withDefault [] (Maybe.map List.singleton before))
+
+        PostReport id ->
+            [ "pictures", PictureId.toString id, "reports" ]
 
 
 toString : Route -> String
@@ -374,6 +383,9 @@ routesAt rest =
 
         [ "pictures", id, "published" ] ->
             routeWithPicture PostPicturePublished id
+
+        [ "pictures", id, "reports" ] ->
+            routeWithPicture PostReport id
 
         [ "feed" ] ->
             [ GetFeed Nothing Nothing ]
@@ -521,6 +533,11 @@ feedTags =
 profile : Username -> Maybe PictureId -> Endpoint () ProfilePage
 profile name before =
     Endpoint { route = GetProfile name before, body = NoBody (), response = profilePageCodec }
+
+
+report : PictureId -> Endpoint Report ()
+report id =
+    Endpoint { route = PostReport id, body = JsonBody reportCodec, response = emptyCodec }
 
 
 signOut : Endpoint () ()
@@ -818,6 +835,18 @@ portalCodec : Codec Portal
 portalCodec =
     { encode = \p -> Encode.object [ ( "url", Encode.string p.url ) ]
     , decoder = Decode.map Portal (Decode.field "url" Decode.string)
+    }
+
+
+type alias Report =
+    { reason : String
+    }
+
+
+reportCodec : Codec Report
+reportCodec =
+    { encode = \r -> Encode.object [ ( "reason", Encode.string r.reason ) ]
+    , decoder = Decode.map Report (Decode.field "reason" Decode.string)
     }
 
 

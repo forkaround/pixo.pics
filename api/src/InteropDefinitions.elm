@@ -70,6 +70,7 @@ type alias Flags =
     , r2Bucket : Maybe String
     , r2UploadBucket : Maybe String
     , imagesOrigin : Maybe String
+    , moderationEmail : Maybe String
     }
 
 
@@ -295,3 +296,4 @@ flags =
         |> TsDecode.andMap (TsDecode.field "r2Bucket" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "r2UploadBucket" (TsDecode.nullable TsDecode.string))
         |> TsDecode.andMap (TsDecode.field "imagesOrigin" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "moderationEmail" (TsDecode.nullable TsDecode.string))

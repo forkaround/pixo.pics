@@ -1,19 +1,24 @@
-module Flow.Pictures exposing (Msg, confirm, publish, unpublish, update)
+module Flow.Pictures exposing (Msg, confirm, publish, report, unpublish, update)
 
 import Api
+import Data.Origin as Origin
 import Data.PictureId as PictureId exposing (PictureId)
 import Data.Publication as Publication
 import Data.SessionToken exposing (SessionToken)
+import Data.Username exposing (Username)
 import Db
-import Effect exposing (Effect(..), log, respond, transact)
+import Effect exposing (Effect(..), log, query, respond, transact)
 import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Path
 import RateLimit
 import Reply exposing (Reply(..), withSession)
 import Request exposing (Request)
 import Response
 import Server exposing (Server)
+import Services.Mailer as Mailer
+import Services.Mailer.PictureReported
 import Services.R2 as R2
 import Time
 
@@ -34,6 +39,8 @@ type Msg
     | Owned Interop.Resolver SessionToken PictureId (Maybe Bool)
     | Unpublishing Interop.Resolver SessionToken PictureId Time.Posix
     | PublicDeleted Interop.Resolver SessionToken PictureId Time.Posix (Result String ())
+    | Reported Interop.Resolver PictureId String { outcome : String, first : Bool, username : Maybe Username }
+    | Notified Interop.Resolver Mailer.Outcome
 
 
 type Done
@@ -93,6 +100,80 @@ unpublish id server request =
                 )
 
 
+reasons : List String
+reasons =
+    [ "illegal", "sexual", "violent", "hateful", "spam", "other" ]
+
+
+report : PictureId -> Server -> Request -> Reply Msg
+report id server request =
+    case Decode.decodeString (Api.bodyDecoder (Api.report id)) request.body of
+        Err _ ->
+            Now (Response.error 400 "Expected a JSON object with a reason.")
+
+        Ok body ->
+            if List.member body.reason reasons then
+                Limit [ RateLimit.reports (Request.clientAddress request) ]
+                    (Later
+                        (\resolver ->
+                            query server.db resolver "Report failed" (Db.reportPicture id body.reason) (Reported resolver id body.reason)
+                        )
+                    )
+
+            else
+                Now (Response.error 422 "Unknown reason.")
+
+
+reportUpdate : Server -> Msg -> Maybe (Effect Msg)
+reportUpdate server msg =
+    case msg of
+        Reported resolver id reason found ->
+            Just
+                (if found.outcome /= "reported" then
+                    respond resolver (Response.error 404 "No such picture.")
+
+                 else
+                    case ( server.moderators, server.storage, found.username ) of
+                        ( Just moderators, Just storage, Just username ) ->
+                            if found.first then
+                                Mailer.send server.mailer
+                                    { to = moderators, tag = "report" }
+                                    (Services.Mailer.PictureReported.email
+                                        { url = R2.publicUrl storage id
+                                        , profile = Origin.href server.origin (Path.Profile username)
+                                        , reason = reason
+                                        , pictureId = PictureId.toString id
+                                        }
+                                    )
+                                    (Notified resolver)
+
+                            else
+                                respond resolver reportAccepted
+
+                        _ ->
+                            respond resolver reportAccepted
+                )
+
+        Notified resolver (Ok ()) ->
+            Just (respond resolver reportAccepted)
+
+        Notified resolver (Err problem) ->
+            Just
+                (Batch
+                    [ respond resolver reportAccepted
+                    , log Interop.Error ("Report email failed: " ++ problem)
+                    ]
+                )
+
+        _ ->
+            Nothing
+
+
+reportAccepted : Response.Response
+reportAccepted =
+    Response.json 202 (Encode.object [])
+
+
 resolverOf : Msg -> Interop.Resolver
 resolverOf msg =
     case msg of
@@ -141,9 +222,25 @@ resolverOf msg =
         PublicDeleted resolver _ _ _ _ ->
             resolver
 
+        Reported resolver _ _ _ ->
+            resolver
+
+        Notified resolver _ ->
+            resolver
+
 
 update : Server -> Msg -> Effect Msg
 update server msg =
+    case reportUpdate server msg of
+        Just effect ->
+            effect
+
+        Nothing ->
+            pictureUpdate server msg
+
+
+pictureUpdate : Server -> Msg -> Effect Msg
+pictureUpdate server msg =
     case server.storage of
         Nothing ->
             respond (resolverOf msg) Response.unavailable
@@ -289,6 +386,12 @@ update server msg =
                         [ respond resolver (Response.error 503 "Couldn't remove the picture.")
                         , log Interop.Error ("R2 delete failed: " ++ reason)
                         ]
+
+                Reported resolver _ _ _ ->
+                    respond resolver Response.unavailable
+
+                Notified resolver _ ->
+                    respond resolver Response.unavailable
 
 
 published : R2.Config -> PictureId -> String -> Response.Response

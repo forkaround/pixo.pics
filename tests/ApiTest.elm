@@ -119,6 +119,23 @@ suite =
                         |> Result.map (Api.encodeResponse Api.portal >> Encode.encode 0)
                         |> Expect.equal (Ok """{"url":"https://example.com/x"}""")
             ]
+        , describe "report"
+            [ test "sends the reason as JSON" <|
+                \() ->
+                    Api.encodeBody Api.report { reason = "spam" }
+                        |> Maybe.map (Encode.encode 0)
+                        |> Expect.equal (Just """{"reason":"spam"}""")
+            , test "decodes the body it encodes" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.report) """{"reason":"spam"}"""
+                        |> Result.map .reason
+                        |> Expect.equal (Ok "spam")
+            , test "refuses a body without a reason" <|
+                \() ->
+                    Decode.decodeString (Api.bodyDecoder Api.report) "{}"
+                        |> Result.toMaybe
+                        |> Expect.equal Nothing
+            ]
         , describe "publish"
             [ test "sends the metadata and the tags as JSON" <|
                 \() ->
@@ -405,6 +422,9 @@ next route =
             Just (Api.GetProfile name (PictureId.fromString exampleId))
 
         Api.GetProfile _ (Just _) ->
+            Maybe.map Api.PostReport (PictureId.fromString exampleId)
+
+        Api.PostReport _ ->
             Nothing
 
 

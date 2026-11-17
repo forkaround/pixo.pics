@@ -104,9 +104,22 @@ init flags =
 
                                 Err problem ->
                                     ( Nothing, log Interop.Error problem )
+
+                        ( moderators, moderationNotice ) =
+                            case config.moderationEmail of
+                                Nothing ->
+                                    ( Nothing, log Interop.Warn "No MODERATION_EMAIL, so reports send no email." )
+
+                                Just raw ->
+                                    case Email.parse raw of
+                                        Ok found ->
+                                            ( Just found, NoEffect )
+
+                                        Err _ ->
+                                            ( Nothing, log Interop.Error "MODERATION_EMAIL is not an email address." )
                     in
-                    ( Running { db = db, mailer = chosen, origin = origin, paddle = paddle, release = release, storage = storage } RateLimit.empty
-                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice, storageNotice ]
+                    ( Running { db = db, mailer = chosen, moderators = moderators, origin = origin, paddle = paddle, release = release, storage = storage } RateLimit.empty
+                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice, storageNotice, moderationNotice ]
                     )
 
                 ( Err problem, _, _ ) ->
@@ -249,6 +262,9 @@ brokenAnswer { problem, release } found =
             Response.unavailable
 
         Api.GetProfile _ _ ->
+            Response.unavailable
+
+        Api.PostReport _ ->
             Response.unavailable
 
 
@@ -453,6 +469,9 @@ routePolicy found address =
         Api.GetProfile _ _ ->
             RateLimit.requests address
 
+        Api.PostReport _ ->
+            RateLimit.requests address
+
 
 route : Server -> Request -> Reply Msg
 route server request =
@@ -535,3 +554,6 @@ handle server request r =
 
         Api.GetProfile name before ->
             Reply.map Feed (Flow.Feed.profile name before server request)
+
+        Api.PostReport id ->
+            Reply.map Pictures (Flow.Pictures.report id server request)

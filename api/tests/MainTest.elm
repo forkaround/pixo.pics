@@ -52,6 +52,7 @@ suite =
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
+                              , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                               , ( "warn", "Health check slow: the database took 1500 ms." )
                               ]
                             , [ health "first"
@@ -65,7 +66,7 @@ suite =
                         |> request "first" "GET" [ "api", "health" ]
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"exempt":true}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "warn", "error" ]
+                            ( [ "info", "warn", "warn", "warn", "error" ]
                             , [ health "first" 503 (failed "Database sent an unexpected result") ]
                             )
             , test "answers the 11th check in a minute from one address with 429, without the database or a log" <|
@@ -75,7 +76,7 @@ suite =
                         |> healthFrom "203.0.113.7" "11"
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 10)
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "warn" ]
+                            ( [ "info", "warn", "warn", "warn" ]
                             , [ { resolve = "11"
                                 , status = 429
                                 , headers = ( "retry-after", "6" ) :: jsonHeaders
@@ -176,7 +177,7 @@ suite =
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "prints the sign-up link instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -284,6 +285,7 @@ suite =
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
+                              , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                               , ( "error", "Magic link failed at its email: Brevo refused the email with HTTP 401 (unauthorized): Key not found" )
                               ]
                             , [ { resolve = "first"
@@ -299,10 +301,10 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
             , test "answers 503 when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -317,7 +319,7 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/verify"
             [ test "says who asked for the link, without using it" <|
@@ -408,7 +410,7 @@ suite =
                         |> verify "POST" [ ( "authorization", "Bearer Zm9vYmFy" ) ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/signin"
             [ test "emails a sign-in link to an address that has an account" <|
@@ -480,7 +482,7 @@ suite =
                         |> signIn """{"email":"ada@example.com"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/session"
             [ test "answers with the account and the billing of the session in the cookie" <|
@@ -583,6 +585,7 @@ suite =
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
+                              , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                               , ( "error", "Session lookup failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -703,7 +706,7 @@ suite =
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [ pictureId ])
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 4 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "Can't delete an account with published pictures without R2 settings." ) ]
                             )
@@ -961,6 +964,83 @@ suite =
                             , [ ( "error", "R2 delete failed: R2 answered 403: <Error/>" ) ]
                             )
             ]
+        , describe "POST /api/pictures/<id>/reports"
+            [ test "answers 400 for a body without a reason" <|
+                \() ->
+                    startPublishing
+                        |> reportRequest "first" "{}"
+                        |> expectResponses
+                            [ { resolve = "first", status = 400, headers = jsonHeaders, body = """{"error":"Expected a JSON object with a reason."}""" } ]
+            , test "answers 422 for an unknown reason, without the database" <|
+                \() ->
+                    startPublishing
+                        |> reportRequest "first" """{"reason":"rude"}"""
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 422, headers = jsonHeaders, body = """{"error":"Unknown reason."}""" } ]
+            , test "answers 404 for a picture that is not published" <|
+                \() ->
+                    startPublishing
+                        |> reportRequest "first" """{"reason":"spam"}"""
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectPlainQuery ( "SELECT outcome, first, username FROM report_picture($1::uuid, $2)", [ Just pictureId, Just "spam" ] ))
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (reportedRows "not-found" "true" "null")
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"No such picture."}""" } ]
+            , test "answers 202 and sends no email for a second report" <|
+                \() ->
+                    startPublishing
+                        |> reportRequest "first" """{"reason":"spam"}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (reportedRows "reported" "false" "\"ada\"")
+                        |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
+            , test "emails the moderators about the first report" <|
+                \() ->
+                    startPublishing
+                        |> reportRequest "first" """{"reason":"spam"}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (reportedRows "reported" "true" "\"ada\"")
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            BrevoMailer.endpoint
+                            (Test.Http.expectJsonBody
+                                (Decode.map5 (\to subject tags html text -> { to = to, subject = subject, tags = tags, html = html, text = text })
+                                    (Decode.field "to" (Decode.list (Decode.field "email" Decode.string)))
+                                    (Decode.field "subject" Decode.string)
+                                    (Decode.field "tags" (Decode.list Decode.string))
+                                    (Decode.field "htmlContent" Decode.string)
+                                    (Decode.field "textContent" Decode.string)
+                                )
+                                (\{ to, subject, tags, html, text } ->
+                                    Expect.all
+                                        [ \_ -> Expect.equal [ "mod@pixo.pics" ] to
+                                        , \_ -> Expect.equal "A picture was reported on pixo" subject
+                                        , \_ -> Expect.equal [ "report" ] tags
+                                        , \_ -> Expect.equal True (String.contains ("https://img.pixo.pics/" ++ pictureId ++ ".jpg") text)
+                                        , \_ -> Expect.equal True (String.contains "https://pixo.pics/ada" text)
+                                        , \_ -> Expect.equal True (String.contains "Reason: spam." html)
+                                        , \_ -> Expect.equal True (String.contains ("take_down_picture('" ++ pictureId ++ "')") text)
+                                        ]
+                                        ()
+                                )
+                            )
+                        |> ProgramTest.simulateHttpOk "POST" BrevoMailer.endpoint """{"messageId":"<1@smtp-relay.mailin.fr>"}"""
+                        |> expectResponses
+                            [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
+            , test "answers 202 all the same, and logs why, when the email fails" <|
+                \() ->
+                    startPublishing
+                        |> reportRequest "first" """{"reason":"spam"}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (reportedRows "reported" "true" "\"ada\"")
+                        |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
+                        |> expectSent (\values -> ( List.map .status (responses values), List.map Tuple.first (List.drop 1 (logs values)) ))
+                            ( [ 202 ], [ "error" ] )
+            , test "answers 429 to the 11th report in an hour from one address" <|
+                \() ->
+                    startPublishing
+                        |> repeat 11 (\resolve app -> app |> ProgramTest.advanceTime 2000 |> reportRequest resolve """{"reason":"spam"}""")
+                        |> expectSent
+                            (responses >> List.filter (\answer -> answer.status == 429) >> List.map (\answer -> ( answer.resolve, List.any (Tuple.first >> (==) "retry-after") answer.headers )))
+                            [ ( "11", True ) ]
+            ]
         , describe "GET /api/feed"
             [ test "answers 503 without R2 settings" <|
                 \() ->
@@ -1109,6 +1189,7 @@ suite =
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
+                              , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                               , ( "error", "Sign-out failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -1185,7 +1266,7 @@ suite =
                         |> passkeys "POST" [ "api", "auth", "passkeys", "options" ] ""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/passkeys"
             [ test "saves the credential, named after what made it, once its challenge is used" <|
@@ -1233,10 +1314,10 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "warn", "error" ], [ added ] )
+                            ( [ "info", "warn", "warn", "warn", "error" ], [ added ] )
             , test "prints the notice instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -1247,7 +1328,7 @@ suite =
                                 , responses values
                                 )
                             )
-                            ( [ "info", "warn", "warn", "warn", "info" ], True, [ added ] )
+                            ( [ "info", "warn", "warn", "warn", "warn", "info" ], True, [ added ] )
             , test "answers 409 when the challenge is expired, used or unknown" <|
                 \() ->
                     start (Just databaseUrl)
@@ -1271,6 +1352,7 @@ suite =
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
+                              , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                               , ( "warn", "Passkey refused: The client data comes from https://evil.example, not from https://pixo.pics." )
                               ]
                             , [ { resolve = "first"
@@ -1446,6 +1528,7 @@ suite =
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                               , ( "warn", "No R2_* settings, so publishing answers 503." )
+                              , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                               , ( "warn", "Passkey sign-in refused: The signature does not match the passkey." )
                               ]
                             , [ notVerified ]
@@ -1475,7 +1558,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST"
                             endpoint
                             """{"rows":[{"outcome":"no-passkey","session_token":null,"email":null,"username":null}],"rowCount":1}"""
-                        |> expectSent (\values -> ( logs values |> List.drop 3, responses values ))
+                        |> expectSent (\values -> ( logs values |> List.drop 4, responses values ))
                             ( [ ( "warn", "Passkey sign-in refused: The passkey is gone, or its counter did not move forward." ) ]
                             , [ notVerified ]
                             )
@@ -1756,16 +1839,17 @@ suite =
         , describe "init"
             [ test "warns that emails are printed when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> expectSent logs
                             [ ( "info", "Sending queries to " ++ endpoint )
                             , ( "warn", "No BREVO_API_KEY, so emails are printed here instead of sent." )
                             , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
                             , ( "warn", "No R2_* settings, so publishing answers 503." )
+                            , ( "warn", "No MODERATION_EMAIL, so reports send no email." )
                             ]
             , test "is broken, and logs why, when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1773,7 +1857,7 @@ suite =
                             )
             , test "fails the health check when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectResponses
                             [ health "first"
@@ -1782,7 +1866,7 @@ suite =
                             ]
             , test "is broken, and logs why, when the sender isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1790,7 +1874,7 @@ suite =
                             )
             , test "is broken, and logs why, when the sender is not an address" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: EMAIL_FROM is not an email address." ) ]
@@ -1798,7 +1882,7 @@ suite =
                             )
             , test "answers 503 and logs why when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
@@ -1806,14 +1890,21 @@ suite =
                             )
             , test "fails the health check when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectSent (responses >> List.map .status) [ 503 ]
             , test "still answers 404 at an unknown path when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
                         |> request "first" "GET" [ "api", "nowhere" ]
                         |> expectSent (responses >> List.map .status) [ 404 ]
+            ]
+        , describe "moderation settings"
+            [ test "logs an error and sends no report email when MODERATION_EMAIL is not an address" <|
+                \() ->
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Just "mod" }
+                        |> expectSent (logs >> List.filter (Tuple.first >> (==) "error"))
+                            [ ( "error", "MODERATION_EMAIL is not an email address." ) ]
             ]
         , describe "every route"
             [ test "answers 429 to the 31st request in a minute from one address, whatever it asks" <|
@@ -2168,7 +2259,7 @@ paddleConfig =
 
 startPaid : App
 startPaid =
-    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig, storage = Nothing }
+    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig, storage = Nothing, moderationEmail = Just "mod@pixo.pics" }
 
 
 freshSignature : String
@@ -2215,7 +2306,7 @@ webhookChecked body valid =
 
 start : Maybe String -> App
 start url =
-    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
+    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing, moderationEmail = Nothing }
 
 
 startWith :
@@ -2226,6 +2317,7 @@ startWith :
     , local : Bool
     , paddle : Maybe { environment : String, apiKey : String, webhookSecret : String, clientToken : String, proPriceId : String }
     , storage : Maybe { accountId : String, accessKeyId : String, secretAccessKey : String, bucket : String, uploadBucket : String, imagesOrigin : String }
+    , moderationEmail : Maybe String
     }
     -> App
 startWith config =
@@ -2257,6 +2349,7 @@ startWith config =
                 , ( "r2Bucket", paddleFlag .bucket config.storage )
                 , ( "r2UploadBucket", paddleFlag .uploadBucket config.storage )
                 , ( "imagesOrigin", paddleFlag .imagesOrigin config.storage )
+                , ( "moderationEmail", Maybe.withDefault Encode.null (Maybe.map Encode.string config.moderationEmail) )
                 ]
             )
 
@@ -2271,6 +2364,7 @@ startPublishing =
         , local = False
         , paddle = Just paddleConfig
         , storage = Just { accountId = "acc", accessKeyId = "key", secretAccessKey = "secret", bucket = "pictures", uploadBucket = "uploads", imagesOrigin = "https://img.pixo.pics" }
+        , moderationEmail = Just "mod@pixo.pics"
         }
 
 
@@ -2671,6 +2765,16 @@ publishRequest resolve body =
 confirmRequest : String -> App -> App
 confirmRequest resolve =
     requestWith { resolve = resolve, method = "POST", path = [ "api", "pictures", pictureId, "published" ], headers = pictureHeaders, body = "" }
+
+
+reportRequest : String -> String -> App -> App
+reportRequest resolve body =
+    requestWith { resolve = resolve, method = "POST", path = [ "api", "pictures", pictureId, "reports" ], headers = [ ( "x-real-ip", "203.0.113.9" ) ], body = body }
+
+
+reportedRows : String -> String -> String -> String
+reportedRows outcome first username =
+    """{"rows":[{"outcome":\"""" ++ outcome ++ """","first":""" ++ first ++ ""","username":""" ++ username ++ """}],"rowCount":1}"""
 
 
 unpublishRequest : App -> App
