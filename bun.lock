@@ -7,6 +7,7 @@
       "devDependencies": {
         "@fontsource-variable/inter": "^5.3.0",
         "@mlc-ai/web-llm": "0.2.88",
+        "@paddle/paddle-js": "^1.6.6",
         "@tailwindcss/vite": "4.3.3",
         "@types/bun": "^1.4.4",
         "bonsai-image-pipeline-lib": "github:nishlumi/bonsai-image-pipeline-lib#4afa168e0d81a8d963df46cca4505e9ee98a8a50",
@@ -72,6 +73,8 @@
     "@mlc-ai/web-xgrammar": ["@mlc-ai/web-xgrammar@0.1.27", "", {}, "sha512-0WJvW3mjotHA2NeAfaWFE2pQkOgXH9xC2U4IQOJNcioLac0k6VjSbj14jBRprt89frnPzxLo280riaEb+ZQqbg=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.156.0", "", {}, "sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw=="],
+
+    "@paddle/paddle-js": ["@paddle/paddle-js@1.6.6", "", {}, "sha512-MHkqW4b7DP6F0HvbNG6HnGcSUdX2znwsvENIqJQuMqTtwcRPo6tTg8m1ail02mAODbFu/wsWUcRdsW7a9DVyTQ=="],
 
     "@rolldown/binding-android-arm-eabi": ["@rolldown/binding-android-arm-eabi@1.2.18", "", { "os": "android", "cpu": "arm" }, "sha512-ubTG+4KlidvioxjOFdsdEa2F6JVGZb8m2ByJUqQ7fYzUeT1cEn194POcsQ10PKH4p//q0YQn4SB3YpSuzcA1Yg=="],
 

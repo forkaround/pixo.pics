@@ -12,7 +12,8 @@ you are.
 | Settings | About (release, region, latency), the models you downloaded, your account                     |
 
 No account is needed to make pictures. An account signs in with a passkey or a link by
-email; the server keeps the account, its passkeys and sessions, nothing more.
+email; the server keeps the account, its passkeys, sessions and Pro subscription. Pro, $5 a
+month through Paddle, adds a public profile, the feed and cloud sync.
 
 ## How it's built
 

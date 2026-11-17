@@ -79,6 +79,7 @@ type alias Model =
     { theme : Theme
     , systemDark : Bool
     , session : Session
+    , me : Maybe Api.Me
     , pipeline : Pipeline.Model
     , stylist : Stylist.Model
     , library : Library.Model
@@ -124,6 +125,7 @@ init flags url =
         { theme = Maybe.withDefault Interop.System theme
         , systemDark = systemDark
         , session = Unknown
+        , me = Nothing
         , pipeline = Pipeline.init entropy webGpu (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , stylist = Stylist.init stylist
         , library = Library.init canShare
@@ -333,7 +335,10 @@ type Msg
     | UrlChanged Url
     | GotSignUp Page.SignUp.Msg
     | GotVerify Page.Verify.Msg
-    | GotSession (Result ApiClient.Error Api.Account)
+    | GotSession (Result ApiClient.Error Api.Me)
+    | MeRetried
+    | BillingPolled Int
+    | GotPolled Int (Result ApiClient.Error Api.Me)
     | SessionRetried
     | SessionRechecked
     | GotSignIn Page.SignIn.Msg
@@ -387,7 +392,7 @@ update msg model =
             step msg model
 
         ( followed, following ) =
-            follow stepped
+            follow model.session stepped
 
         ( asked, backfilled ) =
             backfill followed
@@ -395,8 +400,58 @@ update msg model =
     ( counted model asked, Batch [ effect, following, backfilled ] )
 
 
-follow : Model -> ( Model, Effect Msg )
-follow model =
+currentMe : Model -> Maybe Api.Me
+currentMe model =
+    case ( model.session, model.me ) of
+        ( SignedIn account, Just me ) ->
+            if me.account.username == account.username then
+                Just me
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+currentBilling : Model -> Maybe Api.Billing
+currentBilling model =
+    Maybe.map .billing (currentMe model)
+
+
+follow : Session -> Model -> ( Model, Effect Msg )
+follow before model =
+    let
+        ( followed, released ) =
+            followLibrary model
+    in
+    case followed.session of
+        SignedIn account ->
+            if sameAccount before account || currentMe followed /= Nothing then
+                ( followed, released )
+
+            else
+                ( followed, Batch [ released, Request (ApiClient.request Api.session () GotSession) ] )
+
+        SignedOut ->
+            ( { followed | me = Nothing }, released )
+
+        Unknown ->
+            ( followed, released )
+
+
+sameAccount : Session -> Api.Account -> Bool
+sameAccount before account =
+    case before of
+        SignedIn earlier ->
+            earlier.username == account.username
+
+        _ ->
+            False
+
+
+followLibrary : Model -> ( Model, Effect Msg )
+followLibrary model =
     case model.session of
         SignedIn account ->
             if Library.ownerOf model.library == Just account.username then
@@ -469,6 +524,30 @@ step msg model =
 
                 _ ->
                     enrol (Enrolment.failed name) model
+
+        GotInterop (Ok (Interop.CheckoutEvent "checkout.completed")) ->
+            ( model
+            , Batch
+                [ Notify { id = proToast, tone = Notice.Success, title = "Payment received", description = Just "Turning on Pro…", retry = Notice.NoRetry }
+                , Sleep 2000 (BillingPolled 0)
+                ]
+            )
+
+        GotInterop (Ok (Interop.CheckoutEvent "checkout.closed")) ->
+            closeCheckout model
+
+        GotInterop (Ok (Interop.CheckoutEvent "checkout.error")) ->
+            closeCheckout model
+                |> Tuple.mapSecond
+                    (\effect ->
+                        Batch
+                            [ effect
+                            , Notify { id = "checkout", tone = Notice.Problem, title = "Couldn't open the checkout", description = Nothing, retry = Notice.NoRetry }
+                            ]
+                    )
+
+        GotInterop (Ok (Interop.CheckoutEvent _)) ->
+            ( model, NoEffect )
 
         GotInterop (Ok (Interop.PipelineEvent event)) ->
             runPipeline model (Pipeline.update (Pipeline.Happened event) model.pipeline)
@@ -596,13 +675,31 @@ step msg model =
                 _ ->
                     ( believed, NoEffect )
 
-        GotSession (Ok account) ->
-            ( { model | session = SignedIn account }, NoEffect )
+        GotSession (Ok me) ->
+            case model.session of
+                SignedOut ->
+                    ( model, NoEffect )
+
+                SignedIn account ->
+                    if account.username == me.account.username then
+                        ( { model | session = SignedIn me.account, me = Just me }, Dismiss meToast )
+
+                    else
+                        ( model, NoEffect )
+
+                Unknown ->
+                    ( { model | session = SignedIn me.account, me = Just me }, Dismiss meToast )
 
         GotSession (Err error) ->
             case ( model.session, error ) of
                 ( SignedIn _, _ ) ->
-                    ( model, NoEffect )
+                    if currentMe model == Nothing then
+                        ( model
+                        , Effect.failure { id = meToast, title = "Can't load your plan", retry = Just MeRetried } error
+                        )
+
+                    else
+                        ( model, NoEffect )
 
                 ( _, ApiClient.Unauthorized _ ) ->
                     ( { model | session = SignedOut }
@@ -629,6 +726,34 @@ step msg model =
                         }
                         error
                     )
+
+        MeRetried ->
+            ( model, Request (ApiClient.request Api.session () GotSession) )
+
+        BillingPolled attempt ->
+            ( model, Request (ApiClient.request Api.session () (GotPolled attempt)) )
+
+        GotPolled attempt result ->
+            case model.session of
+                SignedIn account ->
+                    case result of
+                        Ok me ->
+                            if me.account.username /= account.username then
+                                ( model, NoEffect )
+
+                            else if me.billing.plan == Api.Pro then
+                                ( { model | me = Just me }
+                                , Notify { id = proToast, tone = Notice.Success, title = "You have Pro", description = Nothing, retry = Notice.NoRetry }
+                                )
+
+                            else
+                                ( { model | me = Just me }, pollAgain attempt )
+
+                        Err _ ->
+                            ( model, pollAgain attempt )
+
+                _ ->
+                    ( model, NoEffect )
 
         SessionRechecked ->
             ( { model | session = Unknown }, Request (ApiClient.request Api.session () GotSession) )
@@ -722,6 +847,47 @@ step msg model =
                     }
                 )
             )
+
+
+closeCheckout : Model -> ( Model, Effect Msg )
+closeCheckout model =
+    case model.page of
+        Settings (Account _) ->
+            step (GotAccount Page.Account.checkoutClosed) model
+
+        _ ->
+            ( model, NoEffect )
+
+
+pollWaits : List Int
+pollWaits =
+    [ 3000, 5000, 8000, 13000, 21000 ]
+
+
+pollAgain : Int -> Effect Msg
+pollAgain attempt =
+    case List.head (List.drop attempt pollWaits) of
+        Just wait ->
+            Sleep (toFloat wait) (BillingPolled (attempt + 1))
+
+        Nothing ->
+            Notify
+                { id = proToast
+                , tone = Notice.Information
+                , title = "Pro is on its way"
+                , description = Just "Your payment went through. Reload in a minute."
+                , retry = Notice.NoRetry
+                }
+
+
+meToast : String
+meToast =
+    "me"
+
+
+proToast : String
+proToast =
+    "pro"
 
 
 enrol : Enrolment.Msg -> Model -> ( Model, Effect Msg )
@@ -946,7 +1112,7 @@ viewBody model =
                                     _ ->
                                         text "Manage your account and how you sign in."
                                 )
-                                (List.map (Html.map GotAccount) (Page.Account.view model.session account))
+                                (List.map (Html.map GotAccount) (Page.Account.view model.session (currentBilling model) account))
                     ]
                 ]
 

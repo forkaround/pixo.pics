@@ -58,6 +58,13 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   The body is never logged.
 - The webhook route has its own rate limit (`RateLimit.webhooks`), not `requests`.
 - Pro is `is_pro(user)`: a subscription that is `active`, `trialing` or `past_due`.
+- Checkout: the server creates the transaction (price and `custom_data.user_id` are never the
+  browser's) and the browser opens Paddle.js with its id and the public client token. The app
+  never trusts the checkout's own `completed` event: it polls `GET /api/auth/session` with
+  growing waits.
+- Billing travels with the session (`Api.Me`): no route of its own, so a page load costs one
+  request.
+- An account with a renewing subscription can't be deleted (`'renewing'`, 409): cancel first.
 
 ## Adding a route
 

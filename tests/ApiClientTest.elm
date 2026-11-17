@@ -56,7 +56,7 @@ suite =
         ]
 
 
-answer : Http.Response String -> Result ApiClient.Error Api.Account
+answer : Http.Response String -> Result ApiClient.Error Api.Me
 answer =
     (ApiClient.request Api.session () identity).onResponse
 

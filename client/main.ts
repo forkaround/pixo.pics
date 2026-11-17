@@ -4,6 +4,7 @@ import { idb, release } from "./idb";
 import type { Command, Reply } from "./pipeline.worker";
 import type { Command as StylistCommand, Reply as StylistReply } from "./stylist.worker";
 import type { Command as TaggerCommand, Reply as TaggerReply } from "./tagger.worker";
+import { openCheckout } from "./paddle";
 import { canShare, copyPicture, sharePicture } from "./share";
 
 type PasskeyOptions = Extract<FromElm, { tag: "CreatePasskey" }>["data"];
@@ -233,6 +234,9 @@ app.ports.interopFromElm.subscribe((msg) => {
 
     case "OpenTab":
       return void window.open(msg.data.url, "_blank", "noopener,noreferrer");
+
+    case "OpenCheckout":
+      return void openCheckout(msg.data, send);
 
     default:
       return msg satisfies never;

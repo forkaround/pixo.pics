@@ -22,8 +22,9 @@ The Elm browser app in `client/`: pages, the session, ports and UI.
   health report comes with a 503.
 - Addresses are written only with `Path.toString`: links, `PushUrl`, the server's emails.
 - `client/main.css` is the only stylesheet, linked from `index.html`: don't import CSS
-  from TypeScript. Inter is served with the app; Explore's Unsplash photos are the only
-  thing a page asks another site for.
+  from TypeScript. Inter is served with the app; Explore's Unsplash photos, and Paddle.js
+  once a checkout opens (`client/paddle.ts`), are the only things a page asks another site
+  for.
 - Inputs with a placeholder keep their label, `sr-only`: screen readers and the tests'
   `fillIn` need it.
 

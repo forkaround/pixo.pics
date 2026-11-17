@@ -44,6 +44,7 @@ type FromElm
     | RunLibrary Library.Command
     | RunStylist Stylist.Command
     | RunTagger Tagger.Command
+    | OpenCheckout { transactionId : String, clientToken : String, environment : String }
 
 
 type ToElm
@@ -55,6 +56,7 @@ type ToElm
     | LibraryEvent Library.Event
     | StylistEvent Stylist.Event
     | TaggerEvent Tagger.Event
+    | CheckoutEvent String
 
 
 type alias Flags =
@@ -85,7 +87,7 @@ themeToString theme =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbPatch idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist loadTagger tagPicture releaseTagger value ->
+        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbPatch idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist loadTagger tagPicture releaseTagger openCheckout value ->
             case value of
                 WriteToLocalStorage entry ->
                     writeToLocalStorage entry
@@ -158,6 +160,9 @@ fromElm =
 
                 RunTagger Tagger.Release ->
                     releaseTagger
+
+                OpenCheckout checkout ->
+                    openCheckout checkout
         )
         |> TsEncode.variantTagged "WriteToLocalStorage"
             (TsEncode.object
@@ -279,6 +284,13 @@ fromElm =
             (TsEncode.object [ TsEncode.required "model" identity TsEncode.string ])
         |> TsEncode.variantTagged "TagPicture" requestEncoder
         |> TsEncode.variant0 "ReleaseTagger"
+        |> TsEncode.variantTagged "OpenCheckout"
+            (TsEncode.object
+                [ TsEncode.required "transactionId" .transactionId TsEncode.string
+                , TsEncode.required "clientToken" .clientToken TsEncode.string
+                , TsEncode.required "environment" .environment TsEncode.string
+                ]
+            )
         |> TsEncode.buildUnion
 
 
@@ -386,6 +398,7 @@ toElm =
                     (TsDecode.field "message" TsDecode.string)
                 )
           )
+        , ( "CheckoutEvent", TsDecode.map CheckoutEvent (TsDecode.field "name" TsDecode.string) )
         , ( "PictureCopied", TsDecode.succeed (LibraryEvent Library.Copied) )
         , ( "ShareFailed"
           , TsDecode.map (Library.ShareFailed >> LibraryEvent) (TsDecode.field "name" TsDecode.string)
