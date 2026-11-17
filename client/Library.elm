@@ -13,8 +13,11 @@ module Library exposing
     , find
     , init
     , modelName
+    , ownerOf
     , saveOf
     , saved
+    , signedIn
+    , signedOut
     , tags
     , untagged
     , update
@@ -27,6 +30,7 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Data.Tag as Tag exposing (Tag)
+import Data.Username as Username exposing (Username)
 import Dict
 import Idb
 import Json.Decode as Decode exposing (Decoder)
@@ -53,6 +57,7 @@ type alias Model =
     , saves : List ( String, Save )
     , notice : Maybe (Notice Msg)
     , canShare : Bool
+    , owner : Maybe Username
     }
 
 
@@ -69,6 +74,13 @@ type alias Picture =
     , job : Pipeline.Job
     , model : String
     , tags : Maybe (List Tag)
+    }
+
+
+type alias Row =
+    { stored : Stored
+    , tags : Maybe (List String)
+    , owner : Maybe String
     }
 
 
@@ -104,6 +116,7 @@ init canShare =
     , saves = []
     , notice = Nothing
     , canShare = canShare
+    , owner = Nothing
     }
 
 
@@ -125,13 +138,18 @@ tagging =
     "tags"
 
 
+claiming : String
+claiming =
+    "owner"
+
+
 load : Command
 load =
     Database (Idb.GetAll { database = database, store = store, label = "" })
 
 
-save : Pipeline.Picture -> Command
-save picture =
+save : Username -> Pipeline.Picture -> Command
+save name picture =
     Database
         (Idb.Add
             { database = database
@@ -143,6 +161,7 @@ save picture =
                 , ( "steps", Encode.int (Steps.toInt picture.job.steps) )
                 , ( "seed", Encode.int (Seed.toInt picture.job.seed) )
                 , ( "model", Encode.string (Pipeline.weightsId picture.weights) )
+                , ( "owner", Encode.string (Username.toString name) )
                 ]
             , blobs = [ ( "blob", picture.url ) ]
             , label = picture.url
@@ -156,13 +175,23 @@ delete picture =
 
 
 read : Value -> Maybe Picture
-read row =
+read =
+    readOwned >> Maybe.map Tuple.first
+
+
+readOwned : Value -> Maybe ( Picture, Maybe String )
+readOwned row =
     Decode.decodeValue decoder row
         |> Result.toMaybe
         |> Maybe.andThen
-            (\( stored, names ) ->
-                fromStored stored
-                    |> Maybe.map (\picture -> { picture | tags = Maybe.map (List.filterMap Tag.fromString) names })
+            (\found ->
+                fromStored found.stored
+                    |> Maybe.map
+                        (\picture ->
+                            ( { picture | tags = Maybe.map (List.filterMap Tag.fromString) found.tags }
+                            , found.owner
+                            )
+                        )
             )
 
 
@@ -177,9 +206,9 @@ saved event =
             Nothing
 
 
-decoder : Decoder ( Stored, Maybe (List String) )
+decoder : Decoder Row
 decoder =
-    Decode.map2 Tuple.pair
+    Decode.map3 Row
         (Decode.map8 Stored
             (Decode.field "id" Decode.int)
             (Decode.field "blob" Decode.string)
@@ -191,6 +220,7 @@ decoder =
             (Decode.field "model" Decode.string)
         )
         (Decode.maybe (Decode.field "tags" (Decode.list Decode.string)))
+        (Decode.maybe (Decode.field "owner" Decode.string))
 
 
 fromStored : Stored -> Maybe Picture
@@ -388,15 +418,49 @@ type Command
 
 enter : Model -> ( Model, List Command )
 enter model =
-    case model.pictures of
-        NotLoaded ->
-            ( { model | pictures = Loading }, [ load ] )
+    if model.owner == Nothing then
+        ( model, [] )
 
-        Unavailable ->
-            ( { model | pictures = Loading }, [ load ] )
+    else
+        case model.pictures of
+            NotLoaded ->
+                ( { model | pictures = Loading }, [ load ] )
+
+            Unavailable ->
+                ( { model | pictures = Loading }, [ load ] )
+
+            _ ->
+                ( model, [] )
+
+
+signedIn : Username -> Model -> ( Model, List Command )
+signedIn name model =
+    if model.owner == Just name then
+        ( model, [] )
+
+    else
+        let
+            ( fresh, released ) =
+                signedOut model
+        in
+        ( { fresh | owner = Just name }, released )
+
+
+signedOut : Model -> ( Model, List Command )
+signedOut model =
+    ( init model.canShare
+    , case model.pictures of
+        Loaded ((_ :: _) as pictures) ->
+            [ Database (Idb.Release (List.map .url pictures)) ]
 
         _ ->
-            ( model, [] )
+            []
+    )
+
+
+ownerOf : Model -> Maybe Username
+ownerOf model =
+    model.owner
 
 
 update : Msg -> Model -> ( Model, List Command )
@@ -442,11 +506,16 @@ update msg model =
             ( { model | confirming = Nothing }, with id model delete )
 
         SaveClicked picture ->
-            if saveOf picture.url model == Unsaved then
-                ( { model | saves = ( picture.url, Saving ) :: model.saves }, [ save picture ] )
+            case model.owner of
+                Just name ->
+                    if saveOf picture.url model == Unsaved then
+                        ( { model | saves = ( picture.url, Saving ) :: model.saves }, [ save name picture ] )
 
-            else
-                ( model, [] )
+                    else
+                        ( model, [] )
+
+                Nothing ->
+                    ( model, [] )
 
         Tagged id names ->
             ( case model.pictures of
@@ -524,7 +593,24 @@ happened : Event -> Model -> ( Model, List Command )
 happened event model =
     case event of
         Answered (Idb.Rows { rows }) ->
-            ( shelve (List.filterMap read rows) model, [] )
+            case model.owner of
+                Just name ->
+                    let
+                        mine =
+                            Username.toString name
+
+                        owned =
+                            List.filterMap readOwned rows
+                                |> List.filter (\( _, owner ) -> owner == Nothing || owner == Just mine)
+                    in
+                    ( shelve (List.map Tuple.first owned) model
+                    , owned
+                        |> List.filter (\( _, owner ) -> owner == Nothing)
+                        |> List.map (\( picture, _ ) -> claim mine picture.id)
+                    )
+
+                Nothing ->
+                    ( shelve [] model, [] )
 
         Answered (Idb.Added { label, row }) ->
             let
@@ -559,7 +645,7 @@ happened event model =
             ( model, [] )
 
         Answered (Idb.Failed { label, message }) ->
-            if label == tagging then
+            if label == tagging || label == claiming then
                 ( model, [] )
 
             else if model.pictures == Loading then
@@ -598,6 +684,19 @@ happened event model =
 
         ShareFailed _ ->
             ( { model | notice = Just { id = "share", tone = Notice.Problem, title = "Couldn't share the picture", description = Just "Download it instead.", retry = Notice.NoRetry } }, [] )
+
+
+claim : String -> Int -> Command
+claim mine id =
+    Database
+        (Idb.Patch
+            { database = database
+            , store = store
+            , key = Encode.int id
+            , fields = [ ( "owner", Encode.string mine ) ]
+            , label = claiming
+            }
+        )
 
 
 storageNotice : String -> String -> Notice.Retry Msg -> Notice Msg

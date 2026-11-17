@@ -45,6 +45,7 @@ import Time
 import UI.Avatar as Avatar
 import UI.Button as Button
 import UI.DropdownMenu as DropdownMenu
+import UI.Empty as Empty
 import UI.Sidebar as Sidebar
 import UI.Skeleton as Skeleton
 import UI.Tabs as Tabs
@@ -385,10 +386,45 @@ update msg model =
         ( stepped, effect ) =
             step msg model
 
+        ( followed, following ) =
+            follow stepped
+
         ( asked, backfilled ) =
-            backfill stepped
+            backfill followed
     in
-    ( counted model asked, Batch [ effect, backfilled ] )
+    ( counted model asked, Batch [ effect, following, backfilled ] )
+
+
+follow : Model -> ( Model, Effect Msg )
+follow model =
+    case model.session of
+        SignedIn account ->
+            if Library.ownerOf model.library == Just account.username then
+                ( model, NoEffect )
+
+            else
+                let
+                    ( owned, released ) =
+                        runLibrary model (Library.signedIn account.username model.library)
+
+                    ( entered, loading ) =
+                        if model.page == Library then
+                            runLibrary owned (Library.enter owned.library)
+
+                        else
+                            ( owned, NoEffect )
+                in
+                ( entered, Batch [ released, loading ] )
+
+        SignedOut ->
+            if Library.ownerOf model.library == Nothing then
+                ( model, NoEffect )
+
+            else
+                runLibrary model (Library.signedOut model.library)
+
+        Unknown ->
+            ( model, NoEffect )
 
 
 backfill : Model -> ( Model, Effect Msg )
@@ -841,19 +877,18 @@ viewBody model =
                 "Studio"
                 []
                 [ viewContent
-                    [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.library model.pipeline
+                    [ StudioView.canvas { pipeline = GotPipeline, library = GotLibrary } model.session model.library model.pipeline
                     , StudioView.controls { pipeline = GotPipeline, stylist = GotStylist } model.stylist model.pipeline
-                    , StudioView.lightbox { pipeline = GotPipeline, library = GotLibrary } (viewToasts model) model.library model.pipeline
+                    , StudioView.lightbox { pipeline = GotPipeline, library = GotLibrary } model.session (viewToasts model) model.library model.pipeline
                     ]
                 ]
 
         Library ->
-            viewFrame model
-                "Library"
-                [ Html.map GotLibrary (LibraryView.search model.library) ]
-                [ viewAside "md:w-56 md:pt-6" [ Html.map GotLibrary (LibraryView.filters model.library) ]
-                , viewContent [ Html.map GotLibrary (LibraryView.view model.library), LibraryView.lightbox GotLibrary (viewToasts model) model.library ]
-                ]
+            if model.session == SignedOut then
+                viewFrame model "Library" [] [ viewContent [ viewLibraryInvitation ] ]
+
+            else
+                viewLibrary model
 
         Explore ->
             viewFrame model "Explore" [] [ viewContent [ ExploreView.view (invitation model.session) ] ]
@@ -1270,6 +1305,38 @@ viewBar model heading tools =
 viewContent : List (Html Msg) -> Html Msg
 viewContent children =
     Html.section [ class "flex min-w-0 flex-1 flex-col" ] children
+
+
+viewLibrary : Model -> Html Msg
+viewLibrary model =
+    viewFrame model
+        "Library"
+        [ Html.map GotLibrary (LibraryView.search model.library) ]
+        [ viewAside "md:w-56 md:pt-6" [ Html.map GotLibrary (LibraryView.filters model.library) ]
+        , viewContent [ Html.map GotLibrary (LibraryView.view model.library), LibraryView.lightbox GotLibrary (viewToasts model) model.library ]
+        ]
+
+
+viewLibraryInvitation : Html Msg
+viewLibraryInvitation =
+    div [ class "flex flex-1 flex-col" ]
+        [ Empty.new
+            |> Empty.icon (Phosphor.slideshow Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+            |> Empty.title [ text "Your library" ]
+            |> Empty.description [ text "Log in to save pictures and find them later." ]
+            |> Empty.content
+                [ Button.new
+                    |> Button.text "Log in"
+                    |> Button.small
+                    |> Button.toAnchor [ href (Path.toString Path.SignIn) ]
+                , Button.new
+                    |> Button.text "Create an account"
+                    |> Button.small
+                    |> Button.outline
+                    |> Button.toAnchor [ href (Path.toString Path.SignUp) ]
+                ]
+            |> Empty.toHtml []
+        ]
 
 
 notFoundOptions : Session -> List (Html Msg)

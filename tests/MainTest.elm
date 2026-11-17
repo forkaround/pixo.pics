@@ -1409,6 +1409,7 @@ suite =
             , test "saves a picture to the library with everything that made it" <|
                 \() ->
                     ready
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.fillIn "seed" "Seed" "7"
                         |> ProgramTest.clickButton "Generate"
@@ -1441,6 +1442,7 @@ suite =
             , test "tags a saved picture with the prompt model" <|
                 \() ->
                     readyToTag
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1470,6 +1472,7 @@ suite =
             , test "says that it is tagging" <|
                 \() ->
                     readyToTag
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1501,6 +1504,7 @@ suite =
             , test "saves without tags when the prompt model is not downloaded" <|
                 \() ->
                     ready
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1516,6 +1520,7 @@ suite =
             , test "tags the library's older pictures once the prompt model can run" <|
                 \() ->
                     startAt "/library" { defaultFlags | stylist = Just "Qwen3-1.7B-q4f16_1-MLC" }
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm" olderPictures
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
                             outgoing
@@ -1533,6 +1538,7 @@ suite =
             , test "leaves older pictures alone without the prompt model" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm" olderPictures
                         |> ProgramTest.clickLink "Settings" "/settings/general"
                         |> ProgramTest.clickLink "Models" "/settings/models"
@@ -1543,6 +1549,7 @@ suite =
             , test "keeps the prompt writer while it tags" <|
                 \() ->
                     readyToTag
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1559,6 +1566,7 @@ suite =
             , test "opens a new picture bigger, with everything that made it" <|
                 \() ->
                     ready
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1608,6 +1616,7 @@ suite =
             , test "offers to save again when the picture could not be stored" <|
                 \() ->
                     ready
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
                         |> ProgramTest.clickButton "Generate"
                         |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
@@ -1616,6 +1625,15 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ text "Saving…" ]
                         |> ProgramTest.clickButton "Save"
                         |> ProgramTest.expectViewHas [ text "Saving…" ]
+            , test "offers to log in to save when signed out" <|
+                \() ->
+                    ready
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.fillIn "prompt" "Prompt" "a bonsai"
+                        |> ProgramTest.clickButton "Generate"
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (imageGenerated "blob:https://pixo.pics/1")
+                        |> ProgramTest.ensureViewHas [ tag "a", attribute (Html.Attributes.href "/login"), containing [ text "Log in to save" ] ]
+                        |> ProgramTest.expectViewHasNot [ tag "button", containing [ text "Save" ] ]
             ]
         , describe "AI Style"
             [ test "loads no prompt model on a browser that can't run it" <|
@@ -2080,6 +2098,7 @@ suite =
             [ test "asks the browser for the saved pictures" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.expectOutgoingPortValues "interopFromElm"
                             (Decode.map (Encode.encode 0) Decode.value)
                             (Expect.equal
@@ -2093,6 +2112,7 @@ suite =
             , test "says so when nothing is saved yet" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryLoaded [])
                         |> ProgramTest.ensureViewHas [ text "No pictures yet" ]
                         |> ProgramTest.clickLink "Open the studio" "/studio"
@@ -2100,6 +2120,7 @@ suite =
             , test "says why the pictures could not be read" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryFailed "The database is blocked.")
                         |> ProgramTest.ensureViewHasNot [ text "No pictures yet" ]
                         |> ProgramTest.ensureViewHas [ text "Can't open the library" ]
@@ -2107,6 +2128,7 @@ suite =
             , test "keeps the skeleton and reads the pictures again on request" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm" (libraryFailed "The database is blocked.")
                         |> inToast "Can't open the library" (ProgramTest.clickButton "Try again")
                         |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
@@ -2118,6 +2140,7 @@ suite =
             , test "shows a toast over the open picture" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.clickButton "Open a red fox in the snow"
@@ -2141,6 +2164,7 @@ suite =
             , test "finds a prompt whatever accents the search is typed with" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded
                                 [ stored 1 "blob:https://pixo.pics/1" "the old town of krakow at dawn" 512 512
@@ -2265,6 +2289,7 @@ suite =
             , test "deletes a picture once that is confirmed" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.clickButton "Delete"
@@ -2291,6 +2316,7 @@ suite =
             , test "keeps a picture when its deletion is cancelled" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.clickButton "Delete"
@@ -2302,6 +2328,7 @@ suite =
             , test "copies a picture and opens the network to post it on" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.clickButton "Bluesky"
@@ -2327,6 +2354,7 @@ suite =
             , test "says so when the browser won't hand the picture over" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.clickButton "Copy picture"
@@ -2337,6 +2365,7 @@ suite =
             , test "offers the device's share sheet where there is one" <|
                 \() ->
                     startAt "/library" { defaultFlags | canShare = True }
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.clickButton "Share…"
@@ -2361,9 +2390,71 @@ suite =
             , test "offers no share sheet where there is none" <|
                 \() ->
                     startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
                         |> ProgramTest.simulateIncomingPort "interopToElm"
                             (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
                         |> ProgramTest.expectViewHasNot [ text "Share…" ]
+            , test "asks to log in when signed out" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.ensureViewHas [ text "Your library" ]
+                        |> ProgramTest.ensureViewHas [ tag "a", attribute (Html.Attributes.href "/login"), containing [ text "Log in" ] ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
+            , test "loads the pictures once the session is known" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "IdbGetAll" ])
+            , test "hides another account's pictures" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (libraryLoaded
+                                [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
+                                , storedBy "bob" 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576
+                                ]
+                            )
+                        |> ProgramTest.ensureViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
+                        |> ProgramTest.expectViewHasNot [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/2") ]
+            , test "claims pictures saved before accounts" <|
+                \() ->
+                    startAt "/library" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (libraryLoaded [ unowned 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
+                        |> ProgramTest.ensureViewHas [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.maybe
+                                (Decode.map3 (\name label fields -> ( name, label, Encode.encode 0 fields ))
+                                    (Decode.field "tag" Decode.string)
+                                    (Decode.at [ "data", "label" ] Decode.string)
+                                    (Decode.at [ "data", "fields" ] Decode.value)
+                                )
+                            )
+                            (List.filterMap identity
+                                >> List.filter (\( name, _, _ ) -> name == "IdbPatch")
+                                >> Expect.equal [ ( "IdbPatch", "owner", "{\"owner\":\"ada\"}" ) ]
+                            )
+            , test "forgets the pictures on sign-out" <|
+                \() ->
+                    library
+                        |> ProgramTest.clickButton "Sign out"
+                        |> ProgramTest.simulateHttpOk "DELETE" "/api/auth/session" "{}"
+                        |> ProgramTest.clickLink "Library" "/library"
+                        |> ProgramTest.ensureViewHas [ text "Your library" ]
+                        |> ProgramTest.ensureViewHasNot [ tag "img", attribute (Html.Attributes.src "blob:https://pixo.pics/1") ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.member "IdbRelease" >> Expect.equal True)
             ]
         ]
 
@@ -2449,6 +2540,7 @@ patchOrRelease =
 library : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 library =
     startAt "/library" defaultFlags
+        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
         |> ProgramTest.simulateIncomingPort "interopToElm"
             (libraryLoaded
                 [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
@@ -2470,6 +2562,7 @@ olderPictures =
 manyTagsLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 manyTagsLibrary =
     startAt "/library" defaultFlags
+        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
         |> ProgramTest.simulateIncomingPort "interopToElm"
             (libraryLoaded
                 [ storedWithTags [ "autumn", "beach", "cabin", "desert", "forest", "harbor", "island", "lake", "meadow", "river", "valley" ] 1 "blob:https://pixo.pics/1" "a valley in autumn" 512 512
@@ -2480,6 +2573,7 @@ manyTagsLibrary =
 taggedLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
 taggedLibrary =
     startAt "/library" defaultFlags
+        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" account
         |> ProgramTest.simulateIncomingPort "interopToElm"
             (libraryLoaded
                 [ storedWithTags [ "fox" ] 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
@@ -2752,17 +2846,31 @@ pictureSave =
 
 
 stored : Int -> String -> String -> Int -> Int -> Encode.Value
-stored id url prompt width height =
-    Encode.object
-        [ ( "id", Encode.int id )
-        , ( "blob", Encode.string url )
-        , ( "prompt", Encode.string prompt )
-        , ( "width", Encode.int width )
-        , ( "height", Encode.int height )
-        , ( "steps", Encode.int 4 )
-        , ( "seed", Encode.int 7 )
-        , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
-        ]
+stored =
+    storedBy "ada"
+
+
+storedFields : Int -> String -> String -> Int -> Int -> List ( String, Encode.Value )
+storedFields id url prompt width height =
+    [ ( "id", Encode.int id )
+    , ( "blob", Encode.string url )
+    , ( "prompt", Encode.string prompt )
+    , ( "width", Encode.int width )
+    , ( "height", Encode.int height )
+    , ( "steps", Encode.int 4 )
+    , ( "seed", Encode.int 7 )
+    , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
+    ]
+
+
+storedBy : String -> Int -> String -> String -> Int -> Int -> Encode.Value
+storedBy name id url prompt width height =
+    Encode.object (storedFields id url prompt width height ++ [ ( "owner", Encode.string name ) ])
+
+
+unowned : Int -> String -> String -> Int -> Int -> Encode.Value
+unowned id url prompt width height =
+    Encode.object (storedFields id url prompt width height)
 
 
 storedWithTags : List String -> Int -> String -> String -> Int -> Int -> Encode.Value
@@ -2777,6 +2885,7 @@ storedWithTags names id url prompt width height =
         , ( "seed", Encode.int 7 )
         , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
         , ( "tags", Encode.list Encode.string names )
+        , ( "owner", Encode.string "ada" )
         ]
 
 

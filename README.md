@@ -4,12 +4,12 @@ Make pictures from a prompt, in your browser. The image models run on your graph
 through WebGPU: prompts and pictures stay on your device, and the server only knows who
 you are.
 
-| Page     | Does                                                                          |
-| -------- | ----------------------------------------------------------------------------- |
-| Explore  | What people are making                                                        |
-| Studio   | Writes a picture from a prompt; a small language model can rewrite the prompt |
-| Library  | The pictures you kept, in this browser's IndexedDB, with search and sharing   |
-| Settings | About (release, region, latency), the models you downloaded, your account     |
+| Page     | Does                                                                                          |
+| -------- | --------------------------------------------------------------------------------------------- |
+| Explore  | What people are making                                                                        |
+| Studio   | Writes a picture from a prompt; a small language model can rewrite the prompt                 |
+| Library  | The pictures you kept, in this browser's IndexedDB, with search and sharing; needs an account |
+| Settings | About (release, region, latency), the models you downloaded, your account                     |
 
 No account is needed to make pictures. An account signs in with a passkey or a link by
 email; the server keeps the account, its passkeys and sessions, nothing more.
