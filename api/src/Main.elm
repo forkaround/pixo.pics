@@ -11,6 +11,7 @@ import Flow.Health
 import Flow.MagicLink
 import Flow.PasskeySignIn
 import Flow.Passkeys
+import Flow.Pictures
 import Flow.Session
 import InteropDefinitions as Interop
 import InteropPorts
@@ -24,6 +25,7 @@ import Services.BrevoMailer as BrevoMailer
 import Services.LogMailer as LogMailer
 import Services.Neon as Neon
 import Services.Paddle as Paddle
+import Services.R2 as R2
 import Task
 import Time
 
@@ -90,9 +92,20 @@ init flags =
 
                                 Err problem ->
                                     ( Nothing, log Interop.Error problem )
+
+                        ( storage, storageNotice ) =
+                            case R2.config config of
+                                Ok Nothing ->
+                                    ( Nothing, log Interop.Warn "No R2_* settings, so publishing answers 503." )
+
+                                Ok found ->
+                                    ( found, NoEffect )
+
+                                Err problem ->
+                                    ( Nothing, log Interop.Error problem )
                     in
-                    ( Running { db = db, mailer = chosen, origin = origin, paddle = paddle, release = release } RateLimit.empty
-                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice ]
+                    ( Running { db = db, mailer = chosen, origin = origin, paddle = paddle, release = release, storage = storage } RateLimit.empty
+                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice, storageNotice ]
                     )
 
                 ( Err problem, _, _ ) ->
@@ -133,6 +146,7 @@ type Msg
     | Passkeys Flow.Passkeys.Msg
     | PasskeySignIn Flow.PasskeySignIn.Msg
     | Billing Flow.Billing.Msg
+    | Pictures Flow.Pictures.Msg
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
@@ -217,6 +231,15 @@ brokenAnswer { problem, release } found =
         Api.PostPortal ->
             Response.unavailable
 
+        Api.PostPicture ->
+            Response.unavailable
+
+        Api.PostPicturePublished _ ->
+            Response.unavailable
+
+        Api.DeletePicture _ ->
+            Response.unavailable
+
 
 reply : Time.Posix -> Interop.Resolver -> Reply Msg -> RateLimit.Limits -> ( RateLimit.Limits, Effect Msg )
 reply time resolver answer limits =
@@ -271,6 +294,9 @@ running server limits msg =
 
         Billing flowMsg ->
             ( limits, Effect.map Billing (Flow.Billing.update server flowMsg) )
+
+        Pictures flowMsg ->
+            ( limits, Effect.map Pictures (Flow.Pictures.update server flowMsg) )
 
         DatabaseFailed { resolver, step, problem } ->
             ( limits
@@ -395,6 +421,15 @@ routePolicy found address =
         Api.PostPortal ->
             RateLimit.requests address
 
+        Api.PostPicture ->
+            RateLimit.requests address
+
+        Api.PostPicturePublished _ ->
+            RateLimit.requests address
+
+        Api.DeletePicture _ ->
+            RateLimit.requests address
+
 
 route : Server -> Request -> Reply Msg
 route server request =
@@ -459,3 +494,12 @@ handle server request r =
 
         Api.PostPortal ->
             Reply.map Billing (Flow.Billing.portal server request)
+
+        Api.PostPicture ->
+            Reply.map Pictures (Flow.Pictures.publish server request)
+
+        Api.PostPicturePublished id ->
+            Reply.map Pictures (Flow.Pictures.confirm id server request)
+
+        Api.DeletePicture id ->
+            Reply.map Pictures (Flow.Pictures.unpublish id server request)

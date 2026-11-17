@@ -2,6 +2,7 @@ module MainTest exposing (suite)
 
 import Effect
 import Expect exposing (Expectation)
+import Http
 import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -50,6 +51,7 @@ suite =
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                              , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "Health check slow: the database took 1500 ms." )
                               ]
                             , [ health "first"
@@ -63,7 +65,7 @@ suite =
                         |> request "first" "GET" [ "api", "health" ]
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"exempt":true}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "error" ]
+                            ( [ "info", "warn", "warn", "error" ]
                             , [ health "first" 503 (failed "Database sent an unexpected result") ]
                             )
             , test "answers the 11th check in a minute from one address with 429, without the database or a log" <|
@@ -73,7 +75,7 @@ suite =
                         |> healthFrom "203.0.113.7" "11"
                         |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 10)
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn" ]
+                            ( [ "info", "warn", "warn" ]
                             , [ { resolve = "11"
                                 , status = 429
                                 , headers = ( "retry-after", "6" ) :: jsonHeaders
@@ -174,7 +176,7 @@ suite =
                             [ { resolve = "first", status = 202, headers = jsonHeaders, body = "{}" } ]
             , test "prints the sign-up link instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -281,6 +283,7 @@ suite =
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                              , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "error", "Magic link failed at its email: Brevo refused the email with HTTP 401 (unauthorized): Key not found" )
                               ]
                             , [ { resolve = "first"
@@ -296,10 +299,10 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
             , test "answers 503 when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> expectResponses
                             [ { resolve = "first"
@@ -314,7 +317,7 @@ suite =
                         |> signUp """{"email":"ada@example.com","username":"ada"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"no-account","token":null}],"rowCount":1}"""
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/verify"
             [ test "says who asked for the link, without using it" <|
@@ -405,7 +408,7 @@ suite =
                         |> verify "POST" [ ( "authorization", "Bearer Zm9vYmFy" ) ]
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/signin"
             [ test "emails a sign-in link to an address that has an account" <|
@@ -477,7 +480,7 @@ suite =
                         |> signIn """{"email":"ada@example.com"}"""
                         |> ProgramTest.simulateHttpOk "POST" endpoint (linked "sign-up")
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/session"
             [ test "answers with the account and the billing of the session in the cookie" <|
@@ -579,6 +582,7 @@ suite =
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                              , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "error", "Session lookup failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -589,6 +593,24 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            endpoint
+                            (Test.Http.expectJsonBody
+                                (Decode.field "queries"
+                                    (Decode.list
+                                        (Decode.map2 Tuple.pair
+                                            (Decode.field "query" Decode.string)
+                                            (Decode.field "params" (Decode.list Decode.string))
+                                        )
+                                    )
+                                )
+                                (Expect.equal
+                                    [ ( "SELECT authenticate($1) AS user_id", [ "c2Vzc2lvbg" ] )
+                                    , ( beforeDeletionQuery, [] )
+                                    ]
+                                )
+                            )
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [])
                         |> ProgramTest.ensureHttpRequest "POST"
                             endpoint
                             (Test.Http.expectJsonBody
@@ -623,13 +645,20 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[{"renewing":false,"pictures":[]}]}]}"""
+                        |> expectSent (responses >> List.map .status) [ 401 ]
+            , test "rejects a session that ends while the account is deleted" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [])
                         |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "signed-out")
                         |> expectSent (responses >> List.map .status) [ 401 ]
             , test "refuses while Pro renews, and keeps the cookie" <|
                 \() ->
                     start (Just databaseUrl)
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
-                        |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "renewing")
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer True [])
                         |> expectResponses
                             [ { resolve = "first"
                               , status = 409
@@ -637,6 +666,47 @@ suite =
                               , body = """{"error":"Cancel Pro before deleting your account."}"""
                               }
                             ]
+            , test "refuses when Pro starts renewing while the account is deleted" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "renewing")
+                        |> expectSent (responses >> List.map .status) [ 409 ]
+            , test "deletes the published files first" <|
+                \() ->
+                    startPublishing
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [ pictureId, otherPictureId ])
+                        |> ProgramTest.ensureHttpRequest "DELETE" (publicFile pictureId) (\_ -> Expect.pass)
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
+                        |> ProgramTest.ensureHttpRequests "DELETE" (publicFile otherPictureId) (List.length >> Expect.equal 1)
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile otherPictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ otherPictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer otherPictureId)
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( deletionQuery, [ "c2Vzc2lvbg" ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "deleted")
+                        |> expectSent (responses >> List.map .status) [ 200 ]
+            , test "keeps the account when a file can't be deleted" <|
+                \() ->
+                    startPublishing
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [ pictureId ])
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 403, headers = [], body = "<Error/>" })
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectSent (responses >> List.map .status) [ 503 ]
+            , test "answers 503 when pictures are published and R2 is not configured" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (beforeDeletionAnswer False [ pictureId ])
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 3 (logs values) ))
+                            ( [ 503 ]
+                            , [ ( "error", "Can't delete an account with published pictures without R2 settings." ) ]
+                            )
             , test "reports a database failure without clearing the cookie" <|
                 \() ->
                     start (Just databaseUrl)
@@ -644,6 +714,235 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectResponses
                             [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Unavailable right now."}""" } ]
+            ]
+        , describe "POST /api/pictures"
+            [ test "answers 503 without R2 settings" <|
+                \() ->
+                    startPaid
+                        |> publishRequest "first" publishBody
+                        |> expectSent (responses >> List.map .status) [ 503 ]
+            , test "answers 400 for a body that is not JSON" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" "nope"
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 400
+                              , headers = jsonHeaders
+                              , body = """{"error":"Expected a JSON object with a prompt, a width, a height, steps, a seed, a model and bytes."}"""
+                              }
+                            ]
+            , test "answers 422 for a picture over 2 MB" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" (String.replace "\"bytes\":12" "\"bytes\":2097153" publishBody)
+                        |> expectResponses
+                            [ { resolve = "first", status = 422, headers = jsonHeaders, body = """{"error":"The picture must be at most 2 MB."}""" } ]
+            , test "answers 401 when the session is over" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" publishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[{"pro":null,"id":null}]}]}"""
+                        |> expectSent (responses >> List.map .status) [ 401 ]
+            , test "answers 403 when the user is not Pro" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" publishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (askedAnswer "false" "null")
+                        |> expectResponses
+                            [ { resolve = "first", status = 403, headers = jsonHeaders, body = """{"error":"Publishing needs Pro."}""" } ]
+            , test "answers 429 when three publishes are unfinished" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" publishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (askedAnswer "true" "null")
+                        |> expectResponses
+                            [ { resolve = "first", status = 429, headers = jsonHeaders, body = """{"error":"Finish or cancel your other publishes first."}""" } ]
+            , test "asks the database with the metadata and the tags, in one statement" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" publishBody
+                        |> ProgramTest.expectHttpRequest "POST"
+                            endpoint
+                            (Test.Http.expectJsonBody
+                                (Decode.field "queries" (Decode.list (Decode.field "params" (Decode.list Decode.string))))
+                                (Expect.equal
+                                    [ [ "c2Vzc2lvbg" ]
+                                    , [ "a red fox", "1024", "1024", "4", "7", "prism-ml/bonsai-image-ternary-4B-mlx-2bit", "12", "[\"fox\"]" ]
+                                    ]
+                                )
+                            )
+            , test "answers a presigned link for the staged key, and calls R2 not at all" <|
+                \() ->
+                    startPublishing
+                        |> publishRequest "first" publishBody
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (askedAnswer "true" ("\"" ++ pictureId ++ "\""))
+                        |> ProgramTest.ensureHttpRequests "HEAD" (stagedFile pictureId) (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequests "PUT" (stagedFile pictureId) (List.length >> Expect.equal 0)
+                        |> expectSent
+                            (responses
+                                >> List.map
+                                    (\answer ->
+                                        ( answer.status
+                                        , String.startsWith ("{\"id\":\"" ++ pictureId ++ "\",\"url\":\"" ++ stagedFile pictureId ++ "?X-Amz-") answer.body
+                                        , String.endsWith "\"headers\":[[\"content-type\",\"image/jpeg\"]]}" answer.body
+                                        )
+                                    )
+                            )
+                            [ ( 201, True, True ) ]
+            , test "answers 429 to the 31st publish in an hour from one address" <|
+                \() ->
+                    startPublishing
+                        |> repeat 31 (\resolve app -> app |> ProgramTest.advanceTime 2000 |> publishRequest resolve publishBody)
+                        |> expectSent
+                            (responses >> List.filter (\answer -> answer.status == 429) >> List.map (\answer -> ( answer.resolve, List.any (Tuple.first >> (==) "retry-after") answer.headers )))
+                            [ ( "31", True ) ]
+            ]
+        , describe "POST /api/pictures/<id>/published"
+            [ test "answers 404 when the row is missing" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[]}]}"""
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"No such picture."}""" } ]
+            , test "answers 200 with the stored answer, and calls R2 not at all, when already published" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "\"2026-11-17T10:00:00Z\"")
+                        |> ProgramTest.ensureHttpRequests "HEAD" (stagedFile pictureId) (List.length >> Expect.equal 0)
+                        |> expectResponses [ publishedResponse ]
+            , test "copies the checked file to the public bucket, deletes the staged one and marks the row" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "image/jpeg")
+                        |> ProgramTest.ensureHttpRequest "PUT"
+                            (publicFile pictureId)
+                            (Expect.all
+                                [ Test.Http.hasHeader "x-amz-copy-source" ("/uploads/incoming/" ++ pictureId ++ ".jpg")
+                                , Test.Http.hasHeader "x-amz-copy-source-if-match" "\"abc\""
+                                ]
+                            )
+                        |> ProgramTest.simulateHttpResponse "PUT" (publicFile pictureId) (copiedAnswer "\"abc\"")
+                        |> ProgramTest.ensureHttpRequests "DELETE" (stagedFile pictureId) (List.length >> Expect.equal 1)
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( markQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (markedAnswer "\"2026-11-17T10:00:00Z\"")
+                        |> expectResponses [ publishedResponse ]
+            , test "refuses a staged file larger than declared, deleting it and the row" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "13" "image/jpeg")
+                        |> ProgramTest.ensureHttpRequests "PUT" (publicFile pictureId) (List.length >> Expect.equal 0)
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
+                        |> expectResponses
+                            [ { resolve = "first", status = 422, headers = jsonHeaders, body = """{"error":"The picture must be a JPEG of at most 2 MB."}""" } ]
+            , test "refuses a staged file that is not a JPEG" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "text/html")
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
+                        |> expectResponses
+                            [ { resolve = "first", status = 422, headers = jsonHeaders, body = """{"error":"The picture must be a JPEG of at most 2 MB."}""" } ]
+            , test "answers 409 and copies nothing when nothing was staged" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 404, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequests "PUT" (publicFile pictureId) (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 409, headers = jsonHeaders, body = """{"error":"The picture hasn't arrived. Upload it again."}""" } ]
+            , test "answers 503 and marks nothing when the copy fails" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "image/jpeg")
+                        |> ProgramTest.simulateHttpResponse "PUT" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 500, headers = [], body = "<Error/>" })
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Couldn't store the picture."}""" } ]
+            , test "deletes both files and the row when the staged file changed after the check" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "image/jpeg")
+                        |> ProgramTest.simulateHttpResponse "PUT" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 412, headers = [], body = "<Error/>" })
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
+                        |> expectResponses
+                            [ { resolve = "first", status = 409, headers = jsonHeaders, body = """{"error":"The picture changed while publishing. Publish it again."}""" } ]
+            , test "does the same when the copy carries another ETag" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "image/jpeg")
+                        |> ProgramTest.simulateHttpResponse "PUT" (publicFile pictureId) (copiedAnswer "\"zzz\"")
+                        |> ProgramTest.ensureHttpRequests "DELETE" (publicFile pictureId) (List.length >> Expect.equal 1)
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
+                        |> expectResponses
+                            [ { resolve = "first", status = 409, headers = jsonHeaders, body = """{"error":"The picture changed while publishing. Publish it again."}""" } ]
+            , test "answers with the stored row when a concurrent confirm marked it first" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "image/jpeg")
+                        |> ProgramTest.simulateHttpResponse "PUT" (publicFile pictureId) (copiedAnswer "\"abc\"")
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[]}]}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "\"2026-11-17T10:00:00Z\"")
+                        |> expectResponses [ publishedResponse ]
+            ]
+        , describe "DELETE /api/pictures/<id>"
+            [ test "answers 404 for a picture that is not the user's" <|
+                \() ->
+                    startPublishing
+                        |> unpublishRequest
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (foundAnswer "false")
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"No such picture."}""" } ]
+            , test "deletes the public file, the staged one and the row" <|
+                \() ->
+                    startPublishing
+                        |> unpublishRequest
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (foundAnswer "true")
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.simulateHttpResponse "DELETE" (stagedFile pictureId) (Test.Http.httpResponse { statusCode = 204, headers = [], body = "" })
+                        |> ProgramTest.ensureHttpRequest "POST" endpoint (expectQueries [ authenticateQuery, ( dropQuery, [ pictureId ] ) ])
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
+                        |> expectResponses
+                            [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
+            , test "answers 503 and keeps the row when the public delete fails" <|
+                \() ->
+                    startPublishing
+                        |> unpublishRequest
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (foundAnswer "true")
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 403, headers = [], body = "<Error/>" })
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                            ( [ 503 ]
+                            , [ ( "error", "R2 delete failed: R2 answered 403: <Error/>" ) ]
+                            )
             ]
         , describe "DELETE /api/auth/session"
             [ test "ends the session and clears the cookie" <|
@@ -680,6 +979,7 @@ suite =
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                              , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "error", "Sign-out failed: Could not reach Neon." )
                               ]
                             , [ 503 ]
@@ -756,7 +1056,7 @@ suite =
                         |> passkeys "POST" [ "api", "auth", "passkeys", "options" ] ""
                         |> ProgramTest.simulateHttpResponse "POST" endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, List.map .status (responses values) ))
-                            ( [ "info", "warn", "error" ], [ 503 ] )
+                            ( [ "info", "warn", "warn", "error" ], [ 503 ] )
             ]
         , describe "POST /api/auth/passkeys"
             [ test "saves the credential, named after what made it, once its challenge is used" <|
@@ -804,10 +1104,10 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.simulateHttpResponse "POST" BrevoMailer.endpoint Test.Http.networkError
                         |> expectSent (\values -> ( levels values, responses values ))
-                            ( [ "info", "warn", "error" ], [ added ] )
+                            ( [ "info", "warn", "warn", "error" ], [ added ] )
             , test "prints the notice instead of emailing it when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing }
                         |> passkeys "POST" [ "api", "auth", "passkeys" ] (attestation clientData)
                         |> ProgramTest.simulateHttpOk "POST" endpoint saved
                         |> ProgramTest.ensureHttpRequests "POST" BrevoMailer.endpoint (List.length >> Expect.equal 0)
@@ -818,7 +1118,7 @@ suite =
                                 , responses values
                                 )
                             )
-                            ( [ "info", "warn", "warn", "info" ], True, [ added ] )
+                            ( [ "info", "warn", "warn", "warn", "info" ], True, [ added ] )
             , test "answers 409 when the challenge is expired, used or unknown" <|
                 \() ->
                     start (Just databaseUrl)
@@ -841,6 +1141,7 @@ suite =
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                              , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "Passkey refused: The client data comes from https://evil.example, not from https://pixo.pics." )
                               ]
                             , [ { resolve = "first"
@@ -1015,6 +1316,7 @@ suite =
                         |> expectSent (\values -> ( logs values, responses values ))
                             ( [ ( "info", "Sending queries to " ++ endpoint )
                               , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                              , ( "warn", "No R2_* settings, so publishing answers 503." )
                               , ( "warn", "Passkey sign-in refused: The signature does not match the passkey." )
                               ]
                             , [ notVerified ]
@@ -1044,7 +1346,7 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST"
                             endpoint
                             """{"rows":[{"outcome":"no-passkey","session_token":null,"email":null,"username":null}],"rowCount":1}"""
-                        |> expectSent (\values -> ( logs values |> List.drop 2, responses values ))
+                        |> expectSent (\values -> ( logs values |> List.drop 3, responses values ))
                             ( [ ( "warn", "Passkey sign-in refused: The passkey is gone, or its counter did not move forward." ) ]
                             , [ notVerified ]
                             )
@@ -1123,7 +1425,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST"
                             "https://sandbox-api.paddle.com/transactions"
                             (Test.Http.httpResponse { statusCode = 400, headers = [], body = """{"error":{"type":"request_error","code":"bad_request","detail":"Invalid price."}}""" })
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "Paddle checkout failed: Paddle answered 400 (bad_request): Invalid price." ) ]
                             )
@@ -1204,7 +1506,7 @@ suite =
                         |> ProgramTest.simulateHttpResponse "POST"
                             "https://sandbox-api.paddle.com/customers/ctm_01hv8x2a0e9xjn3k0q0p1y3z4c/portal-sessions"
                             Test.Http.networkError
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
                             ( [ 503 ]
                             , [ ( "error", "Paddle portal failed: Could not reach Paddle." ) ]
                             )
@@ -1226,7 +1528,7 @@ suite =
                         |> ProgramTest.advanceTime 6000
                         |> webhook "first" freshSignature
                         |> expectSent (\values -> ( List.map .status (responses values), List.length (webhookChecks values), levels values ))
-                            ( [ 401 ], 0, [ "info", "warn" ] )
+                            ( [ 401 ], 0, [ "info", "warn", "warn" ] )
             , test "asks app.ts to check the timestamp and the body with the configured secret" <|
                 \() ->
                     startPaid
@@ -1243,14 +1545,14 @@ suite =
                     startPaid
                         |> webhook "first" freshSignature
                         |> webhookChecked """{"event_id":"evt_1","event_type":"subscription.updated","data":{"id":"sub_1","status":"active"}}""" True
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
                             ( [ 400 ], [ ( "error", "Paddle webhook did not decode at data." ) ] )
             , test "answers 401 and warns when the check fails" <|
                 \() ->
                     startPaid
                         |> webhook "first" freshSignature
                         |> webhookChecked subscriptionUpdated False
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
                             ( [ 401 ], [ ( "warn", "Paddle webhook refused: the signature does not match." ) ] )
             , test "applies a subscription for the Pro price" <|
                 \() ->
@@ -1280,7 +1582,7 @@ suite =
                         |> webhook "first" freshSignature
                         |> webhookChecked subscriptionUpdated True
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"applied"}],"rowCount":1}"""
-                        |> expectSent (\values -> ( responses values, List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( responses values, List.drop 2 (logs values) ))
                             ( [ { resolve = "first", status = 200, headers = jsonHeaders, body = "{}" } ]
                             , [ ( "info", "Paddle subscription.updated evt_01hv8x2a0e9xjn3k0q0p1y3z4a applied." ) ]
                             )
@@ -1304,7 +1606,7 @@ suite =
                         |> webhook "first" freshSignature
                         |> webhookChecked subscriptionUpdated True
                         |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"outcome":"unmatched"}],"rowCount":1}"""
-                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 2 (logs values) ))
                             ( [ 200 ]
                             , [ ( "warn", "Paddle subscription.updated evt_01hv8x2a0e9xjn3k0q0p1y3z4a names no account; skipped." ) ]
                             )
@@ -1325,15 +1627,16 @@ suite =
         , describe "init"
             [ test "warns that emails are printed when no key is set locally" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = True, paddle = Nothing, storage = Nothing }
                         |> expectSent logs
                             [ ( "info", "Sending queries to " ++ endpoint )
                             , ( "warn", "No BREVO_API_KEY, so emails are printed here instead of sent." )
                             , ( "warn", "No PADDLE_* settings, so billing routes answer 503." )
+                            , ( "warn", "No R2_* settings, so publishing answers 503." )
                             ]
             , test "is broken, and logs why, when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1341,7 +1644,7 @@ suite =
                             )
             , test "fails the health check when email isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Nothing, emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectResponses
                             [ health "first"
@@ -1350,7 +1653,7 @@ suite =
                             ]
             , test "is broken, and logs why, when the sender isn't configured on Vercel" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Nothing, origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: BREVO_API_KEY and EMAIL_FROM must both be set." ) ]
@@ -1358,7 +1661,7 @@ suite =
                             )
             , test "is broken, and logs why, when the sender is not an address" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "No email, so every route but health answers 503: EMAIL_FROM is not an email address." ) ]
@@ -1366,7 +1669,7 @@ suite =
                             )
             , test "answers 503 and logs why when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
                         |> expectSent (\values -> ( logs values, List.map .status (responses values) ))
                             ( [ ( "error", "Bad origin: Expected an origin like https://pixo.pics, got: pixo.pics" ) ]
@@ -1374,12 +1677,12 @@ suite =
                             )
             , test "fails the health check when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> request "first" "GET" [ "api", "health" ]
                         |> expectSent (responses >> List.map .status) [ 503 ]
             , test "still answers 404 at an unknown path when the origin is not a URL" <|
                 \() ->
-                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing }
+                    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "pixo.pics", local = False, paddle = Nothing, storage = Nothing }
                         |> request "first" "GET" [ "api", "nowhere" ]
                         |> expectSent (responses >> List.map .status) [ 404 ]
             ]
@@ -1736,7 +2039,7 @@ paddleConfig =
 
 startPaid : App
 startPaid =
-    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig }
+    startWith { databaseUrl = Just databaseUrl, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Just paddleConfig, storage = Nothing }
 
 
 freshSignature : String
@@ -1783,7 +2086,7 @@ webhookChecked body valid =
 
 start : Maybe String -> App
 start url =
-    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing }
+    startWith { databaseUrl = url, brevoApiKey = Just "xkeysib-secret", emailFrom = Just "hello@pixo.pics", origin = "https://pixo.pics", local = False, paddle = Nothing, storage = Nothing }
 
 
 startWith :
@@ -1793,6 +2096,7 @@ startWith :
     , origin : String
     , local : Bool
     , paddle : Maybe { environment : String, apiKey : String, webhookSecret : String, clientToken : String, proPriceId : String }
+    , storage : Maybe { accountId : String, accessKeyId : String, secretAccessKey : String, bucket : String, uploadBucket : String, imagesOrigin : String }
     }
     -> App
 startWith config =
@@ -1818,8 +2122,27 @@ startWith config =
                 , ( "paddleWebhookSecret", paddleFlag .webhookSecret config.paddle )
                 , ( "paddleClientToken", paddleFlag .clientToken config.paddle )
                 , ( "paddleProPriceId", paddleFlag .proPriceId config.paddle )
+                , ( "r2AccountId", paddleFlag .accountId config.storage )
+                , ( "r2AccessKeyId", paddleFlag .accessKeyId config.storage )
+                , ( "r2SecretAccessKey", paddleFlag .secretAccessKey config.storage )
+                , ( "r2Bucket", paddleFlag .bucket config.storage )
+                , ( "r2UploadBucket", paddleFlag .uploadBucket config.storage )
+                , ( "imagesOrigin", paddleFlag .imagesOrigin config.storage )
                 ]
             )
+
+
+startPublishing : App
+startPublishing =
+    startWith
+        { databaseUrl = Just databaseUrl
+        , brevoApiKey = Just "xkeysib-secret"
+        , emailFrom = Just "hello@pixo.pics"
+        , origin = "https://pixo.pics"
+        , local = False
+        , paddle = Just paddleConfig
+        , storage = Just { accountId = "acc", accessKeyId = "key", secretAccessKey = "secret", bucket = "pictures", uploadBucket = "uploads", imagesOrigin = "https://img.pixo.pics" }
+        }
 
 
 paddleFlag : (a -> String) -> Maybe a -> Encode.Value
@@ -2140,6 +2463,158 @@ portalRequest =
 deleteAccount : List ( String, String ) -> App -> App
 deleteAccount headers =
     requestWith { resolve = "first", method = "DELETE", path = [ "api", "auth", "account" ], headers = headers, body = "" }
+
+
+pictureId : String
+pictureId =
+    "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11"
+
+
+otherPictureId : String
+otherPictureId =
+    "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+
+stagedFile : String -> String
+stagedFile id =
+    "https://acc.r2.cloudflarestorage.com/uploads/incoming/" ++ id ++ ".jpg"
+
+
+publicFile : String -> String
+publicFile id =
+    "https://acc.r2.cloudflarestorage.com/pictures/" ++ id ++ ".jpg"
+
+
+publishBody : String
+publishBody =
+    """{"prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","bytes":12,"tags":["fox"]}"""
+
+
+pictureHeaders : List ( String, String )
+pictureHeaders =
+    [ ( "cookie", "session=c2Vzc2lvbg" ), ( "x-real-ip", "203.0.113.9" ) ]
+
+
+publishRequest : String -> String -> App -> App
+publishRequest resolve body =
+    requestWith { resolve = resolve, method = "POST", path = [ "api", "pictures" ], headers = pictureHeaders, body = body }
+
+
+confirmRequest : String -> App -> App
+confirmRequest resolve =
+    requestWith { resolve = resolve, method = "POST", path = [ "api", "pictures", pictureId, "published" ], headers = pictureHeaders, body = "" }
+
+
+unpublishRequest : App -> App
+unpublishRequest =
+    requestWith { resolve = "first", method = "DELETE", path = [ "api", "pictures", pictureId ], headers = pictureHeaders, body = "" }
+
+
+signedInRows : String -> String
+signedInRows rows =
+    """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[""" ++ rows ++ """]}]}"""
+
+
+askedAnswer : String -> String -> String
+askedAnswer pro id =
+    signedInRows ("""{"pro":""" ++ pro ++ ""","id":""" ++ id ++ "}")
+
+
+unconfirmedAnswer : String -> String -> String
+unconfirmedAnswer bytes publishedAt =
+    signedInRows ("""{"bytes":""" ++ bytes ++ ""","published_at":""" ++ publishedAt ++ "}")
+
+
+markedAnswer : String -> String
+markedAnswer publishedAt =
+    signedInRows ("""{"published_at":""" ++ publishedAt ++ "}")
+
+
+droppedAnswer : String -> String
+droppedAnswer id =
+    signedInRows ("""{"id":\"""" ++ id ++ """"}""")
+
+
+foundAnswer : String -> String
+foundAnswer found =
+    signedInRows ("""{"found":""" ++ found ++ "}")
+
+
+stagedAnswer : String -> String -> Http.Response String
+stagedAnswer bytes contentType =
+    Test.Http.httpResponse
+        { statusCode = 200
+        , headers = [ ( "content-length", bytes ), ( "content-type", contentType ), ( "etag", "\"abc\"" ) ]
+        , body = ""
+        }
+
+
+copiedAnswer : String -> Http.Response String
+copiedAnswer etag =
+    Test.Http.httpResponse
+        { statusCode = 200
+        , headers = []
+        , body = "<CopyObjectResult><ETag>" ++ etag ++ "</ETag></CopyObjectResult>"
+        }
+
+
+publishedResponse : Response
+publishedResponse =
+    { resolve = "first"
+    , status = 200
+    , headers = jsonHeaders
+    , body = """{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","publishedAt":"2026-11-17T10:00:00Z"}"""
+    }
+
+
+authenticateQuery : ( String, List String )
+authenticateQuery =
+    ( "SELECT authenticate($1) AS user_id", [ "c2Vzc2lvbg" ] )
+
+
+expectQueries : List ( String, List String ) -> Test.Http.HttpRequest x a -> Expectation
+expectQueries expected =
+    Test.Http.expectJsonBody
+        (Decode.field "queries"
+            (Decode.list
+                (Decode.map2 Tuple.pair
+                    (Decode.field "query" Decode.string)
+                    (Decode.field "params" (Decode.list Decode.string))
+                )
+            )
+        )
+        (Expect.equal expected)
+
+
+markQuery : String
+markQuery =
+    "UPDATE published_pictures SET published_at = now() WHERE id = $1 AND published_at IS NULL RETURNING to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS published_at"
+
+
+dropQuery : String
+dropQuery =
+    "DELETE FROM published_pictures WHERE id = $1 RETURNING id"
+
+
+beforeDeletionQuery : String
+beforeDeletionQuery =
+    "SELECT EXISTS (SELECT 1 FROM subscriptions WHERE status IN ('active', 'trialing', 'past_due') AND scheduled_change IS DISTINCT FROM 'cancel') AS renewing, COALESCE((SELECT json_agg(id) FROM published_pictures), '[]'::json) AS pictures"
+
+
+beforeDeletionAnswer : Bool -> List String -> String
+beforeDeletionAnswer renewing ids =
+    signedInRows
+        ("""{"renewing":"""
+            ++ (if renewing then
+                    "true"
+
+                else
+                    "false"
+               )
+            ++ ""","pictures":"""
+            ++ Encode.encode 0 (Encode.list Encode.string ids)
+            ++ "}"
+        )
 
 
 simulatedBody : Effect.Body -> SimulatedEffect.Http.Body

@@ -1,11 +1,14 @@
-module Db exposing (Added(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), Subscription, addPasskey, applySubscription, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, magicLink, me, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions)
+module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions, unconfirmed)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
 import Data.CredentialId as CredentialId exposing (CredentialId)
 import Data.Email as Email exposing (Email)
 import Data.LinkToken as LinkToken exposing (LinkToken)
+import Data.PictureId as PictureId exposing (PictureId)
+import Data.Publication exposing (Publication)
 import Data.SessionToken as SessionToken exposing (SessionToken)
+import Data.Tag as Tag
 import Data.UserId as UserId exposing (UserId)
 import Data.Username as Username exposing (Username)
 import Json.Decode as Decode exposing (Decoder)
@@ -513,3 +516,142 @@ applySubscription subscription =
         , Neon.text subscription.updatedAt
         ]
         (Decode.field "outcome" Decode.string)
+
+
+type Asked
+    = AskedFor PictureId
+    | NotPro
+    | TooManyUnfinished
+
+
+askPicture : SessionToken -> Publication -> Neon.Transaction (Maybe Asked)
+askPicture token publication =
+    signedIn token (\userId asked -> Maybe.map (\_ -> asked) userId)
+        |> Neon.with
+            (Neon.one
+                ("WITH me AS ("
+                    ++ "SELECT NULLIF(current_setting('app.user_id', true), '')::uuid AS id"
+                    ++ "), state AS ("
+                    ++ "SELECT me.id, is_pro(me.id) AS pro, "
+                    ++ "(SELECT count(*) FROM published_pictures AS p "
+                    ++ "WHERE p.published_at IS NULL AND p.created_at > now() - interval '1 hour') AS unfinished "
+                    ++ "FROM me"
+                    ++ "), added AS ("
+                    ++ "INSERT INTO published_pictures (user_id, prompt, width, height, steps, seed, model, bytes, tags) "
+                    ++ "SELECT state.id, $1::text, $2::integer, $3::integer, $4::integer, $5::bigint, $6::text, $7::integer, "
+                    ++ "ARRAY(SELECT t.tag FROM jsonb_array_elements_text($8::jsonb) WITH ORDINALITY AS t(tag, n) ORDER BY t.n) "
+                    ++ "FROM state "
+                    ++ "WHERE state.pro AND state.unfinished < 3 "
+                    ++ "RETURNING id"
+                    ++ ") "
+                    ++ "SELECT (SELECT pro FROM state) AS pro, (SELECT id FROM added) AS id"
+                )
+                [ Neon.text publication.prompt
+                , Neon.int publication.width
+                , Neon.int publication.height
+                , Neon.int publication.steps
+                , Neon.int publication.seed
+                , Neon.text publication.model
+                , Neon.int publication.bytes
+                , Neon.json (Encode.list Tag.encode publication.tags)
+                ]
+                (Decode.map2
+                    (\pro id ->
+                        case id of
+                            Just added ->
+                                AskedFor added
+
+                            Nothing ->
+                                if pro then
+                                    TooManyUnfinished
+
+                                else
+                                    NotPro
+                    )
+                    (Decode.field "pro" (Decode.nullable Decode.bool) |> Decode.map (Maybe.withDefault False))
+                    (Decode.field "id" (Decode.nullable PictureId.decoder))
+                )
+            )
+
+
+type Unconfirmed
+    = Waiting Int
+    | AlreadyPublished String
+    | Missing
+
+
+publishedAt : String
+publishedAt =
+    "to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS published_at"
+
+
+unconfirmed : SessionToken -> PictureId -> Neon.Transaction (Maybe Unconfirmed)
+unconfirmed token id =
+    signedIn token (\userId found -> Maybe.map (\_ -> Maybe.withDefault Missing found) userId)
+        |> Neon.with
+            (Neon.selectOne ("SELECT bytes, " ++ publishedAt ++ " FROM published_pictures WHERE id = $1")
+                [ Neon.text (PictureId.toString id) ]
+                (Decode.map2
+                    (\bytes at ->
+                        case at of
+                            Just when ->
+                                AlreadyPublished when
+
+                            Nothing ->
+                                Waiting bytes
+                    )
+                    (Decode.field "bytes" Decode.int)
+                    (Decode.field "published_at" (Decode.nullable Decode.string))
+                )
+            )
+
+
+markPublished : SessionToken -> PictureId -> Neon.Transaction (Maybe String)
+markPublished token id =
+    signedIn token (\_ marked -> marked)
+        |> Neon.with
+            (Neon.selectOne
+                ("UPDATE published_pictures SET published_at = now() WHERE id = $1 AND published_at IS NULL RETURNING " ++ publishedAt)
+                [ Neon.text (PictureId.toString id) ]
+                (Decode.field "published_at" Decode.string)
+            )
+
+
+dropPicture : SessionToken -> PictureId -> Neon.Transaction Bool
+dropPicture token id =
+    signedIn token (\_ dropped -> dropped /= Nothing)
+        |> Neon.with
+            (Neon.selectOne "DELETE FROM published_pictures WHERE id = $1 RETURNING id"
+                [ Neon.text (PictureId.toString id) ]
+                (Decode.field "id" PictureId.decoder)
+            )
+
+
+ownPicture : SessionToken -> PictureId -> Neon.Transaction (Maybe Bool)
+ownPicture token id =
+    signedIn token (\userId found -> Maybe.map (\_ -> found) userId)
+        |> Neon.with
+            (Neon.one "SELECT EXISTS (SELECT 1 FROM published_pictures WHERE id = $1) AS found"
+                [ Neon.text (PictureId.toString id) ]
+                (Decode.field "found" Decode.bool)
+            )
+
+
+beforeDeletion : SessionToken -> Neon.Transaction (Maybe { renewing : Bool, pictures : List PictureId })
+beforeDeletion token =
+    signedIn token (\userId state -> Maybe.map (\_ -> state) userId)
+        |> Neon.with
+            (Neon.one
+                ("SELECT EXISTS ("
+                    ++ "SELECT 1 FROM subscriptions "
+                    ++ "WHERE status IN ('active', 'trialing', 'past_due') "
+                    ++ "AND scheduled_change IS DISTINCT FROM 'cancel'"
+                    ++ ") AS renewing, "
+                    ++ "COALESCE((SELECT json_agg(id) FROM published_pictures), '[]'::json) AS pictures"
+                )
+                []
+                (Decode.map2 (\renewing pictures -> { renewing = renewing, pictures = pictures })
+                    (Decode.field "renewing" Decode.bool)
+                    (Decode.field "pictures" (Decode.list PictureId.decoder))
+                )
+            )

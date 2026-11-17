@@ -134,6 +134,12 @@ const app = Elm.Main.init({
     paddleWebhookSecret: process.env.PADDLE_WEBHOOK_SECRET || null,
     paddleClientToken: process.env.PADDLE_CLIENT_TOKEN || null,
     paddleProPriceId: process.env.PADDLE_PRO_PRICE_ID || null,
+    r2AccountId: process.env.R2_ACCOUNT_ID || null,
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || null,
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || null,
+    r2Bucket: process.env.R2_BUCKET || null,
+    r2UploadBucket: process.env.R2_UPLOAD_BUCKET || null,
+    imagesOrigin: process.env.IMAGES_ORIGIN || null,
   },
 });
 
