@@ -887,6 +887,23 @@ suite =
                         |> ProgramTest.simulateHttpOk "POST" endpoint (droppedAnswer pictureId)
                         |> expectResponses
                             [ { resolve = "first", status = 409, headers = jsonHeaders, body = """{"error":"The picture changed while publishing. Publish it again."}""" } ]
+            , test "keeps the row when the replaced copy can't be deleted" <|
+                \() ->
+                    startPublishing
+                        |> confirmRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (unconfirmedAnswer "12" "null")
+                        |> ProgramTest.simulateHttpResponse "HEAD" (stagedFile pictureId) (stagedAnswer "12" "image/jpeg")
+                        |> ProgramTest.simulateHttpResponse "PUT" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 412, headers = [], body = "<Error/>" })
+                        |> ProgramTest.simulateHttpResponse "DELETE" (publicFile pictureId) (Test.Http.httpResponse { statusCode = 403, headers = [], body = "<Error/>" })
+                        |> ProgramTest.ensureHttpRequests "DELETE" (stagedFile pictureId) (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequests "POST" endpoint (List.length >> Expect.equal 0)
+                        |> expectSent
+                            (\values ->
+                                ( List.map .status (responses values)
+                                , logs values |> List.filter (\( level, message ) -> level == "error" && String.startsWith ("R2 delete failed for " ++ pictureId) message) |> List.length
+                                )
+                            )
+                            ( [ 503 ], 1 )
             , test "does the same when the copy carries another ETag" <|
                 \() ->
                     startPublishing
