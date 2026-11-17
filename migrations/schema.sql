@@ -347,6 +347,23 @@ $$;
 
 
 --
+-- Name: dismiss_reports(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.dismiss_reports(p_picture_id uuid) RETURNS bigint
+    LANGUAGE sql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH reviewed AS (
+    UPDATE picture_reports SET reviewed_at = now()
+    WHERE picture_id = p_picture_id AND reviewed_at IS NULL
+    RETURNING id
+  )
+  SELECT count(*) FROM reviewed;
+$$;
+
+
+--
 -- Name: feed_pictures(text, uuid, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -517,6 +534,34 @@ $$;
 
 
 --
+-- Name: report_picture(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.report_picture(p_picture_id uuid, p_reason text) RETURNS TABLE(outcome text, first boolean, username text)
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH target AS (
+    SELECT p.id, u.username
+    FROM published_pictures AS p
+    JOIN users AS u ON u.id = p.user_id
+    WHERE p.id = p_picture_id
+      AND p.published_at IS NOT NULL
+      AND p.removed_at IS NULL
+  ), earlier AS (
+    SELECT count(*) AS n FROM picture_reports AS r WHERE r.picture_id = p_picture_id
+  ), added AS (
+    INSERT INTO picture_reports (picture_id, reason)
+    SELECT target.id, p_reason FROM target
+    RETURNING picture_id
+  )
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM added) THEN 'reported' ELSE 'not-found' END,
+         (SELECT n FROM earlier) = 0,
+         (SELECT target.username FROM target);
+$$;
+
+
+--
 -- Name: sign_in_with_passkey(text, text, bigint, boolean, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -587,6 +632,29 @@ CREATE FUNCTION public.sign_out(p_token text) RETURNS void
 $$;
 
 
+--
+-- Name: take_down_picture(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.take_down_picture(p_picture_id uuid) RETURNS TABLE(object_key text, username text, reports bigint)
+    LANGUAGE sql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH reviewed AS (
+    UPDATE picture_reports SET reviewed_at = now()
+    WHERE picture_id = p_picture_id AND reviewed_at IS NULL
+    RETURNING id
+  ), removed AS (
+    UPDATE published_pictures AS p SET removed_at = now()
+    FROM users AS u
+    WHERE p.id = p_picture_id AND u.id = p.user_id AND p.removed_at IS NULL
+    RETURNING p.id, u.username
+  )
+  SELECT removed.id::text || '.jpg', removed.username, (SELECT count(*) FROM reviewed)
+  FROM removed;
+$$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -631,6 +699,22 @@ CREATE TABLE public.passkeys (
 );
 
 ALTER TABLE ONLY public.passkeys FORCE ROW LEVEL SECURITY;
+
+
+--
+-- Name: picture_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picture_reports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    picture_id uuid NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    reviewed_at timestamp with time zone,
+    CONSTRAINT picture_reports_reason_check CHECK ((reason = ANY (ARRAY['illegal'::text, 'sexual'::text, 'violent'::text, 'hateful'::text, 'spam'::text, 'other'::text])))
+);
+
+ALTER TABLE ONLY public.picture_reports FORCE ROW LEVEL SECURITY;
 
 
 --
@@ -758,6 +842,14 @@ ALTER TABLE ONLY public.passkeys
 
 
 --
+-- Name: picture_reports picture_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picture_reports
+    ADD CONSTRAINT picture_reports_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: published_pictures published_pictures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -843,6 +935,13 @@ CREATE INDEX passkeys_user_id_idx ON public.passkeys USING btree (user_id);
 
 
 --
+-- Name: picture_reports_picture_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX picture_reports_picture_id_idx ON public.picture_reports USING btree (picture_id);
+
+
+--
 -- Name: published_pictures_feed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -904,6 +1003,14 @@ CREATE INDEX webauthn_challenges_user_id_idx ON public.webauthn_challenges USING
 
 ALTER TABLE ONLY public.passkeys
     ADD CONSTRAINT passkeys_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: picture_reports picture_reports_picture_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picture_reports
+    ADD CONSTRAINT picture_reports_picture_id_fkey FOREIGN KEY (picture_id) REFERENCES public.published_pictures(id) ON DELETE CASCADE;
 
 
 --
@@ -991,6 +1098,12 @@ CREATE POLICY own_rows ON public.webauthn_challenges USING ((user_id = ( SELECT 
 --
 
 ALTER TABLE public.passkeys ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picture_reports; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picture_reports ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: published_pictures; Type: ROW SECURITY; Schema: public; Owner: -
@@ -1094,6 +1207,13 @@ GRANT ALL ON FUNCTION public.delete_expired() TO api;
 
 
 --
+-- Name: FUNCTION dismiss_reports(p_picture_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.dismiss_reports(p_picture_id uuid) FROM PUBLIC;
+
+
+--
 -- Name: FUNCTION feed_pictures(p_tag text, p_before uuid, p_limit integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -1149,6 +1269,14 @@ GRANT ALL ON FUNCTION public.profile(p_username text, p_before uuid, p_limit int
 
 
 --
+-- Name: FUNCTION report_picture(p_picture_id uuid, p_reason text); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.report_picture(p_picture_id uuid, p_reason text) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.report_picture(p_picture_id uuid, p_reason text) TO api;
+
+
+--
 -- Name: FUNCTION sign_in_with_passkey(p_challenge text, p_credential_id text, p_sign_count bigint, p_backed_up boolean, p_session_seconds integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -1162,6 +1290,13 @@ GRANT ALL ON FUNCTION public.sign_in_with_passkey(p_challenge text, p_credential
 
 REVOKE ALL ON FUNCTION public.sign_out(p_token text) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.sign_out(p_token text) TO api;
+
+
+--
+-- Name: FUNCTION take_down_picture(p_picture_id uuid); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.take_down_picture(p_picture_id uuid) FROM PUBLIC;
 
 
 --
