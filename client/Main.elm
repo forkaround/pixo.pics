@@ -7,6 +7,7 @@ import Browser.Dom as Dom
 import Browser.Events
 import Browser.Navigation as Navigation
 import Data.Email as Email
+import Data.TransactionId as TransactionId exposing (TransactionId)
 import Data.Username as Username
 import Effect exposing (Effect(..))
 import Enrolment
@@ -96,6 +97,7 @@ type alias Model =
     , runs : Int
     , turns : Int
     , toaster : Toast.Toaster Msg
+    , paymentLink : Bool
     , page : Page
     }
 
@@ -123,9 +125,9 @@ type Section
 init : Decode.Value -> Url -> ( Model, Effect Msg )
 init flags url =
     let
-        { theme, systemDark, entropy, models, stylist, canShare, sidebarOpen, webGpu } =
+        { theme, systemDark, entropy, models, stylist, canShare, sidebarOpen, webGpu, paddleClientToken, paddleEnvironment } =
             InteropPorts.decodeFlags flags
-                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False, sidebarOpen = Nothing, webGpu = True }
+                |> Result.withDefault { theme = Nothing, systemDark = False, entropy = 0, models = Nothing, stylist = Nothing, canShare = False, sidebarOpen = Nothing, webGpu = True, paddleClientToken = Nothing, paddleEnvironment = Nothing }
 
         sidebar =
             { open = Maybe.withDefault True sidebarOpen, openMobile = False }
@@ -146,9 +148,94 @@ init flags url =
         , runs = 0
         , turns = 0
         , toaster = Toast.init
+        , paymentLink = False
         , page = NotFound
         }
         |> Tuple.mapSecond (\effect -> Batch [ Request (ApiClient.request Api.session () GotSession), effect ])
+        |> openPaymentLink url paddleClientToken paddleEnvironment
+
+
+openPaymentLink : Url -> Maybe String -> Maybe String -> ( Model, Effect Msg ) -> ( Model, Effect Msg )
+openPaymentLink url clientToken environment ( model, effect ) =
+    case ( paymentLink url, clientToken, environment ) of
+        ( Just ( id, rest ), Just token, Just "sandbox" ) ->
+            ( { model | paymentLink = True }
+            , Batch [ effect, ReplaceUrl (Url.toString rest), checkout id token "sandbox" ]
+            )
+
+        ( Just ( id, rest ), Just token, Just "production" ) ->
+            ( { model | paymentLink = True }
+            , Batch [ effect, ReplaceUrl (Url.toString rest), checkout id token "production" ]
+            )
+
+        ( Just ( _, rest ), _, _ ) ->
+            ( model
+            , Batch
+                [ effect
+                , ReplaceUrl (Url.toString rest)
+                , Notify { id = "payment", tone = Notice.Problem, title = "Couldn't open the payment", description = Just "Try the link again later.", retry = Notice.NoRetry }
+                ]
+            )
+
+        ( Nothing, _, _ ) ->
+            ( model, effect )
+
+
+checkout : TransactionId -> String -> String -> Effect msg
+checkout id token environment =
+    SendToJs (Interop.OpenCheckout { transactionId = TransactionId.toString id, clientToken = token, environment = environment })
+
+
+paymentLink : Url -> Maybe ( TransactionId, Url )
+paymentLink url =
+    case url.query of
+        Nothing ->
+            Nothing
+
+        Just query ->
+            let
+                parts =
+                    String.split "&" query
+
+                prefix =
+                    "_ptxn="
+            in
+            parts
+                |> List.filter (String.startsWith prefix)
+                |> List.head
+                |> Maybe.andThen (String.dropLeft (String.length prefix) >> Url.percentDecode)
+                |> Maybe.andThen TransactionId.fromString
+                |> Maybe.map
+                    (\id ->
+                        let
+                            kept =
+                                removeFirst (String.startsWith prefix) parts
+                        in
+                        ( id
+                        , { url
+                            | query =
+                                if List.isEmpty kept then
+                                    Nothing
+
+                                else
+                                    Just (String.join "&" kept)
+                          }
+                        )
+                    )
+
+
+removeFirst : (a -> Bool) -> List a -> List a
+removeFirst matches items =
+    case items of
+        [] ->
+            []
+
+        first :: rest ->
+            if matches first then
+                rest
+
+            else
+                first :: removeFirst matches rest
 
 
 open : Url -> Model -> ( Model, Effect Msg )
@@ -634,18 +721,24 @@ step msg model =
                     enrol (Enrolment.failed name) model
 
         GotInterop (Ok (Interop.CheckoutEvent "checkout.completed")) ->
-            ( model
-            , Batch
-                [ Notify { id = proToast, tone = Notice.Success, title = "Payment received", description = Just "Turning on Pro…", retry = Notice.NoRetry }
-                , Sleep 2000 (BillingPolled 0)
-                ]
-            )
+            if model.paymentLink then
+                ( { model | paymentLink = False }
+                , Notify { id = "payment", tone = Notice.Success, title = "Payment received", description = Nothing, retry = Notice.NoRetry }
+                )
+
+            else
+                ( model
+                , Batch
+                    [ Notify { id = proToast, tone = Notice.Success, title = "Payment received", description = Just "Turning on Pro…", retry = Notice.NoRetry }
+                    , Sleep 2000 (BillingPolled 0)
+                    ]
+                )
 
         GotInterop (Ok (Interop.CheckoutEvent "checkout.closed")) ->
-            closeCheckout model
+            closeCheckout { model | paymentLink = False }
 
         GotInterop (Ok (Interop.CheckoutEvent "checkout.error")) ->
-            closeCheckout model
+            closeCheckout { model | paymentLink = False }
                 |> Tuple.mapSecond
                     (\effect ->
                         Batch

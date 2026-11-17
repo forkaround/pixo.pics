@@ -9,6 +9,7 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Data.Tag as Tag
+import Data.TransactionId as TransactionId
 import Data.Username as Username
 import Expect
 import Json.Decode as Decode
@@ -165,6 +166,18 @@ suite =
                         |> Result.mapError (\_ -> ())
                         |> Result.map Challenge.toString
                         |> Expect.equal (Ok "Y2hhbGxlbmdl")
+            ]
+        , describe "TransactionId"
+            [ test "takes a Paddle transaction id" <|
+                \() ->
+                    TransactionId.fromString "txn_01h2b0qpjc0xt8k5aw6nsdec4p"
+                        |> Maybe.map TransactionId.toString
+                        |> Expect.equal (Just "txn_01h2b0qpjc0xt8k5aw6nsdec4p")
+            , test "refuses anything else" <|
+                \() ->
+                    List.filterMap TransactionId.fromString [ "", "txn_", "pri_01h2b0qpjc0xt8k5aw6nsdec4p", "txn_ABC", "txn_01<b>" ]
+                        |> List.length
+                        |> Expect.equal 0
             ]
         , describe "Dimension"
             [ test "takes what is on its grid, ends included" <|

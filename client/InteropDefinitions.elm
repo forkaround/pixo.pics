@@ -74,6 +74,8 @@ type alias Flags =
     , canShare : Bool
     , sidebarOpen : Maybe Bool
     , webGpu : Bool
+    , paddleClientToken : Maybe String
+    , paddleEnvironment : Maybe String
     }
 
 
@@ -545,3 +547,5 @@ flags =
         (TsDecode.field "canShare" TsDecode.bool)
         (TsDecode.field "sidebar" (TsDecode.nullable (TsDecode.stringUnion [ ( "expanded", True ), ( "collapsed", False ) ])))
         (TsDecode.field "webGpu" TsDecode.bool)
+        |> TsDecode.andMap (TsDecode.field "paddleClientToken" (TsDecode.nullable TsDecode.string))
+        |> TsDecode.andMap (TsDecode.field "paddleEnvironment" (TsDecode.nullable TsDecode.string))

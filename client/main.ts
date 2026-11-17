@@ -110,6 +110,8 @@ const app = Elm.Main.init({
     canShare: canShare(),
     sidebar: stored("sidebar") as Flags["sidebar"],
     webGpu: "gpu" in navigator,
+    paddleClientToken: __PADDLE_CLIENT_TOKEN__,
+    paddleEnvironment: __PADDLE_ENVIRONMENT__,
   },
 });
 

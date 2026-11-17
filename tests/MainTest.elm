@@ -306,6 +306,47 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ text "Not logged in" ]
                         |> ProgramTest.expectViewHasNot [ text "Manage your account and how you sign in." ]
             ]
+        , describe "Payment links"
+            [ test "opens the checkout for a signed-out visitor and drops the parameter" <|
+                \() ->
+                    startAt "/settings/account?_ptxn=txn_01h2b0qpjc0xt8k5aw6nsdec4p" paddleFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/account")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.map4 (\tag transactionId clientToken environment -> { tag = tag, transactionId = transactionId, clientToken = clientToken, environment = environment })
+                                (Decode.field "tag" Decode.string)
+                                (Decode.at [ "data", "transactionId" ] Decode.string)
+                                (Decode.at [ "data", "clientToken" ] Decode.string)
+                                (Decode.at [ "data", "environment" ] Decode.string)
+                            )
+                            (List.filter (\sent -> sent.tag == "OpenCheckout") >> Expect.equal [ { tag = "OpenCheckout", transactionId = "txn_01h2b0qpjc0xt8k5aw6nsdec4p", clientToken = "test_token", environment = "sandbox" } ])
+            , test "keeps the other parameters" <|
+                \() ->
+                    startAt "/?x=1&_ptxn=txn_01h2b0qpjc0xt8k5aw6nsdec4p" paddleFlags
+                        |> ProgramTest.expectBrowserUrl (Expect.equal "https://pixo.pics/?x=1")
+            , test "ignores an invalid transaction and leaves the address" <|
+                \() ->
+                    startAt "/settings/account?_ptxn=nope" paddleFlags
+                        |> ProgramTest.ensureBrowserUrl (Expect.equal "https://pixo.pics/settings/account?_ptxn=nope")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.filter ((==) "OpenCheckout") >> Expect.equal [])
+            , test "says so when the build has no Paddle values" <|
+                \() ->
+                    startAt "/settings/account?_ptxn=txn_01h2b0qpjc0xt8k5aw6nsdec4p" defaultFlags
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (List.filter ((==) "OpenCheckout") >> Expect.equal [])
+                        |> ProgramTest.expectViewHas [ text "Couldn't open the payment" ]
+            , test "confirms the payment without polling for Pro" <|
+                \() ->
+                    startAt "/settings/account?_ptxn=txn_01h2b0qpjc0xt8k5aw6nsdec4p" paddleFlags
+                        |> ProgramTest.simulateHttpResponse "GET" "/api/auth/session" notSignedIn
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (checkoutEvent "checkout.completed")
+                        |> ProgramTest.ensureViewHas [ text "Payment received" ]
+                        |> ProgramTest.advanceTime 2000
+                        |> ProgramTest.expectHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 0)
+            ]
         , describe "Account"
             [ test "offers Pro to a Free account" <|
                 \() ->
@@ -3031,12 +3072,19 @@ type alias Flags =
     , canShare : Bool
     , sidebar : Maybe String
     , webGpu : Bool
+    , paddleClientToken : Maybe String
+    , paddleEnvironment : Maybe String
     }
 
 
 defaultFlags : Flags
 defaultFlags =
-    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False, sidebar = Nothing, webGpu = True }
+    { theme = Nothing, systemDark = False, entropy = 42, models = Nothing, stylist = Nothing, canShare = False, sidebar = Nothing, webGpu = True, paddleClientToken = Nothing, paddleEnvironment = Nothing }
+
+
+paddleFlags : Flags
+paddleFlags =
+    { defaultFlags | paddleClientToken = Just "test_token", paddleEnvironment = Just "sandbox" }
 
 
 ready : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
@@ -3336,6 +3384,8 @@ startAt path flags =
                 , ( "canShare", Encode.bool flags.canShare )
                 , ( "sidebar", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.sidebar) )
                 , ( "webGpu", Encode.bool flags.webGpu )
+                , ( "paddleClientToken", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.paddleClientToken) )
+                , ( "paddleEnvironment", Maybe.withDefault Encode.null (Maybe.map Encode.string flags.paddleEnvironment) )
                 ]
             )
 
