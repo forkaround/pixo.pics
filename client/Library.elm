@@ -77,6 +77,13 @@ type alias Picture =
     }
 
 
+type alias Row =
+    { stored : Stored
+    , tags : Maybe (List String)
+    , owner : Maybe String
+    }
+
+
 type alias Stored =
     { id : Int
     , url : String
@@ -177,12 +184,12 @@ readOwned row =
     Decode.decodeValue decoder row
         |> Result.toMaybe
         |> Maybe.andThen
-            (\row_ ->
-                fromStored row_.stored
+            (\found ->
+                fromStored found.stored
                     |> Maybe.map
                         (\picture ->
-                            ( { picture | tags = Maybe.map (List.filterMap Tag.fromString) row_.tags }
-                            , row_.owner
+                            ( { picture | tags = Maybe.map (List.filterMap Tag.fromString) found.tags }
+                            , found.owner
                             )
                         )
             )
@@ -199,9 +206,9 @@ saved event =
             Nothing
 
 
-decoder : Decoder { stored : Stored, tags : Maybe (List String), owner : Maybe String }
+decoder : Decoder Row
 decoder =
-    Decode.map3 (\row names by -> { stored = row, tags = names, owner = by })
+    Decode.map3 Row
         (Decode.map8 Stored
             (Decode.field "id" Decode.int)
             (Decode.field "blob" Decode.string)

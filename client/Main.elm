@@ -387,7 +387,7 @@ update msg model =
             step msg model
 
         ( followed, following ) =
-            follow model.session stepped
+            follow stepped
 
         ( asked, backfilled ) =
             backfill followed
@@ -395,10 +395,10 @@ update msg model =
     ( counted model asked, Batch [ effect, following, backfilled ] )
 
 
-follow : Session -> Model -> ( Model, Effect Msg )
-follow before model =
-    case ( before, model.session ) of
-        ( _, SignedIn account ) ->
+follow : Model -> ( Model, Effect Msg )
+follow model =
+    case model.session of
+        SignedIn account ->
             if Library.ownerOf model.library == Just account.username then
                 ( model, NoEffect )
 
@@ -416,10 +416,14 @@ follow before model =
                 in
                 ( entered, Batch [ released, loading ] )
 
-        ( SignedIn _, SignedOut ) ->
-            runLibrary model (Library.signedOut model.library)
+        SignedOut ->
+            if Library.ownerOf model.library == Nothing then
+                ( model, NoEffect )
 
-        _ ->
+            else
+                runLibrary model (Library.signedOut model.library)
+
+        Unknown ->
             ( model, NoEffect )
 
 
@@ -1315,22 +1319,24 @@ viewLibrary model =
 
 viewLibraryInvitation : Html Msg
 viewLibraryInvitation =
-    Empty.new
-        |> Empty.icon (Phosphor.slideshow Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
-        |> Empty.title [ text "Your library" ]
-        |> Empty.description [ text "Log in to save pictures and find them later." ]
-        |> Empty.content
-            [ Button.new
-                |> Button.text "Log in"
-                |> Button.small
-                |> Button.toAnchor [ href (Path.toString Path.SignIn) ]
-            , Button.new
-                |> Button.text "Create an account"
-                |> Button.small
-                |> Button.outline
-                |> Button.toAnchor [ href (Path.toString Path.SignUp) ]
-            ]
-        |> Empty.toHtml [ class "m-4 border" ]
+    div [ class "flex flex-1 flex-col" ]
+        [ Empty.new
+            |> Empty.icon (Phosphor.slideshow Bold |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+            |> Empty.title [ text "Your library" ]
+            |> Empty.description [ text "Log in to save pictures and find them later." ]
+            |> Empty.content
+                [ Button.new
+                    |> Button.text "Log in"
+                    |> Button.small
+                    |> Button.toAnchor [ href (Path.toString Path.SignIn) ]
+                , Button.new
+                    |> Button.text "Create an account"
+                    |> Button.small
+                    |> Button.outline
+                    |> Button.toAnchor [ href (Path.toString Path.SignUp) ]
+                ]
+            |> Empty.toHtml []
+        ]
 
 
 notFoundOptions : Session -> List (Html Msg)

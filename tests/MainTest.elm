@@ -2846,38 +2846,31 @@ pictureSave =
 
 
 stored : Int -> String -> String -> Int -> Int -> Encode.Value
-stored id url prompt width height =
-    Encode.object
-        [ ( "id", Encode.int id )
-        , ( "blob", Encode.string url )
-        , ( "prompt", Encode.string prompt )
-        , ( "width", Encode.int width )
-        , ( "height", Encode.int height )
-        , ( "steps", Encode.int 4 )
-        , ( "seed", Encode.int 7 )
-        , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
-        , ( "owner", Encode.string "ada" )
-        ]
+stored =
+    storedBy "ada"
+
+
+storedFields : Int -> String -> String -> Int -> Int -> List ( String, Encode.Value )
+storedFields id url prompt width height =
+    [ ( "id", Encode.int id )
+    , ( "blob", Encode.string url )
+    , ( "prompt", Encode.string prompt )
+    , ( "width", Encode.int width )
+    , ( "height", Encode.int height )
+    , ( "steps", Encode.int 4 )
+    , ( "seed", Encode.int 7 )
+    , ( "model", Encode.string "prism-ml/bonsai-image-ternary-4B-mlx-2bit" )
+    ]
 
 
 storedBy : String -> Int -> String -> String -> Int -> Int -> Encode.Value
 storedBy name id url prompt width height =
-    case Decode.decodeValue (Decode.keyValuePairs Decode.value) (stored id url prompt width height) of
-        Ok fields ->
-            Encode.object (List.filter (\( key, _ ) -> key /= "owner") fields ++ [ ( "owner", Encode.string name ) ])
-
-        Err _ ->
-            Encode.null
+    Encode.object (storedFields id url prompt width height ++ [ ( "owner", Encode.string name ) ])
 
 
 unowned : Int -> String -> String -> Int -> Int -> Encode.Value
 unowned id url prompt width height =
-    case Decode.decodeValue (Decode.keyValuePairs Decode.value) (stored id url prompt width height) of
-        Ok fields ->
-            Encode.object (List.filter (\( key, _ ) -> key /= "owner") fields)
-
-        Err _ ->
-            Encode.null
+    Encode.object (storedFields id url prompt width height)
 
 
 storedWithTags : List String -> Int -> String -> String -> Int -> Int -> Encode.Value
