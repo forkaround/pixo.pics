@@ -16,6 +16,9 @@ production, any other branch to a preview. The Neon project `pixo` (`small-lab-6
   The option is in the dashboard only (Storage, `pixo`, Connect Project); to check it:
   `vercel api "/v1/storage/stores?teamId=forkaround"` lists `preview` under
   `projectsMetadata[].deployments.actions`.
+- `DROPBOX_*`, `GOOGLE_*` and `SYNC_TOKEN_KEY` are per environment; the secrets and the key
+  are Vercel secrets. OAuth redirect URIs are registered exactly, so sync can be connected on
+  production and localhost, not on previews (their addresses change).
 - A preview's variables override the project's for that deployment and don't show in the
   project's settings.
 - Previews sit behind Vercel Authentication: request them with `vercel curl <url>` from a

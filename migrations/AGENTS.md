@@ -62,6 +62,8 @@ Migrations, the schema's conventions and row-level security. The SQL the server 
   `apply_paddle_subscription` trust that the server did. They are the only functions that
   take no secret.
 - `delete_expired()` exists, and nothing schedules it yet.
+- `pgcrypto` is installed for `sync_connections.refresh_token`; the key is a query parameter
+  from the server, never stored in the database.
 
 ## Row-level security
 
