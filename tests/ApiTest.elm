@@ -232,6 +232,9 @@ next route =
             Just Api.PostPasskeySignInOptions
 
         Api.PostPasskeySignInOptions ->
+            Just Api.PostBillingWebhook
+
+        Api.PostBillingWebhook ->
             Nothing
 
 

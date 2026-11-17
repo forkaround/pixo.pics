@@ -62,6 +62,28 @@ const verifySignature = async (key: Key, signed: string, signature: string) => {
   }
 };
 
+const fromHex = (value: string) =>
+  Uint8Array.from(value.match(/../g) ?? [], (pair) => parseInt(pair, 16));
+
+const verifyWebhook = async (secret: string, signed: string, signatures: string[]) => {
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const data = new TextEncoder().encode(signed);
+    for (const signature of signatures) {
+      if (await crypto.subtle.verify("HMAC", key, fromHex(signature), data)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+};
+
 //-- INIT
 
 const local = process.env.VERCEL ? null : "local";
@@ -107,6 +129,11 @@ const app = Elm.Main.init({
     releaseUrl: commitUrl(),
     region: process.env.VERCEL_REGION || local,
     local: local !== null,
+    paddleEnvironment: process.env.PADDLE_ENVIRONMENT || null,
+    paddleApiKey: process.env.PADDLE_API_KEY || null,
+    paddleWebhookSecret: process.env.PADDLE_WEBHOOK_SECRET || null,
+    paddleClientToken: process.env.PADDLE_CLIENT_TOKEN || null,
+    paddleProPriceId: process.env.PADDLE_PRO_PRICE_ID || null,
   },
 });
 
@@ -131,6 +158,16 @@ app.ports.interopFromElm.subscribe((msg) => {
           tag: "SignatureChecked",
           resolve: msg.resolve,
           signIn: msg.signIn,
+          valid,
+        }),
+      );
+
+    case "VerifyWebhook":
+      return void verifyWebhook(msg.secret, msg.signed, msg.signatures).then((valid) =>
+        app.ports.interopToElm.send({
+          tag: "WebhookChecked",
+          resolve: msg.resolve,
+          body: msg.body,
           valid,
         }),
       );
