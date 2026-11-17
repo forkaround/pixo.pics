@@ -85,6 +85,11 @@ server's log.
 | `ROOT_DATABASE_URL`     | A superuser, for `bun db reset` and the proxy                  |
 | `BREVO_API_KEY`         | Sends the sign-in emails; empty prints them to the log instead |
 | `EMAIL_FROM`            | The address those emails come from                             |
+| `PADDLE_ENVIRONMENT`    | `sandbox` or `production`; empty turns billing off             |
+| `PADDLE_API_KEY`        | Server-side Paddle API key                                     |
+| `PADDLE_WEBHOOK_SECRET` | Secret of the Paddle notification destination                  |
+| `PADDLE_CLIENT_TOKEN`   | Paddle.js client-side token                                    |
+| `PADDLE_PRO_PRICE_ID`   | The Pro price, `pri_...`                                       |
 
 ## Row-level security
 
