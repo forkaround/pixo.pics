@@ -8,13 +8,14 @@ import Reply exposing (Reply(..), withSession)
 import Request exposing (Request)
 import Response exposing (Response)
 import Server exposing (Server)
+import Services.Paddle as Paddle
 import SessionCookie
 
 
 type Msg
-    = Found Interop.Resolver (Maybe Api.Account)
+    = Found Interop.Resolver (Maybe ( Api.Account, List Db.Subscription ))
     | Ended Interop.Resolver
-    | Deleted Interop.Resolver Bool
+    | Deleted Interop.Resolver Db.Deletion
 
 
 current : Server -> Request -> Reply Msg
@@ -22,7 +23,7 @@ current server request =
     withSession
         request
         (\token resolver ->
-            transact server.db resolver "Session lookup failed" (Db.account token) (Found resolver)
+            transact server.db resolver "Session lookup failed" (Db.me token) (Found resolver)
         )
 
 
@@ -43,27 +44,33 @@ deleteAccount : Server -> Request -> Reply Msg
 deleteAccount server request =
     withSession request
         (\token resolver ->
-            query server.db resolver "Account deletion failed" (Db.deleteAccount token) (Deleted resolver)
+            transact server.db resolver "Account deletion failed" (Db.deleteAccount token) (Deleted resolver)
         )
 
 
 update : Server -> Msg -> Effect Msg
 update server msg =
     case msg of
-        Found resolver (Just account) ->
-            respond resolver (Response.json 200 (Api.encodeResponse Api.session account))
+        Found resolver (Just ( account, rows )) ->
+            respond resolver
+                (Response.json 200
+                    (Api.encodeResponse Api.session { account = account, billing = Paddle.billingOf rows })
+                )
 
         Found resolver Nothing ->
             respond resolver Response.notSignedIn
 
-        Deleted resolver True ->
+        Deleted resolver Db.Deleted ->
             respond resolver
                 (Response.json 200 (Api.encodeResponse Api.deleteAccount ())
                     |> SessionCookie.clear server.origin
                 )
 
-        Deleted resolver False ->
+        Deleted resolver Db.NotSignedIn ->
             respond resolver Response.notSignedIn
+
+        Deleted resolver Db.Renewing ->
+            respond resolver (Response.error 409 "Cancel Pro before deleting your account.")
 
         Ended resolver ->
             respond resolver (signedOut server)

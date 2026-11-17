@@ -2,12 +2,17 @@ module Api exposing
     ( Account
     , Assertion
     , Attestation
+    , Billing
     , Check
+    , Checkout
     , Endpoint
     , Health
+    , Me
     , Method(..)
     , Passkey
     , PasskeyOptions
+    , Plan(..)
+    , Portal
     , Problem(..)
     , Release
     , Route(..)
@@ -19,6 +24,7 @@ module Api exposing
     , addPasskey
     , bodyDecoder
     , checkNames
+    , checkout
     , checks
     , deleteAccount
     , deletePasskey
@@ -36,6 +42,7 @@ module Api exposing
     , passkeySignInOptions
     , passkeys
     , path
+    , portal
     , responseDecoder
     , route
     , session
@@ -76,6 +83,8 @@ type Route
     | PostPasskeySignIn
     | PostPasskeySignInOptions
     | PostBillingWebhook
+    | PostCheckout
+    | PostPortal
 
 
 type Method
@@ -137,6 +146,12 @@ method r =
         PostBillingWebhook ->
             Post
 
+        PostCheckout ->
+            Post
+
+        PostPortal ->
+            Post
+
 
 path : Route -> List String
 path r =
@@ -190,6 +205,12 @@ segments r =
 
         PostBillingWebhook ->
             [ "billing", "webhook" ]
+
+        PostCheckout ->
+            [ "billing", "checkout" ]
+
+        PostPortal ->
+            [ "billing", "portal" ]
 
 
 toString : Route -> String
@@ -272,6 +293,12 @@ routesAt rest =
         [ "billing", "webhook" ] ->
             [ PostBillingWebhook ]
 
+        [ "billing", "checkout" ] ->
+            [ PostCheckout ]
+
+        [ "billing", "portal" ] ->
+            [ PostPortal ]
+
         _ ->
             []
 
@@ -321,9 +348,19 @@ signIn =
     Endpoint { route = PostSignIn, body = JsonBody signInCodec, response = emptyCodec }
 
 
-session : Endpoint () Account
+session : Endpoint () Me
 session =
-    Endpoint { route = GetSession, body = NoBody (), response = accountCodec }
+    Endpoint { route = GetSession, body = NoBody (), response = meCodec }
+
+
+checkout : Endpoint () Checkout
+checkout =
+    Endpoint { route = PostCheckout, body = NoBody (), response = checkoutCodec }
+
+
+portal : Endpoint () Portal
+portal =
+    Endpoint { route = PostPortal, body = NoBody (), response = portalCodec }
 
 
 signOut : Endpoint () ()
@@ -500,6 +537,127 @@ accountCodec =
         Decode.map2 Account
             (Decode.field "email" Email.decoder)
             (Decode.field "username" Username.decoder)
+    }
+
+
+type alias Me =
+    { account : Account
+    , billing : Billing
+    }
+
+
+type Plan
+    = Free
+    | Pro
+
+
+type alias Billing =
+    { plan : Plan
+    , renewsAt : Maybe String
+    , endsAt : Maybe String
+    , pastDue : Bool
+    , canManage : Bool
+    }
+
+
+type alias Checkout =
+    { transactionId : String
+    , clientToken : String
+    , environment : String
+    }
+
+
+type alias Portal =
+    { url : String
+    }
+
+
+meCodec : Codec Me
+meCodec =
+    { encode =
+        \m ->
+            Encode.object
+                [ ( "email", Email.encode m.account.email )
+                , ( "username", Username.encode m.account.username )
+                , ( "billing", encodeBilling m.billing )
+                ]
+    , decoder =
+        Decode.map2 Me
+            accountCodec.decoder
+            (Decode.field "billing" billingDecoder)
+    }
+
+
+encodeBilling : Billing -> Encode.Value
+encodeBilling b =
+    Encode.object
+        [ ( "plan", Encode.string (planToString b.plan) )
+        , ( "renewsAt", encodeMaybeString b.renewsAt )
+        , ( "endsAt", encodeMaybeString b.endsAt )
+        , ( "pastDue", Encode.bool b.pastDue )
+        , ( "canManage", Encode.bool b.canManage )
+        ]
+
+
+encodeMaybeString : Maybe String -> Encode.Value
+encodeMaybeString =
+    Maybe.map Encode.string >> Maybe.withDefault Encode.null
+
+
+planToString : Plan -> String
+planToString plan =
+    case plan of
+        Free ->
+            "free"
+
+        Pro ->
+            "pro"
+
+
+billingDecoder : Decoder Billing
+billingDecoder =
+    Decode.map5 Billing
+        (Decode.field "plan" Decode.string |> Decode.andThen planDecoder)
+        (Decode.field "renewsAt" (Decode.nullable Decode.string))
+        (Decode.field "endsAt" (Decode.nullable Decode.string))
+        (Decode.field "pastDue" Decode.bool)
+        (Decode.field "canManage" Decode.bool)
+
+
+planDecoder : String -> Decoder Plan
+planDecoder name =
+    case name of
+        "free" ->
+            Decode.succeed Free
+
+        "pro" ->
+            Decode.succeed Pro
+
+        _ ->
+            Decode.fail ("Unknown plan: " ++ name)
+
+
+checkoutCodec : Codec Checkout
+checkoutCodec =
+    { encode =
+        \c ->
+            Encode.object
+                [ ( "transactionId", Encode.string c.transactionId )
+                , ( "clientToken", Encode.string c.clientToken )
+                , ( "environment", Encode.string c.environment )
+                ]
+    , decoder =
+        Decode.map3 Checkout
+            (Decode.field "transactionId" Decode.string)
+            (Decode.field "clientToken" Decode.string)
+            (Decode.field "environment" Decode.string)
+    }
+
+
+portalCodec : Codec Portal
+portalCodec =
+    { encode = \p -> Encode.object [ ( "url", Encode.string p.url ) ]
+    , decoder = Decode.map Portal (Decode.field "url" Decode.string)
     }
 
 

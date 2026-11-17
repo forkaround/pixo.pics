@@ -72,9 +72,28 @@ suite =
         , describe "session"
             [ test "encodes what it decodes" <|
                 \() ->
-                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada"}"""
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}"""
                         |> Result.map (Api.encodeResponse Api.session >> Encode.encode 0)
-                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada"}""")
+                        |> Expect.equal (Ok """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}""")
+            , test "refuses an unknown plan" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder Api.session) """{"email":"ada@example.com","username":"ada","billing":{"plan":"gold","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false}}"""
+                        |> Result.toMaybe
+                        |> Expect.equal Nothing
+            ]
+        , describe "checkout"
+            [ test "encodes what it decodes" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder Api.checkout) """{"transactionId":"txn_01","clientToken":"test_token","environment":"sandbox"}"""
+                        |> Result.map (Api.encodeResponse Api.checkout >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"transactionId":"txn_01","clientToken":"test_token","environment":"sandbox"}""")
+            ]
+        , describe "portal"
+            [ test "encodes what it decodes" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder Api.portal) """{"url":"https://example.com/x"}"""
+                        |> Result.map (Api.encodeResponse Api.portal >> Encode.encode 0)
+                        |> Expect.equal (Ok """{"url":"https://example.com/x"}""")
             ]
         , describe "verification"
             [ test "encodes what it decodes" <|
@@ -235,6 +254,12 @@ next route =
             Just Api.PostBillingWebhook
 
         Api.PostBillingWebhook ->
+            Just Api.PostCheckout
+
+        Api.PostCheckout ->
+            Just Api.PostPortal
+
+        Api.PostPortal ->
             Nothing
 
 
