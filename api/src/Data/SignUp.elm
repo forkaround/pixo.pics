@@ -15,4 +15,4 @@ parse : Api.SignUp -> Result String SignUp
 parse { email, username } =
     Result.map2 SignUp
         (Email.parse email)
-        (Username.parse username)
+        (Username.claim username)

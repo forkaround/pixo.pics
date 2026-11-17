@@ -54,6 +54,16 @@ suite =
                     , "<b>ada</b>"
                     ]
                 )
+            , describe "refuses a reserved username"
+                (List.map
+                    (\username ->
+                        test ("like " ++ Debug.toString username) <|
+                            \() ->
+                                parsed { email = "ada@example.com", username = username }
+                                    |> Expect.equal (Err "That username is reserved.")
+                    )
+                    [ "studio", "Library", " settings ", "404", "pricing" ]
+                )
             ]
         ]
 
