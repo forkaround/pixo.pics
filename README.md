@@ -100,6 +100,7 @@ server's log.
 | `R2_BUCKET`             | The public bucket served from `IMAGES_ORIGIN`                                       |
 | `R2_UPLOAD_BUCKET`      | The private bucket browsers upload to before the server checks and copies a picture |
 | `IMAGES_ORIGIN`         | Where published pictures are served, `https://img.pixo.pics`                        |
+| `MODERATION_EMAIL`      | Where the first report of a picture is emailed; empty sends none                    |
 
 ## Row-level security
 

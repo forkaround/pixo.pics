@@ -14,14 +14,15 @@ schema and every grant in `migrations/schema.sql`, routes in `shared/Api.elm`, p
 Each area has its own guide, with the reasons behind its rules. Read it before changing
 anything there.
 
-| Editing                                                       | Read                                                 |
-| ------------------------------------------------------------- | ---------------------------------------------------- |
-| `api/`: flows, answers, queries, emails, server tests         | [api/AGENTS.md](api/AGENTS.md)                       |
-| `client/`: pages, session, ports, UI                          | [client/AGENTS.md](client/AGENTS.md)                 |
-| `tests/`: browser tests                                       | [tests/AGENTS.md](tests/AGENTS.md)                   |
-| `migrations/`, any SQL, row-level security                    | [migrations/AGENTS.md](migrations/AGENTS.md)         |
-| `.env`, running the app or the database locally, the proxy    | [docs/agents/local-env.md](docs/agents/local-env.md) |
-| Vercel, previews, Neon branches, production roles and secrets | [docs/agents/vercel.md](docs/agents/vercel.md)       |
+| Editing                                                       | Read                                                   |
+| ------------------------------------------------------------- | ------------------------------------------------------ |
+| `api/`: flows, answers, queries, emails, server tests         | [api/AGENTS.md](api/AGENTS.md)                         |
+| `client/`: pages, session, ports, UI                          | [client/AGENTS.md](client/AGENTS.md)                   |
+| `tests/`: browser tests                                       | [tests/AGENTS.md](tests/AGENTS.md)                     |
+| `migrations/`, any SQL, row-level security                    | [migrations/AGENTS.md](migrations/AGENTS.md)           |
+| `.env`, running the app or the database locally, the proxy    | [docs/agents/local-env.md](docs/agents/local-env.md)   |
+| Reports, takedowns, moderation                                | [docs/agents/moderation.md](docs/agents/moderation.md) |
+| Vercel, previews, Neon branches, production roles and secrets | [docs/agents/vercel.md](docs/agents/vercel.md)         |
 
 ## Commands
 
