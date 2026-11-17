@@ -13,9 +13,9 @@ module Api exposing
     , PasskeyOptions
     , Plan(..)
     , Portal
+    , Problem(..)
     , Publication
     , Published
-    , Problem(..)
     , Release
     , Route(..)
     , SignIn
