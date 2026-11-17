@@ -21,7 +21,7 @@ Read when handling a reported picture or touching reports and takedowns.
   serve the old copy once more while refreshing.
 
 - Delete the file: Cloudflare dashboard, R2, bucket `pixo-pictures`, the object with that
-  key, Delete. Or: `bunx wrangler r2 object delete pixo-pictures/<key> --remote`
+  key, Delete. Or: `cf r2 buckets objects delete <key> --bucket-name pixo-pictures --force`.
 - Purge it from Cloudflare's cache: Caching, Configuration, Purge cache, Custom purge, the
   URL `https://img.pixo.pics/<key>`. Browsers may keep it up to an hour (`max-age=3600`).
 - Not a problem:
