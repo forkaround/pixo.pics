@@ -90,6 +90,22 @@ suite =
                     Decode.decodeString Username.decoder "\"ad\""
                         |> Result.toMaybe
                         |> Expect.equal Nothing
+            , test "still decodes a reserved name that already exists" <|
+                \() ->
+                    Decode.decodeString Username.decoder "\"studio\""
+                        |> Result.mapError (\_ -> ())
+                        |> Result.map Username.toString
+                        |> Expect.equal (Ok "studio")
+            , test "claims a free name" <|
+                \() ->
+                    Username.claim " Ada_99 "
+                        |> Result.map Username.toString
+                        |> Expect.equal (Ok "ada_99")
+            , test "refuses to claim a reserved name" <|
+                \() ->
+                    Username.claim "Studio"
+                        |> Result.map Username.toString
+                        |> Expect.equal (Err "That username is reserved.")
             , test "encodes as its text" <|
                 \() ->
                     Username.parse "ada_99"
