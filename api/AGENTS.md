@@ -27,6 +27,12 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   Brevo before answering.
 - `log Interop.Info|Warn|Error message`: `app.ts` calls `console[level]`, which Vercel
   reads as the level.
+- `Effect.Http` sends a `JsonBody`, a `FormBody` (`application/x-www-form-urlencoded`) or an
+  `EmptyBody`. The server never sends picture bytes: uploads use presigned links.
+- `Hmac` and `SigV4` sign requests in Elm. `SigV4.sign` returns the headers to send and never a
+  `host` header: `fetch` sets it from the URL. Never sign `content-type` on a request with a body:
+  `elm/http` sets it from the body, and a second one would break the signature.
+  `SigV4.presign` makes a short-lived link (query signing) that the browser can use itself.
 - Elm can't check a signature, so `app.ts` does, with WebCrypto, and nothing else:
   `VerifySignature`, answered by `SignatureChecked` with the `signIn` it was given, as
   the model keeps nothing between the two. Attestation is `none`: nothing proves which
