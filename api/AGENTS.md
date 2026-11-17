@@ -87,6 +87,8 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   owners who aren't Pro: a lapsed subscription hides, never deletes. Their answers are the
   same for every visitor and cached by the CDN for a minute (`Response.shared`): never put
   anything about the visitor in them, and never read or set a cookie on those routes.
+- Reports store a reason and a time, never who reported. `take_down_picture` and
+  `dismiss_reports` are the owner's, run by hand; `api` can't execute them.
 
 ## Adding a route
 
