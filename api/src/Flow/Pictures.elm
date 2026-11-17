@@ -248,8 +248,14 @@ update server msg =
                 Rechecked resolver _ _ ->
                     respond resolver (Response.error 409 "Publish it again.")
 
-                PublicRemoved resolver token id time done _ ->
+                PublicRemoved resolver token id time done (Ok ()) ->
                     Effect.map (StagedRemoved resolver token id done) (R2.deleteStaged storage time id)
+
+                PublicRemoved resolver _ id _ _ (Err reason) ->
+                    Batch
+                        [ respond resolver (Response.error 503 "Couldn't store the picture.")
+                        , log Interop.Error ("R2 delete failed for " ++ PictureId.toString id ++ ": " ++ reason)
+                        ]
 
                 StagedRemoved resolver token id done _ ->
                     transact server.db resolver "Picture removal failed" (Db.dropPicture token id) (Dropped resolver done)
