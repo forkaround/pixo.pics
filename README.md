@@ -6,10 +6,11 @@ you are.
 
 | Page     | Does                                                                                          |
 | -------- | --------------------------------------------------------------------------------------------- |
-| Explore  | What people are making                                                                        |
+| Explore  | The newest pictures people published                                                          |
 | Studio   | Writes a picture from a prompt; a small language model can rewrite the prompt                 |
 | Library  | The pictures you kept, in this browser's IndexedDB, with search and sharing; needs an account |
 | Settings | About (release, region, latency), the models you downloaded, your account                     |
+| Profile  | `/<username>`: a Pro user's published pictures                                                |
 
 No account is needed to make pictures. An account signs in with a passkey or a link by
 email; the server keeps the account, its passkeys, sessions and Pro subscription. Pro, $5 a

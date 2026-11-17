@@ -37,6 +37,9 @@ A page with state of its own is a module in `client/Page/`. A new one is:
 2. A `Path` variant, with its line in `Path.parse`'s parser.
 3. A `Main.Msg` variant.
 4. Its branches in `open`, `update`, `title` and `viewBody`.
+5. A page at the root (`/<something>`) must add its first segment to `Username.reserved`
+   (`shared/Data/Username.elm`), or it could take a profile's address. Profiles parse last in
+   `Path.parse`.
 
 ## Ports
 
