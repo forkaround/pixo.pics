@@ -26,6 +26,9 @@ IndexedDB for Elm and know nothing of pictures.
   (`Library.markPublished`, label `published`). Publishing re-encodes the picture as a JPEG in
   `client/jpeg.ts` and uploads it with `client/send.ts`; `client/Publish.elm` decides
   everything else.
+- A row's `synced` maps a provider to where its copy went in the user's Dropbox or Google
+  Drive (`Library.markSynced`, label `synced`); `client/Sync.elm` decides when to copy
+  (`docs/agents/sync.md`).
 - Search (`client/Bm25.elm`) folds accents by hand, since Elm has no Unicode
   normalisation: a Latin letter missing from `plain` is added there.
 - A picture has no address to share, so sharing hands over the file: a network copies

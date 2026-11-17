@@ -1,4 +1,4 @@
-module Page.Sync exposing (Model, Msg, Outcome(..), init, outcome, toasts, update, view)
+module Page.Sync exposing (Model, Msg(..), Outcome(..), init, outcome, toasts, update, view)
 
 import Api exposing (SyncProvider(..))
 import ApiClient
@@ -11,6 +11,7 @@ import Notice
 import Path
 import Phosphor exposing (IconWeight(..))
 import Session exposing (Session)
+import Sync
 import UI.Button as Button
 import UI.Card as Card
 import UI.Empty as Empty
@@ -85,6 +86,7 @@ type Msg
     | DisconnectClicked SyncProvider
     | DisconnectRetried SyncProvider
     | GotDisconnected SyncProvider (Result ApiClient.Error ())
+    | ResumeClicked SyncProvider
 
 
 type Outcome
@@ -120,6 +122,9 @@ outcome msg =
             Unchanged
 
         GotDisconnected _ (Err _) ->
+            Unchanged
+
+        ResumeClicked _ ->
             Unchanged
 
 
@@ -206,6 +211,9 @@ update msg model =
             , Notify { id = syncToast, tone = Notice.Success, title = Api.providerName provider ++ " disconnected", description = Nothing, retry = Notice.NoRetry }
             )
 
+        ResumeClicked _ ->
+            ( model, NoEffect )
+
         GotDisconnected provider (Err error) ->
             if Dict.get (key provider) model.busy == Just Disconnecting then
                 ( settled provider error model
@@ -268,8 +276,8 @@ syncToast =
 -- VIEW
 
 
-view : Session -> Maybe Api.Me -> Model -> List (Html Msg)
-view session me model =
+view : Session -> Maybe Api.Me -> (SyncProvider -> Sync.Status) -> Model -> List (Html Msg)
+view session me progress model =
     case session of
         Session.SignedOut ->
             [ Empty.new
@@ -288,7 +296,7 @@ view session me model =
         _ ->
             case me of
                 Nothing ->
-                    List.map (viewProvider Nothing) Api.providers
+                    List.map (viewProvider progress Nothing) Api.providers
 
                 Just found ->
                     case found.billing.plan of
@@ -296,7 +304,7 @@ view session me model =
                             [ viewFree ]
 
                         Api.Pro ->
-                            List.map (viewProvider (Just ( connections found model, model.busy ))) Api.providers
+                            List.map (viewProvider progress (Just ( connections found model, model.busy ))) Api.providers
 
 
 connections : Api.Me -> Model -> List Api.SyncConnection
@@ -319,8 +327,8 @@ viewFree =
         |> Card.toHtml cardClasses
 
 
-viewProvider : Maybe ( List Api.SyncConnection, Dict String Busy ) -> SyncProvider -> Html Msg
-viewProvider known provider =
+viewProvider : (SyncProvider -> Sync.Status) -> Maybe ( List Api.SyncConnection, Dict String Busy ) -> SyncProvider -> Html Msg
+viewProvider progress known provider =
     let
         name =
             Api.providerName provider
@@ -350,7 +358,10 @@ viewProvider known provider =
                 Just _ ->
                     case connected of
                         Just connection ->
-                            [ p [ class "text-sm text-muted-foreground" ] [ text ("Connected " ++ String.left 10 connection.connectedAt) ]
+                            [ div [ class "flex flex-col gap-1" ]
+                                [ p [ class "text-sm text-muted-foreground" ] [ text ("Connected " ++ String.left 10 connection.connectedAt) ]
+                                , viewProgress provider (progress provider)
+                                ]
                             , Button.new
                                 |> Button.text
                                     (if busy == Just Disconnecting then
@@ -399,6 +410,32 @@ viewProvider known provider =
                             ]
             )
         |> Card.toHtml cardClasses
+
+
+viewProgress : SyncProvider -> Sync.Status -> Html Msg
+viewProgress provider state =
+    case state of
+        Sync.Off ->
+            text ""
+
+        Sync.Copying { done, total } ->
+            p [ class "text-sm text-muted-foreground" ] [ text ("Copying " ++ String.fromInt done ++ " of " ++ String.fromInt total) ]
+
+        Sync.Done { total } ->
+            p [ class "text-sm text-muted-foreground" ] [ text (String.fromInt total ++ " of " ++ String.fromInt total ++ " copied") ]
+
+        Sync.Stopped reason ->
+            div [ class "flex flex-wrap items-center gap-2" ]
+                [ p [ class "text-sm text-muted-foreground" ] [ text ("Stopped: " ++ reason) ]
+                , Button.new
+                    |> Button.text "Try again"
+                    |> Button.outline
+                    |> Button.small
+                    |> Button.toHtml
+                        [ onClick (ResumeClicked provider)
+                        , attribute "aria-label" ("Try again " ++ Api.providerName provider)
+                        ]
+                ]
 
 
 description : SyncProvider -> String

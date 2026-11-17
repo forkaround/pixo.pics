@@ -12,7 +12,10 @@ module Library exposing
     , fileName
     , find
     , init
+    , loaded
+    , loadedPictures
     , markPublished
+    , markSynced
     , modelName
     , ownerOf
     , saveOf
@@ -22,10 +25,12 @@ module Library exposing
     , tags
     , unpublished
     , untagged
+    , untouched
     , update
     , visible
     )
 
+import Api exposing (SyncProvider)
 import Bm25
 import Data.Dimension as Dimension
 import Data.PictureId as PictureId exposing (PictureId)
@@ -34,7 +39,7 @@ import Data.Seed as Seed
 import Data.Steps as Steps
 import Data.Tag as Tag exposing (Tag)
 import Data.Username as Username exposing (Username)
-import Dict
+import Dict exposing (Dict)
 import Idb
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode exposing (Value)
@@ -78,6 +83,7 @@ type alias Picture =
     , model : String
     , tags : Maybe (List Tag)
     , published : Maybe PictureId
+    , synced : Dict String String
     }
 
 
@@ -86,6 +92,7 @@ type alias Row =
     , tags : Maybe (List String)
     , owner : Maybe String
     , published : Maybe String
+    , synced : Dict String String
     }
 
 
@@ -153,6 +160,11 @@ publishing =
     "published"
 
 
+syncing : String
+syncing =
+    "synced"
+
+
 load : Command
 load =
     Database (Idb.GetAll { database = database, store = store, label = "" })
@@ -201,6 +213,7 @@ readOwned row =
                             ( { picture
                                 | tags = Maybe.map (List.filterMap Tag.fromString) found.tags
                                 , published = Maybe.andThen PictureId.fromString found.published
+                                , synced = found.synced
                               }
                             , found.owner
                             )
@@ -221,7 +234,7 @@ saved event =
 
 decoder : Decoder Row
 decoder =
-    Decode.map4 Row
+    Decode.map5 Row
         (Decode.map8 Stored
             (Decode.field "id" Decode.int)
             (Decode.field "blob" Decode.string)
@@ -235,6 +248,13 @@ decoder =
         (Decode.maybe (Decode.field "tags" (Decode.list Decode.string)))
         (Decode.maybe (Decode.field "owner" Decode.string))
         (Decode.maybe (Decode.field "published" Decode.string))
+        (Decode.map (Maybe.withDefault Dict.empty) (Decode.maybe (Decode.field "synced" syncedDecoder)))
+
+
+syncedDecoder : Decoder (Dict String String)
+syncedDecoder =
+    Decode.dict (Decode.maybe Decode.string)
+        |> Decode.map (Dict.toList >> List.filterMap (\( key, value ) -> Maybe.map (Tuple.pair key) value) >> Dict.fromList)
 
 
 fromStored : Stored -> Maybe Picture
@@ -247,6 +267,7 @@ fromStored stored =
             , model = stored.model
             , tags = Nothing
             , published = Nothing
+            , synced = Dict.empty
             }
         )
         (Prompt.parse stored.prompt)
@@ -510,6 +531,67 @@ markPublished id published model =
             ( model, [] )
 
 
+loaded : Model -> Bool
+loaded model =
+    case model.pictures of
+        Loaded _ ->
+            True
+
+        _ ->
+            False
+
+
+untouched : Model -> Bool
+untouched model =
+    model.pictures == NotLoaded
+
+
+markSynced : Int -> SyncProvider -> String -> Model -> ( Model, List Command )
+markSynced id provider reference model =
+    case find id model of
+        Just found ->
+            let
+                newSynced =
+                    Dict.insert (Api.providerToString provider) reference found.synced
+            in
+            ( shelve
+                (List.map
+                    (\picture ->
+                        if picture.id == id then
+                            { picture | synced = newSynced }
+
+                        else
+                            picture
+                    )
+                    (loadedPictures model)
+                )
+                model
+            , [ Database
+                    (Idb.Patch
+                        { database = database
+                        , store = store
+                        , key = Encode.int id
+                        , fields = [ ( "synced", Encode.dict identity Encode.string newSynced ) ]
+                        , label = syncing
+                        }
+                    )
+              ]
+            )
+
+        Nothing ->
+            ( model, [] )
+
+
+loadedPictures : Model -> List Picture
+loadedPictures model =
+    case model.pictures of
+        Loaded pictures ->
+            pictures
+
+        _ ->
+            []
+
+
 unpublished : PictureId -> Model -> ( Model, List Command )
 unpublished remote model =
     case model.pictures of
@@ -709,7 +791,7 @@ happened event model =
             ( model, [] )
 
         Answered (Idb.Failed { label, message }) ->
-            if label == tagging || label == claiming || label == publishing then
+            if label == tagging || label == claiming || label == publishing || label == syncing then
                 ( model, [] )
 
             else if model.pictures == Loading then

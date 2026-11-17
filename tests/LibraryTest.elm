@@ -1,8 +1,10 @@
 module LibraryTest exposing (suite)
 
+import Api
 import Data.PictureId as PictureId
 import Data.Tag as Tag exposing (Tag)
 import Data.Username as Username
+import Dict
 import Expect
 import Idb
 import Json.Decode as Decode
@@ -409,6 +411,26 @@ suite =
                         |> .notice
                         |> Expect.equal Nothing
             ]
+        , describe "synced pictures"
+            [ test "load with the references their row holds" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Rows { label = "", rows = [ withSynced (Encode.object [ ( "dropbox", Encode.string "/pixo-7.png" ), ( "google-drive", Encode.int 3 ) ]) fox, row lighthouse ] })) ] opening
+                        |> Library.visible
+                        |> List.map (\picture -> ( picture.id, Dict.toList picture.synced ))
+                        |> Expect.equal [ ( 2, [] ), ( 1, [ ( "dropbox", "/pixo-7.png" ) ] ) ]
+            , test "keep the other provider's entry in the patch" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Rows { label = "", rows = [ withSynced (Encode.object [ ( "dropbox", Encode.string "/pixo-7.png" ) ]) fox ] })) ] opening
+                        |> Library.markSynced 1 Api.GoogleDrive "F1"
+                        |> Tuple.second
+                        |> List.map patched
+                        |> Expect.equal [ "pictures:1:synced:{\"synced\":{\"dropbox\":\"/pixo-7.png\",\"google-drive\":\"F1\"}}" ]
+            , test "ignore a synced patch that failed" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Failed { label = "synced", message = "The database is blocked." })) ] loaded
+                        |> .notice
+                        |> Expect.equal Nothing
+            ]
         , describe "sharing"
             [ test "copies the picture, then opens the network with the prompt" <|
                 \() ->
@@ -581,6 +603,22 @@ withPublishedValue published stored =
         , ( "model", Encode.string stored.model )
         , ( "owner", Encode.string "ada" )
         , ( "published", published )
+        ]
+
+
+withSynced : Value -> Row -> Value
+withSynced synced stored =
+    Encode.object
+        [ ( "id", Encode.int stored.id )
+        , ( "blob", Encode.string stored.blob )
+        , ( "prompt", Encode.string stored.prompt )
+        , ( "width", Encode.int stored.width )
+        , ( "height", Encode.int stored.height )
+        , ( "steps", Encode.int stored.steps )
+        , ( "seed", Encode.int stored.seed )
+        , ( "model", Encode.string stored.model )
+        , ( "owner", Encode.string "ada" )
+        , ( "synced", synced )
         ]
 
 
