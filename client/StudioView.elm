@@ -15,6 +15,7 @@ import Overlay exposing (glass, solid)
 import Path
 import Phosphor exposing (IconWeight(..))
 import Pipeline exposing (Component(..), Device(..), Draft(..), Engine(..), Model, Msg(..), NumberField(..), Seeding(..), Stage(..))
+import Session exposing (Session(..))
 import Stylist
 import SupportView
 import UI.Button as Button
@@ -701,11 +702,11 @@ componentName component =
 -- CANVAS
 
 
-canvas : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Model -> Html msg
-canvas toMsg library model =
+canvas : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Session -> Library.Model -> Model -> Html msg
+canvas toMsg session library model =
     let
         pictures =
-            List.map (viewPicture toMsg library) model.pictures
+            List.map (viewPicture toMsg session library) model.pictures
     in
     div [ class "mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-10 p-4 md:p-8" ]
         (case ( model.device, pictures ) of
@@ -784,8 +785,8 @@ frame job =
     ]
 
 
-viewPicture : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Pipeline.Picture -> Html msg
-viewPicture toMsg library picture =
+viewPicture : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Session -> Library.Model -> Pipeline.Picture -> Html msg
+viewPicture toMsg session library picture =
     let
         job =
             picture.job
@@ -823,14 +824,14 @@ viewPicture toMsg library picture =
                         ]
                     )
                 ]
-            , div [ class "pointer-events-auto flex flex-wrap items-center gap-1.5" ] (actions toMsg library picture)
+            , div [ class "pointer-events-auto flex flex-wrap items-center gap-1.5" ] (actions toMsg session library picture)
             ]
         ]
 
 
-actions : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Library.Model -> Pipeline.Picture -> List (Html msg)
-actions toMsg library picture =
-    [ viewSave (toMsg.library (Library.SaveClicked picture)) (Library.saveOf picture.url library)
+actions : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Session -> Library.Model -> Pipeline.Picture -> List (Html msg)
+actions toMsg session library picture =
+    [ viewSave session (toMsg.library (Library.SaveClicked picture)) (Library.saveOf picture.url library)
     , Button.new
         |> Button.icon (Phosphor.downloadSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
         |> Button.label "Download"
@@ -849,8 +850,8 @@ lightboxOpen model =
     model.zoomed && List.any (\picture -> Just picture.url == model.viewing) model.pictures
 
 
-lightbox : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Html msg -> Library.Model -> Model -> Html msg
-lightbox toMsg toasts library model =
+lightbox : { pipeline : Msg -> msg, library : Library.Msg -> msg } -> Session -> Html msg -> Library.Model -> Model -> Html msg
+lightbox toMsg session toasts library model =
     Lightbox.view
         { id = "studio-picture"
         , open = lightboxOpen model
@@ -868,14 +869,35 @@ lightbox toMsg toasts library model =
                     , job = picture.job
                     , model = Pipeline.weightsName picture.weights
                     , pinned = False
-                    , actions = actions toMsg library picture
+                    , actions = actions toMsg session library picture
                     }
                 )
         )
 
 
-viewSave : msg -> Library.Save -> Html msg
-viewSave onSave save =
+viewSave : Session -> msg -> Library.Save -> Html msg
+viewSave session onSave save =
+    case session of
+        SignedIn _ ->
+            viewSaveState onSave save
+
+        SignedOut ->
+            Button.new
+                |> Button.text "Log in to save"
+                |> Button.small
+                |> Button.startIcon (Phosphor.bookmarkSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Button.toAnchor [ href (Path.toString Path.SignIn), solid ]
+
+        Unknown ->
+            Button.new
+                |> Button.text "Save"
+                |> Button.small
+                |> Button.startIcon (Phosphor.bookmarkSimple Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Button.toHtml [ disabled True, class "invisible", solid ]
+
+
+viewSaveState : msg -> Library.Save -> Html msg
+viewSaveState onSave save =
     case save of
         Library.Unsaved ->
             Button.new

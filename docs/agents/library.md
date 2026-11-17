@@ -17,6 +17,11 @@ IndexedDB for Elm and know nothing of pictures.
 - Every `Idb.Event` goes to the library, the driver's only user
   (`InteropDefinitions.answered`): a second user needs them told apart, by `label`.
 - A stored row that doesn't parse into a `Picture` is left out, not an error.
+- Saving and `/library` need an account. Each row has an `owner`, the username that
+  saved it; the library shows only the signed-in account's rows. Rows saved before
+  accounts have no `owner` and are claimed by the first account to open the library in
+  that browser (`Idb.Patch`, label `owner`). Signing out empties the model and releases
+  its object URLs.
 - Search (`client/Bm25.elm`) folds accents by hand, since Elm has no Unicode
   normalisation: a Latin letter missing from `plain` is added there.
 - A picture has no address to share, so sharing hands over the file: a network copies

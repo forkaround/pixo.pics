@@ -1,6 +1,7 @@
 module LibraryTest exposing (suite)
 
 import Data.Tag as Tag exposing (Tag)
+import Data.Username as Username
 import Expect
 import Idb
 import Json.Decode as Decode
@@ -18,7 +19,7 @@ suite =
         [ describe "pictures"
             [ test "are asked for on the first visit only" <|
                 \() ->
-                    Library.enter (Library.init False)
+                    Library.enter (asAda (Library.init False))
                         |> Tuple.mapFirst (Library.enter >> Tuple.second)
                         |> Expect.equal ( [], [ getAll ] )
             , test "are asked for again after they could not be read" <|
@@ -99,6 +100,21 @@ suite =
                         |> Library.visible
                         |> Expect.equal []
             ]
+        , describe "owner"
+            [ test "releases the loaded pictures and starts over when another account signs in" <|
+                \() ->
+                    case Username.parse "bob" of
+                        Ok name ->
+                            Library.signedIn name loaded
+                                |> Tuple.mapFirst (\model -> ( model.pictures, Library.ownerOf model == Just name ))
+                                |> Expect.equal
+                                    ( ( NotLoaded, True )
+                                    , [ Database (Idb.Release [ "blob:3", "blob:2", "blob:1" ]) ]
+                                    )
+
+                        Err message ->
+                            Expect.fail message
+            ]
         , describe "saving"
             [ test "marks the picture while it is stored, then as saved" <|
                 \() ->
@@ -140,11 +156,16 @@ suite =
                         |> Expect.equal
                             [ { database = "pixo"
                               , store = "pictures"
-                              , row = "{\"prompt\":\"a red fox in the snow\",\"width\":1024,\"height\":1024,\"steps\":4,\"seed\":578021833,\"model\":\"prism-ml/bonsai-image-ternary-4B-mlx-2bit\"}"
+                              , row = "{\"prompt\":\"a red fox in the snow\",\"width\":1024,\"height\":1024,\"steps\":4,\"seed\":578021833,\"model\":\"prism-ml/bonsai-image-ternary-4B-mlx-2bit\",\"owner\":\"ada\"}"
                               , blobs = [ ( "blob", "blob:studio" ) ]
                               , label = "blob:studio"
                               }
                             ]
+            , test "sends nothing without an owner" <|
+                \() ->
+                    List.map (\picture -> Library.update (SaveClicked picture) (Library.init False)) made
+                        |> List.map (Tuple.second >> List.length)
+                        |> Expect.equal [ 0 ]
             , test "lets a picture be saved again after it could not be stored" <|
                 \() ->
                     List.map
@@ -391,9 +412,19 @@ suite =
         ]
 
 
+asAda : Library.Model -> Library.Model
+asAda model =
+    case Username.parse "ada" of
+        Ok name ->
+            Tuple.first (Library.signedIn name model)
+
+        Err _ ->
+            model
+
+
 opening : Library.Model
 opening =
-    Library.enter (Library.init False)
+    Library.enter (asAda (Library.init False))
         |> Tuple.first
 
 
@@ -492,6 +523,7 @@ withTags names stored =
         , ( "seed", Encode.int stored.seed )
         , ( "model", Encode.string stored.model )
         , ( "tags", Encode.list Encode.string names )
+        , ( "owner", Encode.string "ada" )
         ]
 
 
@@ -538,6 +570,7 @@ row stored =
         , ( "steps", Encode.int stored.steps )
         , ( "seed", Encode.int stored.seed )
         , ( "model", Encode.string stored.model )
+        , ( "owner", Encode.string "ada" )
         ]
 
 
