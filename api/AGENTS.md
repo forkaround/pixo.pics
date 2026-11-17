@@ -82,6 +82,11 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   `published_pictures.tags`, a `text[]` with a GIN index, so the feed can filter by one.
 - A presigned URL is a credential until it expires: never log one.
 - `removed_at` is for moderation; `api` can't write it.
+- The feed, the top tags and profiles read through `feed_pictures` (optionally by one tag),
+  `feed_tags` and `profile`, which return only public columns and skip removed pictures and
+  owners who aren't Pro: a lapsed subscription hides, never deletes. Their answers are the
+  same for every visitor and cached by the CDN for a minute (`Response.shared`): never put
+  anything about the visitor in them, and never read or set a cookie on those routes.
 
 ## Adding a route
 
