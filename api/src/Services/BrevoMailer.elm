@@ -35,19 +35,20 @@ send { apiKey, from } { to, tag } message =
             ]
         , url = endpoint
         , body =
-            Encode.object
-                [ ( "sender"
-                  , Encode.object
-                        [ ( "email", Encode.string (Email.toString from) )
-                        , ( "name", Encode.string "pixo" )
-                        ]
-                  )
-                , ( "to", Encode.list (\address -> Encode.object [ ( "email", Encode.string (Email.toString address) ) ]) [ to ] )
-                , ( "subject", Encode.string message.subject )
-                , ( "htmlContent", Encode.string message.html )
-                , ( "textContent", Encode.string message.text )
-                , ( "tags", Encode.list Encode.string [ tag ] )
-                ]
+            Effect.JsonBody <|
+                Encode.object
+                    [ ( "sender"
+                      , Encode.object
+                            [ ( "email", Encode.string (Email.toString from) )
+                            , ( "name", Encode.string "pixo" )
+                            ]
+                      )
+                    , ( "to", Encode.list (\address -> Encode.object [ ( "email", Encode.string (Email.toString address) ) ]) [ to ] )
+                    , ( "subject", Encode.string message.subject )
+                    , ( "htmlContent", Encode.string message.html )
+                    , ( "textContent", Encode.string message.text )
+                    , ( "tags", Encode.list Encode.string [ tag ] )
+                    ]
         , timeout = Just timeout
         , onResponse = outcome
         }
