@@ -4,6 +4,7 @@ import Api
 import Data.CredentialId as CredentialId
 import Data.PictureId as PictureId
 import Data.Tag as Tag
+import Data.Username as Username
 import Expect
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -41,6 +42,23 @@ suite =
                    , test "finds no picture to delete at a bad id" <|
                         \() ->
                             Api.parse "DELETE" [ "api", "pictures", "nope" ]
+                                |> Expect.equal (Err Api.NotFound)
+                   , test "round-trips a tag with a space" <|
+                        \() ->
+                            case Tag.fromString "sea life" of
+                                Just tag ->
+                                    Api.parse "GET" (Api.path (Api.GetFeed (Just tag) Nothing))
+                                        |> Expect.equal (Ok (Api.GetFeed (Just tag) Nothing))
+
+                                Nothing ->
+                                    Expect.fail "sea life is a tag"
+                   , test "finds no feed at a tag that is not written canonically" <|
+                        \() ->
+                            Api.parse "GET" [ "api", "feed", "tag", "Fox" ]
+                                |> Expect.equal (Err Api.NotFound)
+                   , test "finds no profile at a too short name" <|
+                        \() ->
+                            Api.parse "GET" [ "api", "profiles", "a" ]
                                 |> Expect.equal (Err Api.NotFound)
                    , test "finds nothing at an unknown path" <|
                         \() ->
@@ -236,6 +254,46 @@ suite =
                         |> Result.map (Api.encodeResponse Api.addPasskey >> Encode.encode 0)
                         |> Expect.equal (Ok json)
             ]
+        , describe "feed"
+            [ test "decodes a page and keeps the tags that parse" <|
+                \() ->
+                    Decode.decodeString (Api.responseDecoder (Api.feed Nothing Nothing))
+                        """{"pictures":[{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","username":"ada","prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"m","tags":["fox","x","snow"],"publishedAt":"2026-11-17T10:00:00Z"}],"next":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}"""
+                        |> Result.map (\page -> ( List.map (.tags >> List.map Tag.toString) page.pictures, Maybe.map PictureId.toString page.next ))
+                        |> Expect.equal (Ok ( [ [ "fox", "snow" ] ], Just exampleId ))
+            , test "writes a page the way it reads it" <|
+                \() ->
+                    let
+                        json =
+                            """{"pictures":[{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","username":"ada","prompt":"a red fox","width":1024,"height":1024,"steps":4,"seed":7,"model":"m","tags":["fox","snow"],"publishedAt":"2026-11-17T10:00:00Z"}],"next":null}"""
+                    in
+                    Decode.decodeString (Api.responseDecoder (Api.feed Nothing Nothing)) json
+                        |> Result.map (Api.encodeResponse (Api.feed Nothing Nothing) >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
+            , test "writes the top tags the way it reads them" <|
+                \() ->
+                    let
+                        json =
+                            """[{"tag":"fox","pictures":12},{"tag":"sunset","pictures":9}]"""
+                    in
+                    Decode.decodeString (Api.responseDecoder Api.feedTags) json
+                        |> Result.map (Api.encodeResponse Api.feedTags >> Encode.encode 0)
+                        |> Expect.equal (Ok json)
+            , test "writes a profile page the way it reads it" <|
+                \() ->
+                    let
+                        json =
+                            """{"username":"ada","pictures":[],"next":null}"""
+                    in
+                    case Username.claim "ada" of
+                        Ok name ->
+                            Decode.decodeString (Api.responseDecoder (Api.profile name Nothing)) json
+                                |> Result.map (Api.encodeResponse (Api.profile name Nothing) >> Encode.encode 0)
+                                |> Expect.equal (Ok json)
+
+                        Err reason ->
+                            Expect.fail reason
+            ]
         , describe "health"
             [ test "decodes what it encodes" <|
                 \() ->
@@ -326,6 +384,27 @@ next route =
             Just (Api.DeletePicture id)
 
         Api.DeletePicture _ ->
+            Just (Api.GetFeed Nothing Nothing)
+
+        Api.GetFeed Nothing Nothing ->
+            Just (Api.GetFeed Nothing (PictureId.fromString exampleId))
+
+        Api.GetFeed Nothing (Just _) ->
+            Just (Api.GetFeed (Tag.fromString "fox") Nothing)
+
+        Api.GetFeed (Just _) Nothing ->
+            Just (Api.GetFeed (Tag.fromString "fox") (PictureId.fromString exampleId))
+
+        Api.GetFeed (Just _) (Just _) ->
+            Just Api.GetFeedTags
+
+        Api.GetFeedTags ->
+            Maybe.map (\name -> Api.GetProfile name Nothing) (Result.toMaybe (Username.claim "ada"))
+
+        Api.GetProfile name Nothing ->
+            Just (Api.GetProfile name (PictureId.fromString exampleId))
+
+        Api.GetProfile _ (Just _) ->
             Nothing
 
 

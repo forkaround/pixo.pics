@@ -1,6 +1,7 @@
 module ResponseTest exposing (suite)
 
 import Expect
+import Json.Encode as Encode
 import Response
 import Test exposing (Test, describe, test)
 
@@ -15,6 +16,17 @@ suite =
                         { status = 404
                         , headers = [ ( "content-type", "application/json" ), ( "cache-control", "no-store" ) ]
                         , body = "{\"error\":\"Not found.\"}"
+                        }
+        , test "builds an answer that the CDN may keep" <|
+            \() ->
+                Response.shared 60 (Encode.list Encode.int [ 1 ])
+                    |> Expect.equal
+                        { status = 200
+                        , headers =
+                            [ ( "content-type", "application/json" )
+                            , ( "cache-control", "public, max-age=0, s-maxage=60, stale-while-revalidate=60" )
+                            ]
+                        , body = "[1]"
                         }
         , test "puts a header first" <|
             \() ->

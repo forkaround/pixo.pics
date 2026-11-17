@@ -6,6 +6,8 @@ module Api exposing
     , Check
     , Checkout
     , Endpoint
+    , FeedPage
+    , FeedPicture
     , Health
     , Me
     , Method(..)
@@ -14,6 +16,7 @@ module Api exposing
     , Plan(..)
     , Portal
     , Problem(..)
+    , ProfilePage
     , Publication
     , Published
     , Release
@@ -22,6 +25,7 @@ module Api exposing
     , SignInOptions
     , SignUp
     , Status(..)
+    , TagCount
     , Upload
     , Verification
     , addPasskey
@@ -36,6 +40,8 @@ module Api exposing
     , encodeError
     , encodeResponse
     , errorDecoder
+    , feed
+    , feedTags
     , health
     , healthOf
     , method
@@ -47,6 +53,7 @@ module Api exposing
     , passkeys
     , path
     , portal
+    , profile
     , publish
     , responseDecoder
     , route
@@ -96,6 +103,9 @@ type Route
     | PostPicture
     | PostPicturePublished PictureId
     | DeletePicture PictureId
+    | GetFeed (Maybe Tag) (Maybe PictureId)
+    | GetFeedTags
+    | GetProfile Username (Maybe PictureId)
 
 
 type Method
@@ -172,6 +182,15 @@ method r =
         DeletePicture _ ->
             Delete
 
+        GetFeed _ _ ->
+            Get
+
+        GetFeedTags ->
+            Get
+
+        GetProfile _ _ ->
+            Get
+
 
 path : Route -> List String
 path r =
@@ -240,6 +259,25 @@ segments r =
 
         DeletePicture id ->
             [ "pictures", PictureId.toString id ]
+
+        GetFeed tag before ->
+            "feed"
+                :: (case tag of
+                        Just t ->
+                            [ "tag", Tag.toString t ]
+
+                        Nothing ->
+                            []
+                   )
+                ++ List.map PictureId.toString (Maybe.withDefault [] (Maybe.map List.singleton before))
+
+        GetFeedTags ->
+            [ "feed", "tags" ]
+
+        GetProfile name before ->
+            "profiles"
+                :: Username.toString name
+                :: List.map PictureId.toString (Maybe.withDefault [] (Maybe.map List.singleton before))
 
 
 toString : Route -> String
@@ -337,8 +375,55 @@ routesAt rest =
         [ "pictures", id, "published" ] ->
             routeWithPicture PostPicturePublished id
 
+        [ "feed" ] ->
+            [ GetFeed Nothing Nothing ]
+
+        [ "feed", "tags" ] ->
+            [ GetFeedTags ]
+
+        [ "feed", id ] ->
+            PictureId.fromString id
+                |> Maybe.map (\before -> [ GetFeed Nothing (Just before) ])
+                |> Maybe.withDefault []
+
+        [ "feed", "tag", t ] ->
+            canonicalTag t
+                |> Maybe.map (\tag -> [ GetFeed (Just tag) Nothing ])
+                |> Maybe.withDefault []
+
+        [ "feed", "tag", t, id ] ->
+            Maybe.map2 (\tag before -> [ GetFeed (Just tag) (Just before) ])
+                (canonicalTag t)
+                (PictureId.fromString id)
+                |> Maybe.withDefault []
+
+        [ "profiles", name ] ->
+            Username.claim name
+                |> Result.toMaybe
+                |> Maybe.map (\u -> [ GetProfile u Nothing ])
+                |> Maybe.withDefault []
+
+        [ "profiles", name, id ] ->
+            Maybe.map2 (\u before -> [ GetProfile u (Just before) ])
+                (Result.toMaybe (Username.claim name))
+                (PictureId.fromString id)
+                |> Maybe.withDefault []
+
         _ ->
             []
+
+
+canonicalTag : String -> Maybe Tag
+canonicalTag raw =
+    Tag.fromString raw
+        |> Maybe.andThen
+            (\tag ->
+                if Tag.toString tag == raw then
+                    Just tag
+
+                else
+                    Nothing
+            )
 
 
 routeWithPicture : (PictureId -> Route) -> String -> List Route
@@ -421,6 +506,21 @@ confirm id =
 unpublish : PictureId -> Endpoint () ()
 unpublish id =
     Endpoint { route = DeletePicture id, body = NoBody (), response = emptyCodec }
+
+
+feed : Maybe Tag -> Maybe PictureId -> Endpoint () FeedPage
+feed tag before =
+    Endpoint { route = GetFeed tag before, body = NoBody (), response = feedPageCodec }
+
+
+feedTags : Endpoint () (List TagCount)
+feedTags =
+    Endpoint { route = GetFeedTags, body = NoBody (), response = listCodec tagCountCodec }
+
+
+profile : Username -> Maybe PictureId -> Endpoint () ProfilePage
+profile name before =
+    Endpoint { route = GetProfile name before, body = NoBody (), response = profilePageCodec }
 
 
 signOut : Endpoint () ()
@@ -821,6 +921,126 @@ publishedCodec =
             (Decode.field "id" PictureId.decoder)
             (Decode.field "url" Decode.string)
             (Decode.field "publishedAt" Decode.string)
+    }
+
+
+type alias FeedPicture =
+    { id : PictureId
+    , url : String
+    , username : Username
+    , prompt : String
+    , width : Int
+    , height : Int
+    , steps : Int
+    , seed : Int
+    , model : String
+    , tags : List Tag
+    , publishedAt : String
+    }
+
+
+feedPictureCodec : Codec FeedPicture
+feedPictureCodec =
+    { encode =
+        \p ->
+            Encode.object
+                [ ( "id", PictureId.encode p.id )
+                , ( "url", Encode.string p.url )
+                , ( "username", Username.encode p.username )
+                , ( "prompt", Encode.string p.prompt )
+                , ( "width", Encode.int p.width )
+                , ( "height", Encode.int p.height )
+                , ( "steps", Encode.int p.steps )
+                , ( "seed", Encode.int p.seed )
+                , ( "model", Encode.string p.model )
+                , ( "tags", Encode.list Tag.encode p.tags )
+                , ( "publishedAt", Encode.string p.publishedAt )
+                ]
+    , decoder =
+        Decode.succeed FeedPicture
+            |> andMap (Decode.field "id" PictureId.decoder)
+            |> andMap (Decode.field "url" Decode.string)
+            |> andMap (Decode.field "username" Username.decoder)
+            |> andMap (Decode.field "prompt" Decode.string)
+            |> andMap (Decode.field "width" Decode.int)
+            |> andMap (Decode.field "height" Decode.int)
+            |> andMap (Decode.field "steps" Decode.int)
+            |> andMap (Decode.field "seed" Decode.int)
+            |> andMap (Decode.field "model" Decode.string)
+            |> andMap (Decode.field "tags" lenientTags)
+            |> andMap (Decode.field "publishedAt" Decode.string)
+    }
+
+
+lenientTags : Decoder (List Tag)
+lenientTags =
+    Decode.list (Decode.oneOf [ Decode.map Just Tag.decoder, Decode.succeed Nothing ])
+        |> Decode.map (List.filterMap identity)
+
+
+type alias TagCount =
+    { tag : Tag
+    , pictures : Int
+    }
+
+
+tagCountCodec : Codec TagCount
+tagCountCodec =
+    { encode =
+        \t ->
+            Encode.object
+                [ ( "tag", Tag.encode t.tag )
+                , ( "pictures", Encode.int t.pictures )
+                ]
+    , decoder =
+        Decode.map2 TagCount
+            (Decode.field "tag" Tag.decoder)
+            (Decode.field "pictures" Decode.int)
+    }
+
+
+type alias FeedPage =
+    { pictures : List FeedPicture
+    , next : Maybe PictureId
+    }
+
+
+feedPageCodec : Codec FeedPage
+feedPageCodec =
+    { encode =
+        \p ->
+            Encode.object
+                [ ( "pictures", Encode.list feedPictureCodec.encode p.pictures )
+                , ( "next", Maybe.withDefault Encode.null (Maybe.map PictureId.encode p.next) )
+                ]
+    , decoder =
+        Decode.map2 FeedPage
+            (Decode.field "pictures" (Decode.list feedPictureCodec.decoder))
+            (Decode.field "next" (Decode.nullable PictureId.decoder))
+    }
+
+
+type alias ProfilePage =
+    { username : Username
+    , pictures : List FeedPicture
+    , next : Maybe PictureId
+    }
+
+
+profilePageCodec : Codec ProfilePage
+profilePageCodec =
+    { encode =
+        \p ->
+            Encode.object
+                [ ( "username", Username.encode p.username )
+                , ( "pictures", Encode.list feedPictureCodec.encode p.pictures )
+                , ( "next", Maybe.withDefault Encode.null (Maybe.map PictureId.encode p.next) )
+                ]
+    , decoder =
+        Decode.map3 ProfilePage
+            (Decode.field "username" Username.decoder)
+            (Decode.field "pictures" (Decode.list feedPictureCodec.decoder))
+            (Decode.field "next" (Decode.nullable PictureId.decoder))
     }
 
 
