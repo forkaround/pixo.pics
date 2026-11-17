@@ -4,6 +4,7 @@ import Data.Challenge as Challenge
 import Data.CredentialId as CredentialId
 import Data.Dimension as Dimension
 import Data.Email as Email
+import Data.PictureId as PictureId
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
@@ -76,6 +77,33 @@ suite =
                 \() ->
                     Tag.fromString "a very long tag that goes on"
                         |> Maybe.map Tag.toString
+                        |> Expect.equal Nothing
+            ]
+        , describe "Tag decoder"
+            [ test "round-trips" <|
+                \() ->
+                    Decode.decodeString Tag.decoder "\"fox\""
+                        |> Result.map (Tag.encode >> Encode.encode 0)
+                        |> Expect.equal (Ok "\"fox\"")
+            , test "refuses a string that is not a tag" <|
+                \() ->
+                    Decode.decodeString Tag.decoder "\"x\""
+                        |> Result.toMaybe
+                        |> Expect.equal Nothing
+            ]
+        , describe "PictureId"
+            [ test "accepts a UUID, in lower case" <|
+                \() ->
+                    PictureId.fromString "6F1C2A52-3D0E-4A53-9A7E-0F6F1F3F5B11"
+                        |> Maybe.map PictureId.toString
+                        |> Expect.equal (Just "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11")
+            , test "refuses an empty string" <|
+                \() ->
+                    PictureId.fromString ""
+                        |> Expect.equal Nothing
+            , test "refuses other text" <|
+                \() ->
+                    PictureId.fromString "nope"
                         |> Expect.equal Nothing
             ]
         , describe "Username"
