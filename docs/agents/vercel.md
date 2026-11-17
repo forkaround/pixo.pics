@@ -29,6 +29,11 @@ production, any other branch to a preview. The Neon project `pixo` (`small-lab-6
   branch copies its parent's roles and passwords, unless `main` is a protected branch:
   its children get new passwords. A branch older than the role fails its build at
   `GRANT ... TO api`: reset it as in [migrations/AGENTS.md](../../migrations/AGENTS.md#committing-and-previews).
+- `PADDLE_*` are per environment: Production uses Paddle's live account
+  (`PADDLE_ENVIRONMENT=production`), Preview the sandbox. `PADDLE_API_KEY` and
+  `PADDLE_WEBHOOK_SECRET` are secrets. Paddle cannot pass Vercel Authentication: a sandbox
+  notification destination for a preview needs `?x-vercel-protection-bypass=<secret>` on
+  its URL.
 - The function's environment still holds the owner's `DATABASE_URL`: RLS contains the
   server's queries, not a compromised process.
 - Keep `regions` in `vercel.json` next to Neon's region: `fra1` for `aws-eu-central-1`.

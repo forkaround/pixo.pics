@@ -58,8 +58,9 @@ Migrations, the schema's conventions and row-level security. The SQL the server 
   Postgres from the token passed as a parameter, and a new token is returned once.
 - A `users` row means a proven email: consuming a magic link creates the user, never the
   sign-up request.
-- Postgres can't check a signature: `sign_in_with_passkey` trusts that the server did.
-  It is the one function that takes no secret.
+- Postgres can't check a signature: `sign_in_with_passkey` and
+  `apply_paddle_subscription` trust that the server did. They are the only functions that
+  take no secret.
 - `delete_expired()` exists, and nothing schedules it yet.
 
 ## Row-level security

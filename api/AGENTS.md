@@ -45,6 +45,20 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   a template. A `Mailer` is a record of functions: never compare two with `==`. A new
   provider is a new module with a `mailer`.
 
+## Billing
+
+- Paddle is the source of truth for Pro. `POST /api/billing/webhook` mirrors each
+  `subscription.*` event into `subscriptions` through `apply_paddle_subscription`, which
+  only moves a row to a newer `updated_at` and never changes its owner.
+- `app.ts` checks the `Paddle-Signature` HMAC with WebCrypto (`VerifyWebhook`, answered by
+  `WebhookChecked` with the body it was given). Elm parses the header, refuses a timestamp
+  more than 5 s away, and keeps only 64-hex signatures.
+- Only the configured Pro price grants Pro. The account is `custom_data.user_id`.
+- Any non-2xx makes Paddle retry (3 days in live). Events we choose to skip answer 200.
+  The body is never logged.
+- The webhook route has its own rate limit (`RateLimit.webhooks`), not `requests`.
+- Pro is `is_pro(user)`: a subscription that is `active`, `trialing` or `past_due`.
+
 ## Adding a route
 
 1. A variant of `Api.Route` in `shared/Api.elm`: keep `Api.parse` in step with
