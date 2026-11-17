@@ -4,7 +4,9 @@ import { idb, release } from "./idb";
 import type { Command, Reply } from "./pipeline.worker";
 import type { Command as StylistCommand, Reply as StylistReply } from "./stylist.worker";
 import type { Command as TaggerCommand, Reply as TaggerReply } from "./tagger.worker";
+import { encodePicture } from "./jpeg";
 import { openCheckout } from "./paddle";
+import { sendBlob } from "./send";
 import { canShare, copyPicture, sharePicture } from "./share";
 
 type PasskeyOptions = Extract<FromElm, { tag: "CreatePasskey" }>["data"];
@@ -237,6 +239,12 @@ app.ports.interopFromElm.subscribe((msg) => {
 
     case "OpenCheckout":
       return void openCheckout(msg.data, send);
+
+    case "EncodePicture":
+      return void encodePicture(msg.data).then(send);
+
+    case "SendBlob":
+      return void sendBlob(msg.data).then(send);
 
     default:
       return msg satisfies never;

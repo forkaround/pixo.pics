@@ -1,16 +1,18 @@
 module LibraryView exposing (filters, lightbox, lightboxOpen, search, view)
 
+import Api
 import Data.Dimension as Dimension
 import Data.Prompt as Prompt
 import Data.Tag as Tag exposing (Tag)
 import Html exposing (Attribute, Html, button, div, img, p, span, text)
-import Html.Attributes exposing (alt, attribute, class, download, height, href, id, placeholder, src, style, type_, value, width)
+import Html.Attributes exposing (alt, attribute, class, disabled, download, height, href, id, placeholder, src, style, type_, value, width)
 import Html.Events exposing (onClick, onInput)
 import Library exposing (Model, Msg(..), Picture, Pictures(..))
 import Lightbox
 import Overlay exposing (glass, red)
 import Path
 import Phosphor exposing (IconWeight(..))
+import Publish
 import Share
 import UI.Button as Button
 import UI.DropdownMenu as DropdownMenu
@@ -306,7 +308,7 @@ viewTile model picture =
                 )
             ]
             (if confirming then
-                [ p [ class "text-sm font-medium text-white" ] [ text "Delete this picture?" ]
+                [ p [ class "text-sm font-medium text-white" ] [ text (deleteQuestion picture) ]
                 , div [ class "pointer-events-auto flex items-center gap-2" ]
                     [ Button.new
                         |> Button.text "Cancel"
@@ -400,73 +402,137 @@ lightboxOpen model =
     model.zoomed && Maybe.andThen (\viewed -> Library.find viewed model) model.viewing /= Nothing
 
 
-lightbox : (Msg -> msg) -> Html msg -> Model -> Html msg
-lightbox toMsg toasts model =
+type alias Messages msg =
+    { library : Msg -> msg
+    , publish : Publish.Msg -> msg
+    }
+
+
+lightbox : Messages msg -> Maybe Api.Plan -> Publish.Model -> Html msg -> Model -> Html msg
+lightbox to plan publishing toasts model =
     Lightbox.view
         { id = "picture"
         , open = lightboxOpen model
         , detailed = model.detailed
-        , onClose = toMsg Closed
-        , onToggle = toMsg DetailsToggled
-        , onStep = toMsg << Stepped
+        , onClose = to.library Closed
+        , onToggle = to.library DetailsToggled
+        , onStep = to.library << Stepped
         , toasts = toasts
         }
         (model.viewing
             |> Maybe.andThen (\viewed -> Library.find viewed model)
-            |> Maybe.map
-                (\picture ->
-                    let
-                        shown =
-                            viewZoomed model picture
-                    in
-                    { url = shown.url
-                    , job = shown.job
-                    , model = shown.model
-                    , pinned = shown.pinned
-                    , actions = List.map (Html.map toMsg) shown.actions
-                    }
-                )
+            |> Maybe.map (viewZoomed to plan publishing model)
         )
 
 
-viewZoomed : Model -> Picture -> Lightbox.Shown Msg
-viewZoomed model picture =
+deleteQuestion : Picture -> String
+deleteQuestion picture =
+    case picture.published of
+        Just _ ->
+            "Delete this picture? It stays published."
+
+        Nothing ->
+            "Delete this picture?"
+
+
+viewZoomed : Messages msg -> Maybe Api.Plan -> Publish.Model -> Model -> Picture -> Lightbox.Shown msg
+viewZoomed to plan publishing model picture =
     let
-        confirming =
+        deleting =
             model.confirming == Just picture.id
+
+        publishing_ =
+            publishing.confirming == Just picture.id
     in
     { url = picture.url
     , job = picture.job
     , model = Library.modelName picture
-    , pinned = confirming
+    , pinned = deleting || publishing_
     , actions =
-        if confirming then
-            [ span [ class "basis-full text-sm font-medium" ] [ text "Delete this picture?" ]
-            , Button.new
-                |> Button.text "Cancel"
-                |> Button.small
-                |> Button.toHtml [ onClick DeleteCancelled, glass ]
-            , Button.new
-                |> Button.text "Delete"
-                |> Button.small
-                |> Button.toHtml [ onClick (DeleteConfirmed picture.id), red ]
-            ]
+        if deleting then
+            List.map (Html.map to.library)
+                [ span [ class "basis-full text-sm font-medium" ] [ text (deleteQuestion picture) ]
+                , Button.new
+                    |> Button.text "Cancel"
+                    |> Button.small
+                    |> Button.toHtml [ onClick DeleteCancelled, glass ]
+                , Button.new
+                    |> Button.text "Delete"
+                    |> Button.small
+                    |> Button.toHtml [ onClick (DeleteConfirmed picture.id), red ]
+                ]
+
+        else if publishing_ then
+            List.map (Html.map to.publish)
+                [ span [ class "basis-full text-sm font-medium" ] [ text "Publish this picture? Its prompt, settings and tags will be public." ]
+                , Button.new
+                    |> Button.text "Cancel"
+                    |> Button.small
+                    |> Button.toHtml [ onClick Publish.PublishCancelled, glass ]
+                , Button.new
+                    |> Button.text "Publish"
+                    |> Button.small
+                    |> Button.toHtml [ onClick (Publish.PublishConfirmed picture.id), glass ]
+                ]
 
         else
-            [ Button.new
-                |> Button.text "Download"
-                |> Button.small
-                |> Button.startIcon (icon Phosphor.downloadSimple)
-                |> Button.toAnchor [ href picture.url, download (Library.fileName picture.job), glass ]
-            , viewShare "share-open-"
-                model
-                picture
-                ((Button.new |> Button.text "Share" |> Button.small |> Button.toAttributes) ++ [ glass ])
-                [ icon Phosphor.shareNetwork, text "Share" ]
-            , Button.new
-                |> Button.icon (icon Phosphor.trash)
-                |> Button.label "Delete"
-                |> Button.small
-                |> Button.toHtml [ onClick (DeleteRequested picture.id), red, class "ms-auto" ]
-            ]
+            List.map (Html.map to.library)
+                [ Button.new
+                    |> Button.text "Download"
+                    |> Button.small
+                    |> Button.startIcon (icon Phosphor.downloadSimple)
+                    |> Button.toAnchor [ href picture.url, download (Library.fileName picture.job), glass ]
+                , viewShare "share-open-"
+                    model
+                    picture
+                    ((Button.new |> Button.text "Share" |> Button.small |> Button.toAttributes) ++ [ glass ])
+                    [ icon Phosphor.shareNetwork, text "Share" ]
+                ]
+                ++ List.map (Html.map to.publish) (publishControl plan publishing picture)
+                ++ [ Html.map to.library
+                        (Button.new
+                            |> Button.icon (icon Phosphor.trash)
+                            |> Button.label "Delete"
+                            |> Button.small
+                            |> Button.toHtml [ onClick (DeleteRequested picture.id), red, class "ms-auto" ]
+                        )
+                   ]
     }
+
+
+publishControl : Maybe Api.Plan -> Publish.Model -> Picture -> List (Html Publish.Msg)
+publishControl plan publishing picture =
+    let
+        working =
+            Publish.step picture.id publishing
+    in
+    case ( plan, picture.published ) of
+        ( Nothing, _ ) ->
+            []
+
+        ( Just _, Just remote ) ->
+            [ busyButton (working == Just Publish.Unpublishing) "Unpublish" "Unpublishing…" (Publish.UnpublishClicked picture.id remote) ]
+
+        ( Just Api.Free, Nothing ) ->
+            [ Button.new
+                |> Button.text "Publish with Pro"
+                |> Button.small
+                |> Button.toAnchor [ href (Path.toString Path.Account), glass ]
+            ]
+
+        ( Just Api.Pro, Nothing ) ->
+            [ busyButton (working /= Nothing) "Publish" "Publishing…" (Publish.PublishRequested picture.id) ]
+
+
+busyButton : Bool -> String -> String -> msg -> Html msg
+busyButton busy idle pending clicked =
+    Button.new
+        |> Button.text
+            (if busy then
+                pending
+
+             else
+                idle
+            )
+        |> Button.small
+        |> Button.toHtml [ onClick clicked, disabled busy, glass ]

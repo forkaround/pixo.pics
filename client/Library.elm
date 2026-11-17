@@ -12,6 +12,7 @@ module Library exposing
     , fileName
     , find
     , init
+    , markPublished
     , modelName
     , ownerOf
     , saveOf
@@ -26,6 +27,7 @@ module Library exposing
 
 import Bm25
 import Data.Dimension as Dimension
+import Data.PictureId as PictureId exposing (PictureId)
 import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
@@ -74,6 +76,7 @@ type alias Picture =
     , job : Pipeline.Job
     , model : String
     , tags : Maybe (List Tag)
+    , published : Maybe PictureId
     }
 
 
@@ -81,6 +84,7 @@ type alias Row =
     { stored : Stored
     , tags : Maybe (List String)
     , owner : Maybe String
+    , published : Maybe String
     }
 
 
@@ -143,6 +147,11 @@ claiming =
     "owner"
 
 
+publishing : String
+publishing =
+    "published"
+
+
 load : Command
 load =
     Database (Idb.GetAll { database = database, store = store, label = "" })
@@ -188,7 +197,10 @@ readOwned row =
                 fromStored found.stored
                     |> Maybe.map
                         (\picture ->
-                            ( { picture | tags = Maybe.map (List.filterMap Tag.fromString) found.tags }
+                            ( { picture
+                                | tags = Maybe.map (List.filterMap Tag.fromString) found.tags
+                                , published = Maybe.andThen PictureId.fromString found.published
+                              }
                             , found.owner
                             )
                         )
@@ -208,7 +220,7 @@ saved event =
 
 decoder : Decoder Row
 decoder =
-    Decode.map3 Row
+    Decode.map4 Row
         (Decode.map8 Stored
             (Decode.field "id" Decode.int)
             (Decode.field "blob" Decode.string)
@@ -221,6 +233,7 @@ decoder =
         )
         (Decode.maybe (Decode.field "tags" (Decode.list Decode.string)))
         (Decode.maybe (Decode.field "owner" Decode.string))
+        (Decode.maybe (Decode.field "published" Decode.string))
 
 
 fromStored : Stored -> Maybe Picture
@@ -232,6 +245,7 @@ fromStored stored =
             , job = { prompt = prompt, width = width, height = height, steps = steps, seed = seed }
             , model = stored.model
             , tags = Nothing
+            , published = Nothing
             }
         )
         (Prompt.parse stored.prompt)
@@ -463,6 +477,38 @@ ownerOf model =
     model.owner
 
 
+markPublished : Int -> Maybe PictureId -> Model -> ( Model, List Command )
+markPublished id published model =
+    case model.pictures of
+        Loaded pictures ->
+            ( shelve
+                (List.map
+                    (\picture ->
+                        if picture.id == id then
+                            { picture | published = published }
+
+                        else
+                            picture
+                    )
+                    pictures
+                )
+                model
+            , [ Database
+                    (Idb.Patch
+                        { database = database
+                        , store = store
+                        , key = Encode.int id
+                        , fields = [ ( "published", Maybe.withDefault Encode.null (Maybe.map PictureId.encode published) ) ]
+                        , label = publishing
+                        }
+                    )
+              ]
+            )
+
+        _ ->
+            ( model, [] )
+
+
 update : Msg -> Model -> ( Model, List Command )
 update msg model =
     case msg of
@@ -645,7 +691,7 @@ happened event model =
             ( model, [] )
 
         Answered (Idb.Failed { label, message }) ->
-            if label == tagging || label == claiming then
+            if label == tagging || label == claiming || label == publishing then
                 ( model, [] )
 
             else if model.pictures == Loading then

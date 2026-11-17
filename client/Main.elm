@@ -34,6 +34,7 @@ import Phosphor exposing (IconWeight(..))
 import Pipeline
 import Plain
 import Process
+import Publish
 import Session exposing (Session(..))
 import StudioView
 import Stylist
@@ -83,6 +84,7 @@ type alias Model =
     , pipeline : Pipeline.Model
     , stylist : Stylist.Model
     , library : Library.Model
+    , publish : Publish.Model
     , tagger : Tagger.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
@@ -129,6 +131,7 @@ init flags url =
         , pipeline = Pipeline.init entropy webGpu (Maybe.withDefault [] (Maybe.map Pipeline.remembered models))
         , stylist = Stylist.init stylist
         , library = Library.init canShare
+        , publish = Publish.init
         , tagger = Tagger.init
         , sidebar = sidebar
         , sidebarProgress = sidebarTarget sidebar
@@ -290,6 +293,15 @@ runLibrary model ( library, commands ) =
     )
 
 
+publishId : String -> Maybe Int
+publishId name =
+    if String.startsWith "publish:" name then
+        String.toInt (String.dropLeft 8 name)
+
+    else
+        Nothing
+
+
 runTagger : Model -> ( Tagger.Model, Maybe Tagger.Command, Maybe Tagger.Found ) -> ( Model, Effect Msg )
 runTagger model ( tagger, command, found ) =
     let
@@ -350,6 +362,7 @@ type Msg
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
+    | GotPublish Publish.Msg
     | GotStylist Stylist.Msg
     | SidebarChanged Sidebar.State
     | SidebarAnimated Float
@@ -460,7 +473,7 @@ followLibrary model =
             else
                 let
                     ( owned, released ) =
-                        runLibrary model (Library.signedIn account.username model.library)
+                        runLibrary { model | publish = Publish.init } (Library.signedIn account.username model.library)
 
                     ( entered, loading ) =
                         if model.page == Library then
@@ -476,7 +489,7 @@ followLibrary model =
                 ( model, NoEffect )
 
             else
-                runLibrary model (Library.signedOut model.library)
+                runLibrary { model | publish = Publish.init } (Library.signedOut model.library)
 
         Unknown ->
             ( model, NoEffect )
@@ -579,6 +592,55 @@ step msg model =
 
         GotLibrary libraryMsg ->
             runLibrary model (Library.update libraryMsg model.library)
+
+        GotPublish publishMsg ->
+            let
+                ( publishing, effect ) =
+                    Publish.update model.library publishMsg model.publish
+
+                ( marked, marking ) =
+                    case Publish.outcome publishMsg of
+                        Publish.Marked id remote ->
+                            runLibrary model (Library.markPublished id remote model.library)
+
+                        Publish.Unchanged ->
+                            ( model, NoEffect )
+            in
+            ( { marked | publish = publishing }
+            , Batch [ Effect.map GotPublish effect, marking ]
+            )
+
+        GotInterop (Ok (Interop.PictureEncoded result)) ->
+            case publishId result.label of
+                Just id ->
+                    step (GotPublish (Publish.Encoded id { url = result.url, bytes = result.bytes })) model
+
+                Nothing ->
+                    ( model, NoEffect )
+
+        GotInterop (Ok (Interop.PictureEncodeFailed result)) ->
+            case publishId result.label of
+                Just id ->
+                    step (GotPublish (Publish.EncodeFailed id result.message)) model
+
+                Nothing ->
+                    ( model, NoEffect )
+
+        GotInterop (Ok (Interop.BlobSent result)) ->
+            case publishId result.label of
+                Just id ->
+                    step (GotPublish (Publish.Sent id { status = result.status, body = result.body })) model
+
+                Nothing ->
+                    ( model, NoEffect )
+
+        GotInterop (Ok (Interop.BlobFailed result)) ->
+            case publishId result.label of
+                Just id ->
+                    step (GotPublish (Publish.SendFailed id result.message)) model
+
+                Nothing ->
+                    ( model, NoEffect )
 
         GotStylist stylistMsg ->
             if Stylist.needsWebGpu stylistMsg && not (Pipeline.canPrompt model.pipeline.device) then
@@ -1171,7 +1233,7 @@ pageToasts page =
             []
 
         Library ->
-            []
+            Publish.toasts
 
         NotFound ->
             []
@@ -1479,7 +1541,7 @@ viewLibrary model =
         "Library"
         [ Html.map GotLibrary (LibraryView.search model.library) ]
         [ viewAside "md:w-56 md:pt-6" [ Html.map GotLibrary (LibraryView.filters model.library) ]
-        , viewContent [ Html.map GotLibrary (LibraryView.view model.library), LibraryView.lightbox GotLibrary (viewToasts model) model.library ]
+        , viewContent [ Html.map GotLibrary (LibraryView.view model.library), LibraryView.lightbox { library = GotLibrary, publish = GotPublish } (Maybe.map .plan (currentBilling model)) model.publish (viewToasts model) model.library ]
         ]
 
 

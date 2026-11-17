@@ -24,7 +24,8 @@ The Elm browser app in `client/`: pages, the session, ports and UI.
 - `client/main.css` is the only stylesheet, linked from `index.html`: don't import CSS
   from TypeScript. Inter is served with the app; Explore's Unsplash photos, and Paddle.js
   once a checkout opens (`client/paddle.ts`), are the only things a page asks another site
-  for.
+  for. A published picture is the exception that leaves the app: the browser uploads it
+  straight to R2 (`client/send.ts`).
 - Inputs with a placeholder keep their label, `sr-only`: screen readers and the tests'
   `fillIn` need it.
 
@@ -88,9 +89,9 @@ A page with state of its own is a module in `client/Page/`. A new one is:
 
 ## Read when
 
-| Touching                                                                                                                              | Read                                                |
-| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `client/UI/`, an elmcn component, the sidebar, the bar, `client/Logo.elm`, `favicon.svg`                                              | [docs/agents/ui.md](../docs/agents/ui.md)           |
-| `Pipeline.elm`, `pipeline.worker.ts`, `bonsai.d.ts`, `Stylist.elm`, `stylist.worker.ts`, `/studio`                                    | [docs/agents/studio.md](../docs/agents/studio.md)   |
-| `Library.elm`, `Idb.elm`, `idb.ts`, `Bm25.elm`, `Share.elm`, `share.ts`, `Tagger.elm`, `tagger.worker.ts`, `Data/Tag.elm`, `/library` | [docs/agents/library.md](../docs/agents/library.md) |
-| Browser tests in `tests/`                                                                                                             | [tests/AGENTS.md](../tests/AGENTS.md)               |
+| Touching                                                                                                                                     | Read                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `client/UI/`, an elmcn component, the sidebar, the bar, `client/Logo.elm`, `favicon.svg`                                                     | [docs/agents/ui.md](../docs/agents/ui.md)           |
+| `Pipeline.elm`, `pipeline.worker.ts`, `bonsai.d.ts`, `Stylist.elm`, `stylist.worker.ts`, `/studio`                                           | [docs/agents/studio.md](../docs/agents/studio.md)   |
+| `Library.elm`, `Idb.elm`, `idb.ts`, `Bm25.elm`, `Share.elm`, `share.ts`, `Tagger.elm`, `tagger.worker.ts`, `shared/Data/Tag.elm`, `/library` | [docs/agents/library.md](../docs/agents/library.md) |
+| Browser tests in `tests/`                                                                                                                    | [tests/AGENTS.md](../tests/AGENTS.md)               |
