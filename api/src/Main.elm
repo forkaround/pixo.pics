@@ -14,6 +14,7 @@ import Flow.PasskeySignIn
 import Flow.Passkeys
 import Flow.Pictures
 import Flow.Session
+import Flow.Sync
 import InteropDefinitions as Interop
 import InteropPorts
 import Json.Decode as Decode
@@ -25,6 +26,7 @@ import Server exposing (Server)
 import Services.BrevoMailer as BrevoMailer
 import Services.LogMailer as LogMailer
 import Services.Neon as Neon
+import Services.OAuth as OAuth
 import Services.Paddle as Paddle
 import Services.R2 as R2
 import Task
@@ -117,9 +119,20 @@ init flags =
 
                                         Err _ ->
                                             ( Nothing, log Interop.Error "MODERATION_EMAIL is not an email address." )
+
+                        ( sync, syncNotice ) =
+                            case OAuth.config config of
+                                Ok Nothing ->
+                                    ( Nothing, log Interop.Warn "No sync settings, so sync routes answer 503." )
+
+                                Ok found ->
+                                    ( found, NoEffect )
+
+                                Err problem ->
+                                    ( Nothing, log Interop.Error problem )
                     in
-                    ( Running { db = db, mailer = chosen, moderators = moderators, origin = origin, paddle = paddle, release = release, storage = storage } RateLimit.empty
-                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice, storageNotice, moderationNotice ]
+                    ( Running { db = db, mailer = chosen, moderators = moderators, origin = origin, paddle = paddle, release = release, storage = storage, sync = sync } RateLimit.empty
+                    , Batch [ log Interop.Info ("Sending queries to " ++ Neon.endpoint db), notice, billingNotice, storageNotice, moderationNotice, syncNotice ]
                     )
 
                 ( Err problem, _, _ ) ->
@@ -162,6 +175,7 @@ type Msg
     | Billing Flow.Billing.Msg
     | Pictures Flow.Pictures.Msg
     | Feed Flow.Feed.Msg
+    | Sync Flow.Sync.Msg
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
@@ -267,6 +281,18 @@ brokenAnswer { problem, release } found =
         Api.PostReport _ ->
             Response.unavailable
 
+        Api.PostSyncStart _ ->
+            Response.unavailable
+
+        Api.PostSyncFinish ->
+            Response.unavailable
+
+        Api.PostSyncToken _ ->
+            Response.unavailable
+
+        Api.DeleteSync _ ->
+            Response.unavailable
+
 
 reply : Time.Posix -> Interop.Resolver -> Reply Msg -> RateLimit.Limits -> ( RateLimit.Limits, Effect Msg )
 reply time resolver answer limits =
@@ -327,6 +353,9 @@ running server limits msg =
 
         Feed flowMsg ->
             ( limits, Effect.map Feed (Flow.Feed.update server flowMsg) )
+
+        Sync flowMsg ->
+            ( limits, Effect.map Sync (Flow.Sync.update server flowMsg) )
 
         DatabaseFailed { resolver, step, problem } ->
             ( limits
@@ -472,6 +501,18 @@ routePolicy found address =
         Api.PostReport _ ->
             RateLimit.requests address
 
+        Api.PostSyncStart _ ->
+            RateLimit.requests address
+
+        Api.PostSyncFinish ->
+            RateLimit.requests address
+
+        Api.PostSyncToken _ ->
+            RateLimit.requests address
+
+        Api.DeleteSync _ ->
+            RateLimit.requests address
+
 
 route : Server -> Request -> Reply Msg
 route server request =
@@ -557,3 +598,15 @@ handle server request r =
 
         Api.PostReport id ->
             Reply.map Pictures (Flow.Pictures.report id server request)
+
+        Api.PostSyncStart provider ->
+            Reply.map Sync (Flow.Sync.start provider server request)
+
+        Api.PostSyncFinish ->
+            Reply.map Sync (Flow.Sync.finish server request)
+
+        Api.PostSyncToken provider ->
+            Reply.map Sync (Flow.Sync.token provider server request)
+
+        Api.DeleteSync provider ->
+            Reply.map Sync (Flow.Sync.stop provider server request)

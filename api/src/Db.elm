@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), PictureRow, ProfileRow, Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, feed, feedTags, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, profile, removePasskey, reportPicture, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions, unconfirmed)
+module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), PictureRow, ProfileRow, Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, dropSync, feed, feedTags, finishSync, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, profile, removePasskey, reportPicture, saveSync, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, startSync, subscriptions, syncRefreshToken, unconfirmed)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -175,11 +175,36 @@ consumedDecoder =
             )
 
 
-me : SessionToken -> Neon.Transaction (Maybe ( Api.Account, List Subscription ))
+me : SessionToken -> Neon.Transaction (Maybe ( Api.Account, List Subscription, List Api.SyncConnection ))
 me token =
-    signedIn token (\_ found rows -> Maybe.map (\owner -> ( owner, rows )) found)
+    signedIn token (\_ found rows connections -> Maybe.map (\owner -> ( owner, rows, connections )) found)
         |> Neon.with ownAccount
         |> Neon.with subscriptionRows
+        |> Neon.with syncRows
+
+
+syncRows : Neon.Query (List Api.SyncConnection)
+syncRows =
+    Neon.select ("SELECT provider, " ++ utc "connected_at" ++ " AS connected_at FROM sync_connections ORDER BY provider")
+        []
+        (Decode.map2 Api.SyncConnection
+            (Decode.field "provider" providerDecoder)
+            (Decode.field "connected_at" Decode.string)
+        )
+
+
+providerDecoder : Decoder Api.SyncProvider
+providerDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\value ->
+                case Api.providerFromString value of
+                    Just provider ->
+                        Decode.succeed provider
+
+                    Nothing ->
+                        Decode.fail ("Unknown provider: " ++ value)
+            )
 
 
 type alias Subscription =
@@ -654,6 +679,93 @@ beforeDeletion token =
                     (Decode.field "renewing" Decode.bool)
                     (Decode.field "pictures" (Decode.list PictureId.decoder))
                 )
+            )
+
+
+randomToken : String
+randomToken =
+    "translate(rtrim(encode(uuid_send(gen_random_uuid()) || uuid_send(gen_random_uuid()), 'base64'), '='), '+/', '-_')"
+
+
+startSync : SessionToken -> Api.SyncProvider -> Neon.Transaction (Maybe (Maybe { state : String, verifier : String }))
+startSync token provider =
+    signedIn token (\userId _ started -> Maybe.map (\_ -> started) userId)
+        |> Neon.with (Neon.execute "DELETE FROM sync_attempts" [])
+        |> Neon.with
+            (Neon.selectOne
+                ("INSERT INTO sync_attempts (state, user_id, provider, verifier, expires_at) "
+                    ++ "SELECT "
+                    ++ randomToken
+                    ++ ", u.id, $1::text, "
+                    ++ randomToken
+                    ++ ", now() + interval '10 minutes' "
+                    ++ "FROM (SELECT NULLIF(current_setting('app.user_id', true), '')::uuid AS id) AS u "
+                    ++ "WHERE is_pro(u.id) "
+                    ++ "RETURNING state, verifier"
+                )
+                [ Neon.text (Api.providerToString provider) ]
+                (Decode.map2 (\state verifier -> { state = state, verifier = verifier })
+                    (Decode.field "state" Decode.string)
+                    (Decode.field "verifier" Decode.string)
+                )
+            )
+
+
+finishSync : SessionToken -> String -> Neon.Transaction (Maybe (Maybe { provider : Api.SyncProvider, verifier : String }))
+finishSync token state =
+    signedIn token (\userId finished -> Maybe.map (\_ -> finished) userId)
+        |> Neon.with
+            (Neon.selectOne "DELETE FROM sync_attempts WHERE state = $1::text AND expires_at > now() RETURNING provider, verifier"
+                [ Neon.text state ]
+                (Decode.map2 (\provider verifier -> { provider = provider, verifier = verifier })
+                    (Decode.field "provider" providerDecoder)
+                    (Decode.field "verifier" Decode.string)
+                )
+            )
+
+
+saveSync : SessionToken -> { provider : Api.SyncProvider, refreshToken : String, key : String } -> Neon.Transaction (Maybe String)
+saveSync token { provider, refreshToken, key } =
+    signedIn token (\_ saved -> saved)
+        |> Neon.with
+            (Neon.selectOne
+                ("INSERT INTO sync_connections (user_id, provider, refresh_token) "
+                    ++ "VALUES (NULLIF(current_setting('app.user_id', true), '')::uuid, $1::text, pgp_sym_encrypt($2::text, $3::text)) "
+                    ++ "ON CONFLICT (user_id, provider) DO UPDATE "
+                    ++ "SET refresh_token = EXCLUDED.refresh_token, connected_at = now() "
+                    ++ "RETURNING "
+                    ++ utc "connected_at"
+                    ++ " AS connected_at"
+                )
+                [ Neon.text (Api.providerToString provider), Neon.text refreshToken, Neon.text key ]
+                (Decode.field "connected_at" Decode.string)
+            )
+
+
+syncRefreshToken : SessionToken -> Api.SyncProvider -> String -> Neon.Transaction (Maybe (Maybe { pro : Bool, refreshToken : String }))
+syncRefreshToken token provider key =
+    signedIn token (\userId found -> Maybe.map (\_ -> found) userId)
+        |> Neon.with
+            (Neon.selectOne
+                ("SELECT is_pro(NULLIF(current_setting('app.user_id', true), '')::uuid) AS pro, "
+                    ++ "pgp_sym_decrypt(refresh_token, $2::text) AS refresh_token "
+                    ++ "FROM sync_connections WHERE provider = $1::text"
+                )
+                [ Neon.text (Api.providerToString provider), Neon.text key ]
+                (Decode.map2 (\pro refreshToken -> { pro = pro, refreshToken = refreshToken })
+                    (Decode.field "pro" Decode.bool)
+                    (Decode.field "refresh_token" Decode.string)
+                )
+            )
+
+
+dropSync : SessionToken -> Api.SyncProvider -> String -> Neon.Transaction (Maybe (Maybe String))
+dropSync token provider key =
+    signedIn token (\userId dropped -> Maybe.map (\_ -> dropped) userId)
+        |> Neon.with
+            (Neon.selectOne "DELETE FROM sync_connections WHERE provider = $1::text RETURNING pgp_sym_decrypt(refresh_token, $2::text) AS refresh_token"
+                [ Neon.text (Api.providerToString provider), Neon.text key ]
+                (Decode.field "refresh_token" Decode.string)
             )
 
 

@@ -1,9 +1,10 @@
-module Path exposing (Path(..), parse, toString)
+module Path exposing (Path(..), SyncReturn, parse, toString)
 
 import Data.LinkToken as LinkToken exposing (LinkToken)
 import Data.Username as Username exposing (Username)
 import Url exposing (Url)
-import Url.Parser as Parser exposing ((</>), Parser)
+import Url.Parser as Parser exposing ((</>), (<?>), Parser)
+import Url.Parser.Query as Query
 
 
 type Path
@@ -13,12 +14,20 @@ type Path
     | General
     | Models
     | Account
+    | Sync SyncReturn
     | SignUp
     | SignIn
     | Verify (Maybe LinkToken)
     | Passkey
     | Profile Username
     | NotFound
+
+
+type alias SyncReturn =
+    { code : Maybe String
+    , state : Maybe String
+    , error : Maybe String
+    }
 
 
 toString : Path -> String
@@ -41,6 +50,9 @@ toString path =
 
         Account ->
             "/settings/account"
+
+        Sync _ ->
+            "/settings/sync"
 
         SignUp ->
             "/signup"
@@ -80,6 +92,8 @@ parser =
         , Parser.map General (Parser.s "settings" </> Parser.s "general")
         , Parser.map Models (Parser.s "settings" </> Parser.s "models")
         , Parser.map Account (Parser.s "settings" </> Parser.s "account")
+        , Parser.map (\code state error -> Sync { code = code, state = state, error = error })
+            (Parser.s "settings" </> Parser.s "sync" <?> Query.string "code" <?> Query.string "state" <?> Query.string "error")
         , Parser.map SignUp (Parser.s "signup")
         , Parser.map SignIn (Parser.s "login")
         , Parser.map Verify (Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))

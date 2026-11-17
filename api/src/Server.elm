@@ -5,6 +5,7 @@ import Data.Email exposing (Email)
 import Data.Origin exposing (Origin)
 import Services.Mailer as Mailer
 import Services.Neon as Neon
+import Services.OAuth as OAuth
 import Services.Paddle as Paddle
 import Services.R2 as R2
 
@@ -17,4 +18,5 @@ type alias Server =
     , paddle : Maybe Paddle.Config
     , release : Api.Release
     , storage : Maybe R2.Config
+    , sync : Maybe OAuth.Config
     }
