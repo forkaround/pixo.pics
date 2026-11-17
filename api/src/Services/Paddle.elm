@@ -1,7 +1,11 @@
-module Services.Paddle exposing (Config, Environment(..), Event(..), Status(..), Subscription, config, event, grantsPro, statusToString)
+module Services.Paddle exposing (Config, Environment(..), Event(..), Status(..), Subscription, apiBase, billingOf, config, createPortalSession, createTransaction, environmentName, event, grantsPro, statusToString)
 
+import Api
 import Data.UserId as UserId exposing (UserId)
+import Effect exposing (Effect)
+import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 
 
 type Environment
@@ -251,3 +255,147 @@ change =
                 )
         )
         (Decode.field "effective_at" Decode.string)
+
+
+apiBase : Environment -> String
+apiBase environment =
+    case environment of
+        Sandbox ->
+            "https://sandbox-api.paddle.com"
+
+        Production ->
+            "https://api.paddle.com"
+
+
+environmentName : Environment -> String
+environmentName environment =
+    case environment of
+        Sandbox ->
+            "sandbox"
+
+        Production ->
+            "production"
+
+
+billingOf :
+    List
+        { a
+            | status : String
+            , scheduledChange : Maybe String
+            , scheduledChangeAt : Maybe String
+            , periodEndsAt : Maybe String
+        }
+    -> Api.Billing
+billingOf rows =
+    case rows of
+        [] ->
+            { plan = Api.Free, renewsAt = Nothing, endsAt = Nothing, pastDue = False, canManage = False }
+
+        first :: _ ->
+            if statusGrantsPro first.status then
+                if first.scheduledChange == Just "cancel" || first.scheduledChange == Just "pause" then
+                    { plan = Api.Pro, renewsAt = Nothing, endsAt = first.scheduledChangeAt, pastDue = first.status == "past_due", canManage = True }
+
+                else
+                    { plan = Api.Pro, renewsAt = first.periodEndsAt, endsAt = Nothing, pastDue = first.status == "past_due", canManage = True }
+
+            else
+                { plan = Api.Free, renewsAt = Nothing, endsAt = Nothing, pastDue = False, canManage = True }
+
+
+statusGrantsPro : String -> Bool
+statusGrantsPro status =
+    List.member status [ "active", "trialing", "past_due" ]
+
+
+timeout : Float
+timeout =
+    10000
+
+
+createTransaction : Config -> { userId : UserId, customerId : Maybe String } -> Effect (Result String String)
+createTransaction paddle wanted =
+    call paddle
+        "/transactions"
+        (Encode.object
+            ([ ( "items"
+               , Encode.list identity
+                    [ Encode.object
+                        [ ( "price_id", Encode.string paddle.proPriceId )
+                        , ( "quantity", Encode.int 1 )
+                        ]
+                    ]
+               )
+             , ( "custom_data", Encode.object [ ( "user_id", Encode.string (UserId.toString wanted.userId) ) ] )
+             ]
+                ++ (wanted.customerId
+                        |> Maybe.map (\id -> [ ( "customer_id", Encode.string id ) ])
+                        |> Maybe.withDefault []
+                   )
+            )
+        )
+        (Decode.at [ "data", "id" ] Decode.string |> Decode.andThen (startingWith "txn_"))
+
+
+createPortalSession : Config -> { customerId : String, subscriptionIds : List String } -> Effect (Result String String)
+createPortalSession paddle { customerId, subscriptionIds } =
+    call paddle
+        ("/customers/" ++ customerId ++ "/portal-sessions")
+        (Encode.object [ ( "subscription_ids", Encode.list Encode.string subscriptionIds ) ])
+        (Decode.at [ "data", "urls", "general", "overview" ] Decode.string |> Decode.andThen (startingWith "https://"))
+
+
+startingWith : String -> String -> Decoder String
+startingWith prefix value =
+    if String.startsWith prefix value then
+        Decode.succeed value
+
+    else
+        Decode.fail ("Expected " ++ prefix)
+
+
+call : Config -> String -> Encode.Value -> Decoder String -> Effect (Result String String)
+call paddle path body decoder =
+    Effect.Http
+        { method = "POST"
+        , headers =
+            [ ( "authorization", "Bearer " ++ paddle.apiKey )
+            , ( "paddle-version", "1" )
+            ]
+        , url = apiBase paddle.environment ++ path
+        , body = Effect.JsonBody body
+        , timeout = Just timeout
+        , onResponse = outcome decoder
+        }
+
+
+outcome : Decoder String -> Http.Response String -> Result String String
+outcome decoder response =
+    case response of
+        Http.GoodStatus_ _ body ->
+            Decode.decodeString decoder body
+                |> Result.mapError (\_ -> "Paddle's answer was not what we expected.")
+
+        Http.BadStatus_ metadata body ->
+            Decode.decodeString (rejection metadata.statusCode) body
+                |> Result.withDefault ("Paddle answered " ++ String.fromInt metadata.statusCode ++ ".")
+                |> Err
+
+        Http.NetworkError_ ->
+            Err "Could not reach Paddle."
+
+        Http.Timeout_ ->
+            Err "Paddle took too long to answer."
+
+        Http.BadUrl_ url ->
+            Err ("Bad Paddle endpoint: " ++ url)
+
+
+rejection : Int -> Decoder String
+rejection status =
+    Decode.map2
+        (\code detail ->
+            String.left 200 ("Paddle answered " ++ String.fromInt status ++ " (" ++ code ++ "): " ++ detail)
+        )
+        (Decode.at [ "error", "code" ] Decode.string)
+        (Decode.at [ "error", "detail" ] Decode.string)

@@ -1,5 +1,6 @@
 module PaddleTest exposing (suite)
 
+import Api
 import Data.PaddleSignature as PaddleSignature
 import Data.UserId as UserId
 import Expect
@@ -149,6 +150,28 @@ suite =
                     List.map Paddle.grantsPro [ Paddle.Active, Paddle.Trialing, Paddle.PastDue, Paddle.Canceled, Paddle.Paused ]
                         |> Expect.equal [ True, True, True, False, False ]
             ]
+        , describe "billingOf"
+            [ test "is Free without a way to manage when there are no rows" <|
+                \() ->
+                    Paddle.billingOf []
+                        |> Expect.equal { plan = Api.Free, renewsAt = Nothing, endsAt = Nothing, pastDue = False, canManage = False }
+            , test "is Pro and renews at the period's end" <|
+                \() ->
+                    Paddle.billingOf [ row "active" Nothing Nothing (Just "2026-12-17T10:00:00Z") ]
+                        |> Expect.equal { plan = Api.Pro, renewsAt = Just "2026-12-17T10:00:00Z", endsAt = Nothing, pastDue = False, canManage = True }
+            , test "is Pro and ends at the scheduled cancellation" <|
+                \() ->
+                    Paddle.billingOf [ row "active" (Just "cancel") (Just "2027-01-01T00:00:00Z") (Just "2026-12-17T10:00:00Z") ]
+                        |> Expect.equal { plan = Api.Pro, renewsAt = Nothing, endsAt = Just "2027-01-01T00:00:00Z", pastDue = False, canManage = True }
+            , test "is Pro and past due when the last payment failed" <|
+                \() ->
+                    Paddle.billingOf [ row "past_due" Nothing Nothing (Just "2026-12-17T10:00:00Z") ]
+                        |> Expect.equal { plan = Api.Pro, renewsAt = Just "2026-12-17T10:00:00Z", endsAt = Nothing, pastDue = True, canManage = True }
+            , test "is Free but can manage after the subscription is canceled" <|
+                \() ->
+                    Paddle.billingOf [ row "canceled" Nothing Nothing Nothing ]
+                        |> Expect.equal { plan = Api.Free, renewsAt = Nothing, endsAt = Nothing, pastDue = False, canManage = True }
+            ]
         , describe "UserId.fromString"
             [ test "accepts a UUID" <|
                 \() ->
@@ -242,3 +265,8 @@ example =
     "updated_at": "2026-11-17T10:00:00.500000Z"
   }
 }"""
+
+
+row : String -> Maybe String -> Maybe String -> Maybe String -> { status : String, scheduledChange : Maybe String, scheduledChangeAt : Maybe String, periodEndsAt : Maybe String }
+row status change changeAt periodEnds =
+    { status = status, scheduledChange = change, scheduledChangeAt = changeAt, periodEndsAt = periodEnds }

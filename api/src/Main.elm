@@ -211,6 +211,12 @@ brokenAnswer { problem, release } found =
         Api.PostBillingWebhook ->
             Response.unavailable
 
+        Api.PostCheckout ->
+            Response.unavailable
+
+        Api.PostPortal ->
+            Response.unavailable
+
 
 reply : Time.Posix -> Interop.Resolver -> Reply Msg -> RateLimit.Limits -> ( RateLimit.Limits, Effect Msg )
 reply time resolver answer limits =
@@ -383,6 +389,12 @@ routePolicy found address =
         Api.PostPasskeySignInOptions ->
             RateLimit.requests address
 
+        Api.PostCheckout ->
+            RateLimit.requests address
+
+        Api.PostPortal ->
+            RateLimit.requests address
+
 
 route : Server -> Request -> Reply Msg
 route server request =
@@ -441,3 +453,9 @@ handle server request r =
 
         Api.PostBillingWebhook ->
             Reply.map Billing (Flow.Billing.webhook server request)
+
+        Api.PostCheckout ->
+            Reply.map Billing (Flow.Billing.checkout server request)
+
+        Api.PostPortal ->
+            Reply.map Billing (Flow.Billing.portal server request)

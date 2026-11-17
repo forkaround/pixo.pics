@@ -480,7 +480,7 @@ suite =
                             ( [ "info", "warn", "error" ], [ 503 ] )
             ]
         , describe "GET /api/auth/session"
-            [ test "answers with the account of the session in the cookie" <|
+            [ test "answers with the account and the billing of the session in the cookie" <|
                 \() ->
                     start (Just databaseUrl)
                         |> session "GET" [ ( "cookie", "theme=dark; session=c2Vzc2lvbg" ) ]
@@ -498,24 +498,71 @@ suite =
                                 (Expect.equal
                                     [ ( "SELECT authenticate($1) AS user_id", [ "c2Vzc2lvbg" ] )
                                     , ( "SELECT email, username FROM users", [] )
+                                    , ( subscriptionsQuery, [] )
                                     ]
                                 )
                             )
-                        |> ProgramTest.simulateHttpOk "POST"
-                            endpoint
-                            """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"email":"ada@example.com","username":"ada"}]}]}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (sessionAnswer "")
                         |> expectResponses
                             [ { resolve = "first"
                               , status = 200
                               , headers = jsonHeaders
-                              , body = """{"email":"ada@example.com","username":"ada"}"""
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":false}}"""
+                              }
+                            ]
+            , test "answers Pro with the date it renews" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (sessionAnswer (subscriptionRow "active" "null" "null" "\"2026-12-17T10:00:00Z\""))
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":false,"canManage":true}}"""
+                              }
+                            ]
+            , test "answers Pro with the date it ends when it is set to cancel" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (sessionAnswer (subscriptionRow "active" "\"cancel\"" "\"2026-12-17T10:00:00Z\"" "\"2026-12-17T10:00:00Z\""))
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":null,"endsAt":"2026-12-17T10:00:00Z","pastDue":false,"canManage":true}}"""
+                              }
+                            ]
+            , test "answers Pro and past due when the last payment failed" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (sessionAnswer (subscriptionRow "past_due" "null" "null" "\"2026-12-17T10:00:00Z\""))
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"pro","renewsAt":"2026-12-17T10:00:00Z","endsAt":null,"pastDue":true,"canManage":true}}"""
+                              }
+                            ]
+            , test "answers Free with a portal after the subscription ended" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (sessionAnswer (subscriptionRow "canceled" "null" "null" "null"))
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"email":"ada@example.com","username":"ada","billing":{"plan":"free","renewsAt":null,"endsAt":null,"pastDue":false,"canManage":true}}"""
                               }
                             ]
             , test "answers 401 when the session is over" <|
                 \() ->
                     start (Just databaseUrl)
                         |> session "GET" [ ( "cookie", "session=c2Vzc2lvbg" ) ]
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[]}]}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[]},{"rows":[]}]}"""
                         |> expectResponses
                             [ { resolve = "first", status = 401, headers = jsonHeaders, body = """{"error":"Not signed in."}""" } ]
             , test "answers 401 at once without a cookie" <|
@@ -545,13 +592,21 @@ suite =
                         |> ProgramTest.ensureHttpRequest "POST"
                             endpoint
                             (Test.Http.expectJsonBody
-                                (Decode.map2 Tuple.pair
-                                    (Decode.field "query" Decode.string)
-                                    (Decode.field "params" (Decode.list Decode.string))
+                                (Decode.field "queries"
+                                    (Decode.list
+                                        (Decode.map2 Tuple.pair
+                                            (Decode.field "query" Decode.string)
+                                            (Decode.field "params" (Decode.list Decode.string))
+                                        )
+                                    )
                                 )
-                                (Expect.equal ( "SELECT delete_account($1) AS deleted", [ "c2Vzc2lvbg" ] ))
+                                (Expect.equal
+                                    [ ( "SELECT authenticate($1) AS user_id", [ "c2Vzc2lvbg" ] )
+                                    , ( deletionQuery, [ "c2Vzc2lvbg" ] )
+                                    ]
+                                )
                             )
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"deleted":true}],"rowCount":1}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "deleted")
                         |> expectResponses
                             [ { resolve = "first"
                               , status = 200
@@ -568,8 +623,20 @@ suite =
                 \() ->
                     start (Just databaseUrl)
                         |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
-                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"rows":[{"deleted":false}],"rowCount":1}"""
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "signed-out")
                         |> expectSent (responses >> List.map .status) [ 401 ]
+            , test "refuses while Pro renews, and keeps the cookie" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> deleteAccount [ ( "cookie", "session=c2Vzc2lvbg" ) ]
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (deletionAnswer "renewing")
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 409
+                              , headers = jsonHeaders
+                              , body = """{"error":"Cancel Pro before deleting your account."}"""
+                              }
+                            ]
             , test "reports a database failure without clearing the cookie" <|
                 \() ->
                     start (Just databaseUrl)
@@ -992,6 +1059,155 @@ suite =
                     start (Just databaseUrl)
                         |> passkeySignIn "{}"
                         |> expectSent (responses >> List.map .status) [ 400 ]
+            ]
+        , describe "POST /api/billing/checkout"
+            [ test "creates a transaction for the Pro price and the session's user" <|
+                \() ->
+                    startPaid
+                        |> checkoutRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (checkoutStateAnswer "false" "null")
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "https://sandbox-api.paddle.com/transactions"
+                            (\made ->
+                                Expect.all
+                                    [ Test.Http.hasHeader "authorization" "Bearer pdl_sdbx_apikey_test"
+                                    , Test.Http.hasHeader "paddle-version" "1"
+                                    , Test.Http.expectJsonBody Decode.value
+                                        (Encode.encode 0
+                                            >> Expect.equal """{"items":[{"price_id":"pri_pro","quantity":1}],"custom_data":{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"}}"""
+                                        )
+                                    ]
+                                    made
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://sandbox-api.paddle.com/transactions"
+                            (Test.Http.httpResponse { statusCode = 201, headers = [], body = """{"data":{"id":"txn_01"}}""" })
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"transactionId":"txn_01","clientToken":"test_token","environment":"sandbox"}"""
+                              }
+                            ]
+            , test "adds the customer when the user has had a subscription" <|
+                \() ->
+                    startPaid
+                        |> checkoutRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (checkoutStateAnswer "false" "\"ctm_01hv8x2a0e9xjn3k0q0p1y3z4c\"")
+                        |> ProgramTest.expectHttpRequest "POST"
+                            "https://sandbox-api.paddle.com/transactions"
+                            (Test.Http.expectJsonBody Decode.value
+                                (Encode.encode 0
+                                    >> Expect.equal """{"items":[{"price_id":"pri_pro","quantity":1}],"custom_data":{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"},"customer_id":"ctm_01hv8x2a0e9xjn3k0q0p1y3z4c"}"""
+                                )
+                            )
+            , test "answers 409 without calling Paddle when the user already has Pro" <|
+                \() ->
+                    startPaid
+                        |> checkoutRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (checkoutStateAnswer "true" "\"ctm_01hv8x2a0e9xjn3k0q0p1y3z4c\"")
+                        |> ProgramTest.ensureHttpRequests "POST" "https://sandbox-api.paddle.com/transactions" (List.length >> Expect.equal 0)
+                        |> expectResponses
+                            [ { resolve = "first", status = 409, headers = jsonHeaders, body = """{"error":"You already have Pro."}""" } ]
+            , test "answers 401 when the session is over" <|
+                \() ->
+                    startPaid
+                        |> checkoutRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":null}]},{"rows":[{"pro":false,"customer_id":null}]}]}"""
+                        |> expectSent (responses >> List.map .status) [ 401 ]
+            , test "answers 503 and logs why when Paddle refuses" <|
+                \() ->
+                    startPaid
+                        |> checkoutRequest "first"
+                        |> ProgramTest.simulateHttpOk "POST" endpoint (checkoutStateAnswer "false" "null")
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://sandbox-api.paddle.com/transactions"
+                            (Test.Http.httpResponse { statusCode = 400, headers = [], body = """{"error":{"type":"request_error","code":"bad_request","detail":"Invalid price."}}""" })
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                            ( [ 503 ]
+                            , [ ( "error", "Paddle checkout failed: Paddle answered 400 (bad_request): Invalid price." ) ]
+                            )
+            , test "answers 503 without Paddle configured" <|
+                \() ->
+                    start (Just databaseUrl)
+                        |> checkoutRequest "first"
+                        |> expectResponses
+                            [ { resolve = "first", status = 503, headers = jsonHeaders, body = """{"error":"Unavailable right now."}""" } ]
+            , test "answers 429 to the 11th checkout in 15 minutes from one address" <|
+                \() ->
+                    startPaid
+                        |> repeat 10 checkoutRequest
+                        |> checkoutRequest "11"
+                        |> expectSent (\values -> List.filter (\{ status } -> status == 429) (responses values))
+                            [ { resolve = "11"
+                              , status = 429
+                              , headers = ( "retry-after", "90" ) :: jsonHeaders
+                              , body = """{"error":"Too many attempts."}"""
+                              }
+                            ]
+            ]
+        , describe "POST /api/billing/portal"
+            [ test "answers 404 when the user has no subscription rows" <|
+                \() ->
+                    startPaid
+                        |> portalRequest
+                        |> ProgramTest.simulateHttpOk "POST" endpoint """{"results":[{"rows":[{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"}]},{"rows":[]}]}"""
+                        |> expectResponses
+                            [ { resolve = "first", status = 404, headers = jsonHeaders, body = """{"error":"No billing account yet."}""" } ]
+            , test "opens a portal session for the customer with the subscriptions that grant Pro" <|
+                \() ->
+                    startPaid
+                        |> portalRequest
+                        |> ProgramTest.simulateHttpOk "POST"
+                            endpoint
+                            ("""{"results":[{"rows":[{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"}]},{"rows":["""
+                                ++ subscriptionRow "active" "null" "null" "\"2026-12-17T10:00:00Z\""
+                                ++ ","
+                                ++ String.replace "sub_01hv8x2a0e9xjn3k0q0p1y3z4b" "sub_01hv8x2a0e9xjn3k0q0p1y3z4e" (subscriptionRow "canceled" "null" "null" "null")
+                                ++ """]}]}"""
+                            )
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "https://sandbox-api.paddle.com/customers/ctm_01hv8x2a0e9xjn3k0q0p1y3z4c/portal-sessions"
+                            (\made ->
+                                Expect.all
+                                    [ Test.Http.hasHeader "authorization" "Bearer pdl_sdbx_apikey_test"
+                                    , Test.Http.expectJsonBody Decode.value
+                                        (Encode.encode 0 >> Expect.equal """{"subscription_ids":["sub_01hv8x2a0e9xjn3k0q0p1y3z4b"]}""")
+                                    ]
+                                    made
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://sandbox-api.paddle.com/customers/ctm_01hv8x2a0e9xjn3k0q0p1y3z4c/portal-sessions"
+                            (Test.Http.httpResponse
+                                { statusCode = 201
+                                , headers = []
+                                , body = """{"data":{"urls":{"general":{"overview":"https://sandbox-customer-portal.paddle.com/x"}}}}"""
+                                }
+                            )
+                        |> expectResponses
+                            [ { resolve = "first"
+                              , status = 200
+                              , headers = jsonHeaders
+                              , body = """{"url":"https://sandbox-customer-portal.paddle.com/x"}"""
+                              }
+                            ]
+            , test "answers 503 and logs why when Paddle fails" <|
+                \() ->
+                    startPaid
+                        |> portalRequest
+                        |> ProgramTest.simulateHttpOk "POST"
+                            endpoint
+                            ("""{"results":[{"rows":[{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"}]},{"rows":["""
+                                ++ subscriptionRow "active" "null" "null" "\"2026-12-17T10:00:00Z\""
+                                ++ """]}]}"""
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST"
+                            "https://sandbox-api.paddle.com/customers/ctm_01hv8x2a0e9xjn3k0q0p1y3z4c/portal-sessions"
+                            Test.Http.networkError
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                            ( [ 503 ]
+                            , [ ( "error", "Paddle portal failed: Could not reach Paddle." ) ]
+                            )
             ]
         , describe "POST /api/billing/webhook"
             [ test "answers 503 when Paddle is not configured" <|
@@ -1867,6 +2083,58 @@ simulateSubscriptions _ =
     SimulatedEffect.Ports.subscribe "interopToElm"
         Decode.value
         (Decode.decodeValue (TsDecode.decoder Interop.interop.toElm) >> Main.GotInterop)
+
+
+subscriptionsQuery : String
+subscriptionsQuery =
+    "SELECT status, scheduled_change, to_char(scheduled_change_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS scheduled_change_at, to_char(current_period_ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS current_period_ends_at, paddle_customer_id, paddle_subscription_id FROM subscriptions ORDER BY (status IN ('active', 'trialing', 'past_due')) DESC, paddle_updated_at DESC"
+
+
+deletionQuery : String
+deletionQuery =
+    "SELECT CASE WHEN EXISTS (SELECT 1 FROM subscriptions WHERE status IN ('active', 'trialing', 'past_due') AND scheduled_change IS DISTINCT FROM 'cancel') THEN 'renewing' WHEN delete_account($1) THEN 'deleted' ELSE 'signed-out' END AS outcome"
+
+
+deletionAnswer : String -> String
+deletionAnswer outcome =
+    """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"outcome":\"""" ++ outcome ++ """"}]}]}"""
+
+
+sessionAnswer : String -> String
+sessionAnswer rows =
+    """{"results":[{"rows":[{"user_id":"7b0c9a52-3d0e-4a53-9a7e-0f6f1f3f5b11"}]},{"rows":[{"email":"ada@example.com","username":"ada"}]},{"rows":[""" ++ rows ++ """]}]}"""
+
+
+subscriptionRow : String -> String -> String -> String -> String
+subscriptionRow status change changeAt periodEnds =
+    """{"status":\"""" ++ status ++ """","scheduled_change":""" ++ change ++ ""","scheduled_change_at":""" ++ changeAt ++ ""","current_period_ends_at":""" ++ periodEnds ++ ""","paddle_customer_id":"ctm_01hv8x2a0e9xjn3k0q0p1y3z4c","paddle_subscription_id":"sub_01hv8x2a0e9xjn3k0q0p1y3z4b"}"""
+
+
+checkoutStateAnswer : String -> String -> String
+checkoutStateAnswer pro customerId =
+    """{"results":[{"rows":[{"user_id":"6f1c1f0e-7f3a-4c2b-9a51-0d4b1d7c8e21"}]},{"rows":[{"pro":""" ++ pro ++ ""","customer_id":""" ++ customerId ++ """}]}]}"""
+
+
+checkoutRequest : String -> App -> App
+checkoutRequest resolve =
+    requestWith
+        { resolve = resolve
+        , method = "POST"
+        , path = [ "api", "billing", "checkout" ]
+        , headers = [ ( "cookie", "session=c2Vzc2lvbg" ), ( "x-real-ip", "203.0.113.9" ) ]
+        , body = ""
+        }
+
+
+portalRequest : App -> App
+portalRequest =
+    requestWith
+        { resolve = "first"
+        , method = "POST"
+        , path = [ "api", "billing", "portal" ]
+        , headers = [ ( "cookie", "session=c2Vzc2lvbg" ), ( "x-real-ip", "203.0.113.9" ) ]
+        , body = ""
+        }
 
 
 deleteAccount : List ( String, String ) -> App -> App

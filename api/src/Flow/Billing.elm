@@ -1,12 +1,15 @@
-module Flow.Billing exposing (Msg, update, webhook, webhookChecked)
+module Flow.Billing exposing (Msg, checkout, portal, update, webhook, webhookChecked)
 
+import Api
 import Data.PaddleSignature as PaddleSignature exposing (PaddleSignature)
+import Data.UserId exposing (UserId)
 import Db
-import Effect exposing (Effect(..), log, query, respond)
+import Effect exposing (Effect(..), log, query, respond, transact)
 import InteropDefinitions as Interop
 import Json.Decode as Decode
 import Json.Encode as Encode
-import Reply exposing (Reply(..))
+import RateLimit
+import Reply exposing (Reply(..), withSession)
 import Request exposing (Request)
 import Response
 import Server exposing (Server)
@@ -17,6 +20,10 @@ import Time
 type Msg
     = WebhookArrived Interop.Resolver { signature : PaddleSignature, body : String } Time.Posix
     | SubscriptionApplied Interop.Resolver { eventId : String, eventType : String } String
+    | CheckoutStateFound Interop.Resolver (Maybe { userId : UserId, pro : Bool, customerId : Maybe String })
+    | TransactionCreated Interop.Resolver (Result String String)
+    | PortalRowsFound Interop.Resolver (Maybe (List Db.Subscription))
+    | PortalCreated Interop.Resolver (Result String String)
 
 
 webhook : Server -> Request -> Reply Msg
@@ -32,6 +39,36 @@ webhook server request =
 
                 Just signature ->
                     Later (\resolver -> Clock (WebhookArrived resolver { signature = signature, body = request.body }))
+
+
+checkout : Server -> Request -> Reply Msg
+checkout server request =
+    case server.paddle of
+        Nothing ->
+            Now Response.unavailable
+
+        Just _ ->
+            Limit [ RateLimit.checkouts (Request.clientAddress request) ]
+                (withSession request
+                    (\token resolver ->
+                        transact server.db resolver "Checkout lookup failed" (Db.checkoutState token) (CheckoutStateFound resolver)
+                    )
+                )
+
+
+portal : Server -> Request -> Reply Msg
+portal server request =
+    case server.paddle of
+        Nothing ->
+            Now Response.unavailable
+
+        Just _ ->
+            Limit [ RateLimit.portals (Request.clientAddress request) ]
+                (withSession request
+                    (\token resolver ->
+                        transact server.db resolver "Portal lookup failed" (Db.subscriptions token) (PortalRowsFound resolver)
+                    )
+                )
 
 
 webhookChecked : Server -> Interop.Resolver -> String -> Bool -> Effect Msg
@@ -114,6 +151,79 @@ update server msg =
                                 , body = arrived.body
                                 }
                             )
+
+        CheckoutStateFound resolver found ->
+            case ( server.paddle, found ) of
+                ( Nothing, _ ) ->
+                    respond resolver Response.unavailable
+
+                ( _, Nothing ) ->
+                    respond resolver Response.notSignedIn
+
+                ( Just paddle, Just state ) ->
+                    if state.pro then
+                        respond resolver (Response.error 409 "You already have Pro.")
+
+                    else
+                        Effect.map (TransactionCreated resolver)
+                            (Paddle.createTransaction paddle { userId = state.userId, customerId = state.customerId })
+
+        TransactionCreated resolver outcome ->
+            case ( server.paddle, outcome ) of
+                ( Nothing, _ ) ->
+                    respond resolver Response.unavailable
+
+                ( Just paddle, Ok id ) ->
+                    respond resolver
+                        (Response.json 200
+                            (Api.encodeResponse Api.checkout
+                                { transactionId = id
+                                , clientToken = paddle.clientToken
+                                , environment = Paddle.environmentName paddle.environment
+                                }
+                            )
+                        )
+
+                ( _, Err reason ) ->
+                    Batch
+                        [ respond resolver (Response.error 503 "Billing is unavailable right now.")
+                        , log Interop.Error ("Paddle checkout failed: " ++ reason)
+                        ]
+
+        PortalRowsFound resolver found ->
+            case ( server.paddle, found ) of
+                ( Nothing, _ ) ->
+                    respond resolver Response.unavailable
+
+                ( _, Nothing ) ->
+                    respond resolver Response.notSignedIn
+
+                ( Just paddle, Just rows ) ->
+                    case rows of
+                        [] ->
+                            respond resolver (Response.error 404 "No billing account yet.")
+
+                        first :: _ ->
+                            Effect.map (PortalCreated resolver)
+                                (Paddle.createPortalSession paddle
+                                    { customerId = first.customerId
+                                    , subscriptionIds =
+                                        rows
+                                            |> List.filter (\row -> List.member row.status [ "active", "trialing", "past_due" ])
+                                            |> List.map .subscriptionId
+                                    }
+                                )
+
+        PortalCreated resolver outcome ->
+            case outcome of
+                Ok url ->
+                    respond resolver (Response.json 200 (Api.encodeResponse Api.portal { url = url }))
+
+                Err reason ->
+                    Batch
+                        [ respond resolver (Response.error 503 "Billing is unavailable right now.")
+                        , log Interop.Error ("Paddle portal failed: " ++ reason)
+                        ]
 
         SubscriptionApplied resolver ids outcome ->
             let

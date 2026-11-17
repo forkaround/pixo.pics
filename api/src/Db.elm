@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Ceremony, Consumed(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), account, addPasskey, applySubscription, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, magicLink, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey)
+module Db exposing (Added(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), Removed(..), SignInLink(..), SignUpLink(..), Subscription, addPasskey, applySubscription, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, magicLink, me, passkeyPublicKey, passkeys, ping, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -172,10 +172,73 @@ consumedDecoder =
             )
 
 
-account : SessionToken -> Neon.Transaction (Maybe Api.Account)
-account token =
-    signedIn token (\_ found -> found)
+me : SessionToken -> Neon.Transaction (Maybe ( Api.Account, List Subscription ))
+me token =
+    signedIn token (\_ found rows -> Maybe.map (\owner -> ( owner, rows )) found)
         |> Neon.with ownAccount
+        |> Neon.with subscriptionRows
+
+
+type alias Subscription =
+    { status : String
+    , scheduledChange : Maybe String
+    , scheduledChangeAt : Maybe String
+    , periodEndsAt : Maybe String
+    , customerId : String
+    , subscriptionId : String
+    }
+
+
+subscriptions : SessionToken -> Neon.Transaction (Maybe (List Subscription))
+subscriptions token =
+    signedIn token (\userId found -> Maybe.map (\_ -> found) userId)
+        |> Neon.with subscriptionRows
+
+
+subscriptionRows : Neon.Query (List Subscription)
+subscriptionRows =
+    Neon.select
+        ("SELECT status, scheduled_change, "
+            ++ utc "scheduled_change_at"
+            ++ " AS scheduled_change_at, "
+            ++ utc "current_period_ends_at"
+            ++ " AS current_period_ends_at, paddle_customer_id, paddle_subscription_id "
+            ++ "FROM subscriptions "
+            ++ "ORDER BY (status IN ('active', 'trialing', 'past_due')) DESC, paddle_updated_at DESC"
+        )
+        []
+        (Decode.map6 Subscription
+            (Decode.field "status" Decode.string)
+            (Decode.field "scheduled_change" (Decode.nullable Decode.string))
+            (Decode.field "scheduled_change_at" (Decode.nullable Decode.string))
+            (Decode.field "current_period_ends_at" (Decode.nullable Decode.string))
+            (Decode.field "paddle_customer_id" Decode.string)
+            (Decode.field "paddle_subscription_id" Decode.string)
+        )
+
+
+utc : String -> String
+utc column =
+    "to_char(" ++ column ++ " AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')"
+
+
+checkoutState : SessionToken -> Neon.Transaction (Maybe { userId : UserId, pro : Bool, customerId : Maybe String })
+checkoutState token =
+    signedIn token
+        (\userId state ->
+            Maybe.map (\id -> { userId = id, pro = state.pro, customerId = state.customerId }) userId
+        )
+        |> Neon.with
+            (Neon.one
+                ("SELECT is_pro(NULLIF(current_setting('app.user_id', true), '')::uuid) AS pro, "
+                    ++ "(SELECT paddle_customer_id FROM subscriptions ORDER BY paddle_updated_at DESC LIMIT 1) AS customer_id"
+                )
+                []
+                (Decode.map2 (\pro customerId -> { pro = pro, customerId = customerId })
+                    (Decode.field "pro" Decode.bool)
+                    (Decode.field "customer_id" (Decode.nullable Decode.string))
+                )
+            )
 
 
 ownAccount : Neon.Query (Maybe Api.Account)
@@ -387,11 +450,42 @@ signOut token =
         |> Neon.map (\_ -> ())
 
 
-deleteAccount : SessionToken -> Neon.Query Bool
+type Deletion
+    = Deleted
+    | Renewing
+    | NotSignedIn
+
+
+deleteAccount : SessionToken -> Neon.Transaction Deletion
 deleteAccount token =
-    Neon.one "SELECT delete_account($1) AS deleted"
-        [ Neon.text (SessionToken.toString token) ]
-        (Decode.field "deleted" Decode.bool)
+    signedIn token (\_ outcome -> outcome)
+        |> Neon.with
+            (Neon.one
+                ("SELECT CASE "
+                    ++ "WHEN EXISTS (SELECT 1 FROM subscriptions WHERE status IN ('active', 'trialing', 'past_due') "
+                    ++ "AND scheduled_change IS DISTINCT FROM 'cancel') THEN 'renewing' "
+                    ++ "WHEN delete_account($1) THEN 'deleted' "
+                    ++ "ELSE 'signed-out' END AS outcome"
+                )
+                [ Neon.text (SessionToken.toString token) ]
+                (Decode.field "outcome" Decode.string
+                    |> Decode.andThen
+                        (\outcome ->
+                            case outcome of
+                                "deleted" ->
+                                    Decode.succeed Deleted
+
+                                "renewing" ->
+                                    Decode.succeed Renewing
+
+                                "signed-out" ->
+                                    Decode.succeed NotSignedIn
+
+                                _ ->
+                                    Decode.fail ("Unknown deletion outcome: " ++ outcome)
+                        )
+                )
+            )
 
 
 applySubscription :
