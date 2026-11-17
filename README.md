@@ -16,7 +16,8 @@ No account is needed to make pictures. An account signs in with a passkey or a l
 email; the server keeps the account, its passkeys, sessions and Pro subscription. Pro, $5 a
 month through Paddle, adds a public profile, the feed and cloud sync. Published pictures (Pro)
 go from the browser to Cloudflare R2 and are served from img.pixo.pics; the server only signs
-the upload and checks it.
+the upload and checks it. Pro can keep a copy of the library in Dropbox or Google Drive; the
+browser uploads, the server only issues tokens.
 
 ## How it's built
 

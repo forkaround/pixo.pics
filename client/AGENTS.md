@@ -97,4 +97,5 @@ A page with state of its own is a module in `client/Page/`. A new one is:
 | `client/UI/`, an elmcn component, the sidebar, the bar, `client/Logo.elm`, `favicon.svg`                                                     | [docs/agents/ui.md](../docs/agents/ui.md)           |
 | `Pipeline.elm`, `pipeline.worker.ts`, `bonsai.d.ts`, `Stylist.elm`, `stylist.worker.ts`, `/studio`                                           | [docs/agents/studio.md](../docs/agents/studio.md)   |
 | `Library.elm`, `Idb.elm`, `idb.ts`, `Bm25.elm`, `Share.elm`, `share.ts`, `Tagger.elm`, `tagger.worker.ts`, `shared/Data/Tag.elm`, `/library` | [docs/agents/library.md](../docs/agents/library.md) |
+| `Sync.elm`, `Page/Sync.elm`, `/settings/sync`                                                                                                | [docs/agents/sync.md](../docs/agents/sync.md)       |
 | Browser tests in `tests/`                                                                                                                    | [tests/AGENTS.md](../tests/AGENTS.md)               |

@@ -697,6 +697,55 @@ suite =
                         |> ProgramTest.ensureViewHasNot [ text "Connected 2026-11-17" ]
                         |> ProgramTest.expectViewHas [ tag "button", attribute (Html.Attributes.attribute "aria-label" "Connect Dropbox") ]
             ]
+        , describe "Cloud sync"
+            [ test "asks the server for a token, and for nothing to learn the connections" <|
+                \() ->
+                    syncing
+                        |> ProgramTest.ensureHttpRequests "GET" "/api/auth/session" (List.length >> Expect.equal 0)
+                        |> ProgramTest.ensureHttpRequest "POST" "/api/sync/dropbox/token" (.body >> Expect.equal "")
+                        |> ProgramTest.expectHttpRequests "GET" "/api/sync/dropbox" (List.length >> Expect.equal 0)
+            , test "uploads the picture straight to Dropbox with the token, then remembers where it went" <|
+                \() ->
+                    syncing
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/dropbox/token" """{"accessToken":"t","expiresIn":14400}"""
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (List.filter (String.contains "SendBlob") >> Expect.equal [ dropboxUpload ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (dropboxSent 200 """{"path_display":"/pixo-7.png"}""")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (List.filter (String.contains "IdbPatch") >> Expect.equal [ syncedPatch ])
+            , test "shows the count in settings" <|
+                \() ->
+                    syncing
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/dropbox/token" """{"accessToken":"t","expiresIn":14400}"""
+                        |> ProgramTest.clickLink "Settings" "/settings/general"
+                        |> ProgramTest.clickLink "Sync" "/settings/sync"
+                        |> ProgramTest.ensureViewHas [ text "Copying 0 of 1" ]
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (dropboxSent 200 """{"path_display":"/pixo-7.png"}""")
+                        |> ProgramTest.expectViewHas [ text "1 of 1 copied" ]
+            , test "asks for nothing from a Free account" <|
+                \() ->
+                    startAt "/" defaultFlags
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" me
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
+            , test "asks for a new token once another account signs in" <|
+                \() ->
+                    syncing
+                        |> ProgramTest.simulateHttpOk "POST" "/api/sync/dropbox/token" """{"accessToken":"t","expiresIn":14400}"""
+                        |> ProgramTest.routeChange "https://pixo.pics/login"
+                        |> ProgramTest.clickButton "Log in with a passkey"
+                        |> ProgramTest.simulateHttpOk "POST"
+                            "/api/auth/signin/passkey/options"
+                            """{"challenge":"Y2hhbGxlbmdl","rpId":"pixo.pics"}"""
+                        |> ProgramTest.simulateIncomingPort "interopToElm" passkeyUsed
+                        |> ProgramTest.simulateHttpOk "POST" "/api/auth/signin/passkey" """{"email":"bob@example.com","username":"bob"}"""
+                        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" (String.replace "ada" "bob" meSyncing)
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (libraryLoaded [ storedBy "bob" 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576 ])
+                        |> ProgramTest.expectHttpRequest "POST" "/api/sync/dropbox/token" (.body >> Expect.equal "")
+            ]
         , describe "Passkeys"
             [ test "keeps the skeleton and loads the passkeys again on request" <|
                 \() ->
@@ -3095,6 +3144,34 @@ taggedLibrary =
                 , storedWithTags [ "sunset" ] 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
                 ]
             )
+
+
+syncing : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+syncing =
+    startAt "/" defaultFlags
+        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" meSyncing
+        |> ProgramTest.simulateIncomingPort "interopToElm"
+            (libraryLoaded [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
+
+
+dropboxUpload : String
+dropboxUpload =
+    """{"tag":"SendBlob","data":{"label":"dropbox:1","url":"blob:https://pixo.pics/1","method":"POST","endpoint":"https://content.dropboxapi.com/2/files/upload","headers":[["authorization","Bearer t"],["content-type","application/octet-stream"],["dropbox-api-arg","{\\"path\\":\\"/pixo-7.png\\",\\"mode\\":\\"add\\",\\"autorename\\":true,\\"mute\\":true}"]],"release":false}}"""
+
+
+syncedPatch : String
+syncedPatch =
+    """{"tag":"IdbPatch","data":{"database":{"name":"pixo","version":1,"stores":[{"name":"pictures","keyPath":"id","autoIncrement":true}]},"store":"pictures","key":1,"fields":{"synced":{"dropbox":"/pixo-7.png"}},"label":"synced"}}"""
+
+
+dropboxSent : Int -> String -> Encode.Value
+dropboxSent status body =
+    Encode.object
+        [ ( "tag", Encode.string "BlobSent" )
+        , ( "label", Encode.string "dropbox:1" )
+        , ( "status", Encode.int status )
+        , ( "body", Encode.string body )
+        ]
 
 
 publishedId : String

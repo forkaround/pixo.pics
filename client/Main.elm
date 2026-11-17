@@ -43,6 +43,7 @@ import StudioView
 import Stylist
 import SupportView
 import Svg.Attributes
+import Sync
 import Tagger
 import Task
 import Time
@@ -89,6 +90,7 @@ type alias Model =
     , library : Library.Model
     , publish : Publish.Model
     , tagger : Tagger.Model
+    , sync : Sync.Model
     , sidebar : Sidebar.State
     , sidebarProgress : Float
     , runs : Int
@@ -138,6 +140,7 @@ init flags url =
         , library = Library.init canShare
         , publish = Publish.init
         , tagger = Tagger.init
+        , sync = Sync.init
         , sidebar = sidebar
         , sidebarProgress = sidebarTarget sidebar
         , runs = 0
@@ -388,6 +391,7 @@ type Msg
     | GotGeneral Page.General.Msg
     | GotAccount Page.Account.Msg
     | GotSync Page.Sync.Msg
+    | GotCloudSync Sync.Msg
     | GotExplore Page.Explore.Msg
     | GotProfile Page.Profile.Msg
     | PathSelected Path.Path
@@ -440,8 +444,11 @@ update msg model =
 
         ( asked, backfilled ) =
             backfill followed
+
+        ( copied, copying ) =
+            copy asked
     in
-    ( counted model asked, Batch [ effect, following, backfilled ] )
+    ( counted model copied, Batch [ effect, following, backfilled, copying ] )
 
 
 currentMe : Model -> Maybe Api.Me
@@ -466,8 +473,15 @@ currentBilling model =
 follow : Session -> Model -> ( Model, Effect Msg )
 follow before model =
     let
-        ( followed, released ) =
+        ( libraryFollowed, libraryReleased ) =
             followLibrary model
+
+        ( followed, released ) =
+            if accountEnded before libraryFollowed.session then
+                ( { libraryFollowed | sync = Sync.init }, Batch [ libraryReleased, Dismiss cloudSyncToast ] )
+
+            else
+                ( libraryFollowed, libraryReleased )
     in
     case followed.session of
         SignedIn account ->
@@ -482,6 +496,24 @@ follow before model =
 
         Unknown ->
             ( followed, released )
+
+
+accountEnded : Session -> Session -> Bool
+accountEnded before after =
+    case ( before, after ) of
+        ( SignedIn earlier, SignedIn later ) ->
+            earlier.username /= later.username
+
+        ( SignedIn _, _ ) ->
+            True
+
+        _ ->
+            False
+
+
+cloudSyncToast : String
+cloudSyncToast =
+    "cloud-sync"
 
 
 sameAccount : Session -> Api.Account -> Bool
@@ -524,6 +556,38 @@ followLibrary model =
 
         Unknown ->
             ( model, NoEffect )
+
+
+copy : Model -> ( Model, Effect Msg )
+copy model =
+    case currentMe model of
+        Just me ->
+            if me.billing.plan == Api.Pro && not (List.isEmpty me.sync) then
+                if Library.untouched model.library then
+                    runLibrary model (Library.enter model.library)
+
+                else if Library.loaded model.library then
+                    Sync.next (List.map .provider me.sync) model.library model.sync
+                        |> Tuple.mapBoth (\sync -> { model | sync = sync }) (Effect.map GotCloudSync)
+
+                else
+                    ( model, NoEffect )
+
+            else
+                ( model, NoEffect )
+
+        Nothing ->
+            ( model, NoEffect )
+
+
+connectedProviders : Model -> List Api.SyncProvider
+connectedProviders model =
+    case currentMe model of
+        Just me ->
+            List.map .provider me.sync
+
+        Nothing ->
+            []
 
 
 backfill : Model -> ( Model, Effect Msg )
@@ -663,7 +727,12 @@ step msg model =
                     step (GotPublish (Publish.Sent id { status = result.status, body = result.body })) model
 
                 Nothing ->
-                    ( model, NoEffect )
+                    case Sync.byLabel result.label model.sync of
+                        Just job ->
+                            step (GotCloudSync (Sync.Uploaded job { status = result.status, body = result.body })) model
+
+                        Nothing ->
+                            ( model, NoEffect )
 
         GotInterop (Ok (Interop.BlobFailed result)) ->
             case publishId result.label of
@@ -671,7 +740,12 @@ step msg model =
                     step (GotPublish (Publish.SendFailed id result.message)) model
 
                 Nothing ->
-                    ( model, NoEffect )
+                    case Sync.byLabel result.label model.sync of
+                        Just job ->
+                            step (GotCloudSync (Sync.UploadFailed job result.message)) model
+
+                        Nothing ->
+                            ( model, NoEffect )
 
         GotStylist stylistMsg ->
             if Stylist.needsWebGpu stylistMsg && not (Pipeline.canPrompt model.pipeline.device) then
@@ -940,6 +1014,9 @@ step msg model =
                 _ ->
                     ( believed, NoEffect )
 
+        GotSync (Page.Sync.ResumeClicked provider) ->
+            step (GotCloudSync (Sync.Resumed provider)) model
+
         GotSync pageMsg ->
             let
                 refreshed =
@@ -957,6 +1034,22 @@ step msg model =
 
                 _ ->
                     ( model, refreshed )
+
+        GotCloudSync syncMsg ->
+            let
+                ( synced, effect ) =
+                    Sync.update model.library syncMsg model.sync
+            in
+            case Sync.finished model.sync syncMsg of
+                Just ( id, provider, reference ) ->
+                    let
+                        ( marked, marking ) =
+                            runLibrary { model | sync = synced } (Library.markSynced id provider reference model.library)
+                    in
+                    ( marked, Batch [ Effect.map GotCloudSync effect, marking ] )
+
+                Nothing ->
+                    ( { model | sync = synced }, Effect.map GotCloudSync effect )
 
         GotExplore pageMsg ->
             case model.page of
@@ -1291,7 +1384,7 @@ viewBody model =
                         Sync page ->
                             viewSettingsPage "Sync"
                                 (text "Copy your library to your own cloud.")
-                                (List.map (Html.map GotSync) (Page.Sync.view model.session (currentMe model) page))
+                                (List.map (Html.map GotSync) (Page.Sync.view model.session (currentMe model) (\provider -> Sync.status (connectedProviders model) provider model.library model.sync) page))
                     ]
                 ]
 
