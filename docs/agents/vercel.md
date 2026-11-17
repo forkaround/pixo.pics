@@ -34,6 +34,9 @@ production, any other branch to a preview. The Neon project `pixo` (`small-lab-6
   `PADDLE_WEBHOOK_SECRET` are secrets. Paddle cannot pass Vercel Authentication: a sandbox
   notification destination for a preview needs `?x-vercel-protection-bypass=<secret>` on
   its URL.
+- `R2_*` and `IMAGES_ORIGIN` are per environment: Production uses the bucket behind
+  img.pixo.pics and a private upload bucket; Preview a separate pair. `R2_SECRET_ACCESS_KEY`
+  is a secret. Picture bytes never reach the function.
 - The function's environment still holds the owner's `DATABASE_URL`: RLS contains the
   server's queries, not a compromised process.
 - Keep `regions` in `vercel.json` next to Neon's region: `fra1` for `aws-eu-central-1`.
