@@ -140,6 +140,7 @@ const app = Elm.Main.init({
     r2Bucket: process.env.R2_BUCKET || null,
     r2UploadBucket: process.env.R2_UPLOAD_BUCKET || null,
     imagesOrigin: process.env.IMAGES_ORIGIN || null,
+    moderationEmail: process.env.MODERATION_EMAIL || null,
   },
 });
 

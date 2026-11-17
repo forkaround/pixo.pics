@@ -1,4 +1,4 @@
-module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), PictureRow, ProfileRow, Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, feed, feedTags, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, profile, removePasskey, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions, unconfirmed)
+module Db exposing (Added(..), Asked(..), Ceremony, Consumed(..), Deletion(..), PasskeySignIn(..), PictureRow, ProfileRow, Removed(..), SignInLink(..), SignUpLink(..), Subscription, Unconfirmed(..), addPasskey, applySubscription, askPicture, beforeDeletion, checkoutState, connect, consumeMagicLink, createSignInLink, createSignUpLink, deleteAccount, dropPicture, feed, feedTags, magicLink, markPublished, me, ownPicture, passkeyPublicKey, passkeys, ping, profile, removePasskey, reportPicture, signInChallenge, signInWithPasskey, signOut, signedIn, startPasskey, subscriptions, unconfirmed)
 
 import Api
 import Data.Challenge as Challenge exposing (Challenge)
@@ -698,6 +698,17 @@ feedTags limit =
             (Decode.field "pictures" Decode.string)
         )
         |> Neon.map (List.filterMap identity)
+
+
+reportPicture : PictureId -> String -> Neon.Query { outcome : String, first : Bool, username : Maybe Username }
+reportPicture id reason =
+    Neon.one "SELECT outcome, first, username FROM report_picture($1::uuid, $2)"
+        [ Neon.text (PictureId.toString id), Neon.text reason ]
+        (Decode.map3 (\outcome first username -> { outcome = outcome, first = first, username = username })
+            (Decode.field "outcome" Decode.string)
+            (Decode.field "first" Decode.bool)
+            (Decode.field "username" (Decode.nullable Username.decoder))
+        )
 
 
 profile : Username -> Maybe PictureId -> Int -> Neon.Query (Maybe ProfileRow)

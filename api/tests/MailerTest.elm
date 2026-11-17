@@ -8,6 +8,7 @@ import Services.Mailer as Mailer
 import Services.Mailer.Layout as Layout
 import Services.Mailer.PasskeyAdded
 import Services.Mailer.PasskeyRemoved
+import Services.Mailer.PictureReported
 import Services.Mailer.SignIn
 import Services.Mailer.SignUp
 import Test exposing (Test, describe, test)
@@ -116,6 +117,27 @@ suite =
                                 |> String.contains "A passkey was added to the account ada."
                                 |> Expect.equal True
                         )
+            ]
+        , describe "PictureReported"
+            [ test "names the reason, the picture, the profile and the takedown SQL" <|
+                \() ->
+                    Services.Mailer.PictureReported.email
+                        { url = "https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg"
+                        , profile = "https://pixo.pics/ada"
+                        , reason = "spam"
+                        , pictureId = "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11"
+                        }
+                        |> Expect.all
+                            [ .html >> String.contains "Reason: spam." >> Expect.equal True
+                            , .text >> String.contains "Reason: spam." >> Expect.equal True
+                            , .html >> String.contains "https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg" >> Expect.equal True
+                            , .text >> String.contains "https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg" >> Expect.equal True
+                            , .html >> String.contains "https://pixo.pics/ada" >> Expect.equal True
+                            , .text >> String.contains "https://pixo.pics/ada" >> Expect.equal True
+                            , .html >> String.contains "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11" >> Expect.equal True
+                            , .text >> String.contains "SELECT * FROM take_down_picture('6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11');" >> Expect.equal True
+                            , .subject >> Expect.equal "A picture was reported on pixo"
+                            ]
             ]
         , describe "PasskeyRemoved"
             [ test "names the passkey and the account, and links to the account" <|
