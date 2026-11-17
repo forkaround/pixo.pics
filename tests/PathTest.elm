@@ -1,6 +1,7 @@
 module PathTest exposing (suite)
 
 import Data.LinkToken as LinkToken
+import Data.Username as Username
 import Expect
 import Path exposing (Path)
 import Test exposing (Test, describe, test)
@@ -45,6 +46,36 @@ suite =
                             Url.fromString "https://pixo.pics/nowhere/at/all"
                                 |> Maybe.map Path.parse
                                 |> Expect.equal (Just Path.NotFound)
+                   , test "takes a free name for a profile" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/ada"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just (profileOf "ada"))
+                   , test "takes a capitalised name for the same profile" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/Ada"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just (profileOf "ada"))
+                   , test "keeps studio for the studio" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/studio"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.Studio)
+                   , test "keeps 404 for not found" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/404"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.NotFound)
+                   , test "takes a reserved name without a page for not found" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/signin"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.NotFound)
+                   , test "takes a too short name for not found" <|
+                        \() ->
+                            Url.fromString "https://pixo.pics/a"
+                                |> Maybe.map Path.parse
+                                |> Expect.equal (Just Path.NotFound)
                    , test "no longer has a server settings page" <|
                         \() ->
                             Url.fromString "https://pixo.pics/settings/server"
@@ -53,6 +84,16 @@ suite =
                    ]
             )
         ]
+
+
+profileOf : String -> Path
+profileOf name =
+    case Username.claim name of
+        Ok username ->
+            Path.Profile username
+
+        Err _ ->
+            Path.NotFound
 
 
 paths : List Path
@@ -105,6 +146,9 @@ next path =
             Just Path.Passkey
 
         Path.Passkey ->
+            Maybe.map Path.Profile (Result.toMaybe (Username.claim "ada"))
+
+        Path.Profile _ ->
             Just Path.NotFound
 
         Path.NotFound ->

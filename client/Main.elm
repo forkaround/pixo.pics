@@ -24,8 +24,10 @@ import Minidenticons
 import ModelsView
 import Notice
 import Page.Account
+import Page.Explore
 import Page.General
 import Page.Passkey
+import Page.Profile
 import Page.SignIn
 import Page.SignUp
 import Page.Verify
@@ -96,7 +98,8 @@ type alias Model =
 
 
 type Page
-    = Explore
+    = Explore Page.Explore.Model
+    | Profile Page.Profile.Model
     | Studio
     | Library
     | Settings Section
@@ -151,7 +154,12 @@ open url opened =
     in
     case Path.parse url of
         Path.Explore ->
-            ( { model | page = Explore }, NoEffect )
+            Page.Explore.init
+                |> Tuple.mapBoth (\page -> { model | page = Explore page }) (Effect.map GotExplore)
+
+        Path.Profile name ->
+            Page.Profile.init name
+                |> Tuple.mapBoth (\page -> { model | page = Profile page }) (Effect.map GotProfile)
 
         Path.Studio ->
             runPipeline { model | page = Studio } (Pipeline.enter model.pipeline)
@@ -359,6 +367,8 @@ type Msg
     | GotPasskey Page.Passkey.Msg
     | GotGeneral Page.General.Msg
     | GotAccount Page.Account.Msg
+    | GotExplore Page.Explore.Msg
+    | GotProfile Page.Profile.Msg
     | PathSelected Path.Path
     | GotPipeline Pipeline.Msg
     | GotLibrary Library.Msg
@@ -694,7 +704,7 @@ step msg model =
             ( model, PushUrl (Path.toString path) )
 
         UrlRequested (Browser.Internal url) ->
-            if model.page == Explore && Path.parse url == Path.Explore && url.fragment == Just ExploreView.gallery then
+            if isExplore model.page && Path.parse url == Path.Explore && url.fragment == Just ExploreView.gallery then
                 ( model, ScrollTo ExploreView.gallery )
 
             else
@@ -900,6 +910,33 @@ step msg model =
                 _ ->
                     ( believed, NoEffect )
 
+        GotExplore pageMsg ->
+            case model.page of
+                Explore page ->
+                    Page.Explore.update pageMsg page
+                        |> Tuple.mapBoth (\next -> { model | page = Explore next }) (Effect.map GotExplore)
+
+                _ ->
+                    ( model, NoEffect )
+
+        GotProfile pageMsg ->
+            let
+                ( believed, library ) =
+                    case Page.Profile.outcome pageMsg of
+                        Page.Profile.Unpublished id ->
+                            runLibrary model (Library.unpublished id model.library)
+
+                        Page.Profile.Unchanged ->
+                            ( model, NoEffect )
+            in
+            case believed.page of
+                Profile page ->
+                    Page.Profile.update believed.session pageMsg page
+                        |> Tuple.mapBoth (\next -> { believed | page = Profile next }) (\effect -> Batch [ Effect.map GotProfile effect, library ])
+
+                _ ->
+                    ( believed, library )
+
         ThemeSelected theme ->
             ( { model | theme = theme }
             , SendToJs
@@ -1063,8 +1100,11 @@ viewToasts model =
 title : Page -> String
 title page =
     case page of
-        Explore ->
+        Explore _ ->
             "Explore · pixo"
+
+        Profile profile ->
+            Username.toString profile.name ++ " · pixo"
 
         Studio ->
             "Studio · pixo"
@@ -1118,8 +1158,25 @@ viewBody model =
             else
                 viewLibrary model
 
-        Explore ->
-            viewFrame model "Explore" [] [ viewContent [ ExploreView.view (invitation model.session) ] ]
+        Explore page ->
+            viewFrame model
+                "Explore"
+                []
+                [ viewContent
+                    [ Html.map GotExplore (Page.Explore.view (invitation model.session) page)
+                    , Page.Explore.lightbox GotExplore (viewToasts model) page
+                    ]
+                ]
+
+        Profile page ->
+            viewFrame model
+                (Username.toString page.name)
+                []
+                [ viewContent
+                    [ Html.map GotProfile (Page.Profile.view model.session page)
+                    , Page.Profile.lightbox GotProfile model.session (viewToasts model) page
+                    ]
+                ]
 
         Settings section ->
             viewFrame model
@@ -1226,8 +1283,11 @@ pageToasts page =
         Settings Models ->
             []
 
-        Explore ->
-            []
+        Explore _ ->
+            Page.Explore.toasts
+
+        Profile _ ->
+            Page.Profile.toasts
 
         Studio ->
             []
@@ -1284,7 +1344,7 @@ viewShell model page =
         |> Sidebar.content
             [ Sidebar.group []
                 [ Sidebar.menu []
-                    [ viewDestination (model.page == Explore) Path.Explore Phosphor.kanban "Explore"
+                    [ viewDestination (isExplore model.page) Path.Explore Phosphor.kanban "Explore"
                     , viewDestination (model.page == Studio) Path.Studio Phosphor.stack "Studio"
                     , viewDestination (model.page == Library) Path.Library Phosphor.slideshow "Library"
                     , viewDestination (isSettings model.page) Path.General Phosphor.sliders "Settings"
@@ -1341,6 +1401,16 @@ invitation session =
 
         _ ->
             ExploreView.Guest
+
+
+isExplore : Page -> Bool
+isExplore page =
+    case page of
+        Explore _ ->
+            True
+
+        _ ->
+            False
 
 
 isGeneral : Page -> Bool

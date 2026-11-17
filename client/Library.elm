@@ -20,6 +20,7 @@ module Library exposing
     , signedIn
     , signedOut
     , tags
+    , unpublished
     , untagged
     , update
     , visible
@@ -504,6 +505,23 @@ markPublished id published model =
                     )
               ]
             )
+
+        _ ->
+            ( model, [] )
+
+
+unpublished : PictureId -> Model -> ( Model, List Command )
+unpublished remote model =
+    case model.pictures of
+        Loaded pictures ->
+            pictures
+                |> List.filter (\picture -> picture.published == Just remote)
+                |> List.foldl
+                    (\picture ( current, commands ) ->
+                        markPublished picture.id Nothing current
+                            |> Tuple.mapSecond (\more -> commands ++ more)
+                    )
+                    ( model, [] )
 
         _ ->
             ( model, [] )

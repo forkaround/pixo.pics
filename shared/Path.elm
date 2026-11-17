@@ -1,6 +1,7 @@
 module Path exposing (Path(..), parse, toString)
 
 import Data.LinkToken as LinkToken exposing (LinkToken)
+import Data.Username as Username exposing (Username)
 import Url exposing (Url)
 import Url.Parser as Parser exposing ((</>), Parser)
 
@@ -16,6 +17,7 @@ type Path
     | SignIn
     | Verify (Maybe LinkToken)
     | Passkey
+    | Profile Username
     | NotFound
 
 
@@ -55,6 +57,9 @@ toString path =
         Passkey ->
             "/passkey"
 
+        Profile name ->
+            "/" ++ Username.toString name
+
         NotFound ->
             "/404"
 
@@ -79,4 +84,5 @@ parser =
         , Parser.map SignIn (Parser.s "login")
         , Parser.map Verify (Parser.s "verify" </> Parser.fragment (Maybe.andThen LinkToken.fromString))
         , Parser.map Passkey (Parser.s "passkey")
+        , Parser.map Profile (Parser.custom "USERNAME" (Username.claim >> Result.toMaybe))
         ]
