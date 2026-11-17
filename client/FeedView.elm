@@ -1,4 +1,4 @@
-module FeedView exposing (grid, job, lightbox, neighbour, skeleton, tile)
+module FeedView exposing (Reporting(..), grid, job, lightbox, neighbour, reportActions, reportPinned, skeleton, tile)
 
 import Api
 import Data.Dimension as Dimension
@@ -7,12 +7,15 @@ import Data.Prompt as Prompt
 import Data.Seed as Seed
 import Data.Steps as Steps
 import Data.Username as Username
-import Html exposing (Html, a, button, div, img, text)
-import Html.Attributes exposing (alt, attribute, class, height, href, src, style, type_, width)
+import Html exposing (Html, a, button, div, img, span, text)
+import Html.Attributes exposing (alt, attribute, class, disabled, height, href, src, style, type_, width)
 import Html.Events exposing (onClick)
 import Lightbox
+import Overlay exposing (glass)
 import Path
+import Phosphor exposing (IconWeight(..))
 import Pipeline
+import UI.Button as Button
 import UI.Skeleton as Skeleton
 
 
@@ -102,6 +105,7 @@ lightbox :
     , onStep : Int -> msg
     , toasts : Html msg
     , detailed : Bool
+    , pinned : Bool
     }
     -> Maybe ( Api.FeedPicture, List (Html msg) )
     -> Html msg
@@ -120,7 +124,7 @@ lightbox config shown =
                                         Pipeline.weightsFromId picture.model
                                             |> Maybe.map Pipeline.weightsName
                                             |> Maybe.withDefault picture.model
-                                    , pinned = False
+                                    , pinned = config.pinned
                                     , actions = actions
                                     }
                                 )
@@ -142,6 +146,66 @@ lightbox config shown =
         , toasts = config.toasts
         }
         prepared
+
+
+type Reporting
+    = Idle
+    | Choosing
+    | Sending
+
+
+reportPinned : Reporting -> Bool
+reportPinned reporting =
+    case reporting of
+        Idle ->
+            False
+
+        Choosing ->
+            True
+
+        Sending ->
+            True
+
+
+reportActions : { choose : msg, cancel : msg, send : String -> msg } -> Reporting -> List (Html msg)
+reportActions config reporting =
+    case reporting of
+        Idle ->
+            [ Button.new
+                |> Button.text "Report"
+                |> Button.small
+                |> Button.startIcon (Phosphor.flag Regular |> Phosphor.toHtml [ attribute "aria-hidden" "true" ])
+                |> Button.toHtml [ onClick config.choose, glass ]
+            ]
+
+        Choosing ->
+            span [ class "basis-full text-sm font-medium" ] [ text "Why report this picture?" ]
+                :: List.map
+                    (\( label, reason ) ->
+                        Button.new
+                            |> Button.text label
+                            |> Button.small
+                            |> Button.toHtml [ onClick (config.send reason), glass ]
+                    )
+                    [ ( "Illegal", "illegal" )
+                    , ( "Sexual", "sexual" )
+                    , ( "Violent", "violent" )
+                    , ( "Hateful", "hateful" )
+                    , ( "Spam", "spam" )
+                    , ( "Other", "other" )
+                    ]
+                ++ [ Button.new
+                        |> Button.text "Cancel"
+                        |> Button.small
+                        |> Button.toHtml [ onClick config.cancel, glass ]
+                   ]
+
+        Sending ->
+            [ Button.new
+                |> Button.text "Reporting…"
+                |> Button.small
+                |> Button.toHtml [ disabled True, glass ]
+            ]
 
 
 neighbour : Int -> PictureId -> List Api.FeedPicture -> Maybe PictureId

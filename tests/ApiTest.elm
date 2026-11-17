@@ -2,10 +2,10 @@ module ApiTest exposing (suite)
 
 import Api
 import Data.CredentialId as CredentialId
-import Data.PictureId as PictureId
+import Data.PictureId as PictureId exposing (PictureId)
 import Data.Tag as Tag
 import Data.Username as Username
-import Expect
+import Expect exposing (Expectation)
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Test exposing (Test, describe, test)
@@ -122,19 +122,28 @@ suite =
         , describe "report"
             [ test "sends the reason as JSON" <|
                 \() ->
-                    Api.encodeBody Api.report { reason = "spam" }
-                        |> Maybe.map (Encode.encode 0)
-                        |> Expect.equal (Just """{"reason":"spam"}""")
+                    withExampleId
+                        (\id ->
+                            Api.encodeBody (Api.report id) { reason = "spam" }
+                                |> Maybe.map (Encode.encode 0)
+                                |> Expect.equal (Just """{"reason":"spam"}""")
+                        )
             , test "decodes the body it encodes" <|
                 \() ->
-                    Decode.decodeString (Api.bodyDecoder Api.report) """{"reason":"spam"}"""
-                        |> Result.map .reason
-                        |> Expect.equal (Ok "spam")
+                    withExampleId
+                        (\id ->
+                            Decode.decodeString (Api.bodyDecoder (Api.report id)) """{"reason":"spam"}"""
+                                |> Result.map .reason
+                                |> Expect.equal (Ok "spam")
+                        )
             , test "refuses a body without a reason" <|
                 \() ->
-                    Decode.decodeString (Api.bodyDecoder Api.report) "{}"
-                        |> Result.toMaybe
-                        |> Expect.equal Nothing
+                    withExampleId
+                        (\id ->
+                            Decode.decodeString (Api.bodyDecoder (Api.report id)) "{}"
+                                |> Result.toMaybe
+                                |> Expect.equal Nothing
+                        )
             ]
         , describe "publish"
             [ test "sends the metadata and the tags as JSON" <|
@@ -426,6 +435,16 @@ next route =
 
         Api.PostReport _ ->
             Nothing
+
+
+withExampleId : (PictureId -> Expectation) -> Expectation
+withExampleId check =
+    case PictureId.fromString exampleId of
+        Just id ->
+            check id
+
+        Nothing ->
+            Expect.fail "The example id is not a picture id."
 
 
 exampleId : String

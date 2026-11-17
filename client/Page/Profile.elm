@@ -36,6 +36,7 @@ type alias Model =
     , viewing : Maybe PictureId
     , detailed : Bool
     , removing : Maybe PictureId
+    , reporting : FeedView.Reporting
     }
 
 
@@ -48,6 +49,7 @@ init name =
       , viewing = Nothing
       , detailed = False
       , removing = Nothing
+      , reporting = FeedView.Idle
       }
     , fetch name
     )
@@ -73,6 +75,10 @@ type Msg
     | DetailsToggled
     | UnpublishClicked PictureId
     | GotUnpublished PictureId (Result ApiClient.Error ())
+    | ReportChosen
+    | ReportCancelled
+    | ReportSent PictureId String
+    | GotReported (Result ApiClient.Error ())
 
 
 type Outcome
@@ -141,17 +147,17 @@ update session msg model =
             )
 
         Opened id ->
-            ( { model | viewing = Just id }, NoEffect )
+            ( { model | viewing = Just id, reporting = FeedView.Idle }, NoEffect )
 
         Closed ->
-            ( { model | viewing = Nothing }, NoEffect )
+            ( { model | viewing = Nothing, reporting = FeedView.Idle }, NoEffect )
 
         Stepped offset ->
             case ( model.page, model.viewing ) of
                 ( Shown pictures, Just viewed ) ->
                     case FeedView.neighbour offset viewed pictures of
                         Just id ->
-                            ( { model | viewing = Just id }, NoEffect )
+                            ( { model | viewing = Just id, reporting = FeedView.Idle }, NoEffect )
 
                         Nothing ->
                             ( model, NoEffect )
@@ -161,6 +167,27 @@ update session msg model =
 
         DetailsToggled ->
             ( { model | detailed = not model.detailed }, NoEffect )
+
+        ReportChosen ->
+            ( { model | reporting = FeedView.Choosing }, NoEffect )
+
+        ReportCancelled ->
+            ( { model | reporting = FeedView.Idle }, NoEffect )
+
+        ReportSent id reason ->
+            ( { model | reporting = FeedView.Sending }
+            , Request (ApiClient.request (Api.report id) { reason = reason } GotReported)
+            )
+
+        GotReported (Ok ()) ->
+            ( { model | reporting = FeedView.Idle }
+            , Notify { id = reportToast, tone = Notice.Success, title = "Reported", description = Nothing, retry = Notice.NoRetry }
+            )
+
+        GotReported (Err error) ->
+            ( { model | reporting = FeedView.Idle }
+            , Effect.failure { id = reportToast, title = "Couldn't send the report", retry = Nothing } error
+            )
 
         UnpublishClicked id ->
             if mine session model && model.removing == Nothing then
@@ -225,9 +252,14 @@ toast =
     "profile"
 
 
+reportToast : String
+reportToast =
+    "report"
+
+
 toasts : List String
 toasts =
-    [ toast ]
+    [ toast, reportToast ]
 
 
 
@@ -292,6 +324,7 @@ lightbox to session toastLayer model =
         , onStep = to << Stepped
         , toasts = toastLayer
         , detailed = model.detailed
+        , pinned = not (mine session model) && FeedView.reportPinned model.reporting
         }
         (case ( model.page, model.viewing ) of
             ( Shown pictures, Just viewed ) ->
@@ -325,4 +358,6 @@ actions session model picture =
         ]
 
     else
-        []
+        FeedView.reportActions
+            { choose = ReportChosen, cancel = ReportCancelled, send = ReportSent picture.id }
+            model.reporting
