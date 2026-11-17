@@ -30,8 +30,16 @@ suite =
                 \() ->
                     withRequest
                         (\made ->
-                            Encode.encode 0 made.body
-                                |> Expect.equal """{"sender":{"email":"hello@pixo.pics","name":"pixo"},"to":[{"email":"ada@example.com"}],"subject":"Sign in","htmlContent":"<p>Hi</p>","textContent":"Hi","tags":["sign-in"]}"""
+                            case made.body of
+                                Effect.JsonBody value ->
+                                    Encode.encode 0 value
+                                        |> Expect.equal """{"sender":{"email":"hello@pixo.pics","name":"pixo"},"to":[{"email":"ada@example.com"}],"subject":"Sign in","htmlContent":"<p>Hi</p>","textContent":"Hi","tags":["sign-in"]}"""
+
+                                Effect.FormBody _ ->
+                                    Expect.fail "Expected a JSON body"
+
+                                Effect.EmptyBody ->
+                                    Expect.fail "Expected a JSON body"
                         )
             ]
         , describe "the outcome"
