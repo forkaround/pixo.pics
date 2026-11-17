@@ -234,21 +234,7 @@ periodEnd =
 
 scheduledChange : Decoder (Maybe { action : String, effectiveAt : String })
 scheduledChange =
-    Decode.maybe (Decode.field "scheduled_change" Decode.value)
-        |> Decode.andThen
-            (\found ->
-                case found of
-                    Nothing ->
-                        Decode.succeed Nothing
-
-                    Just value ->
-                        case Decode.decodeValue (Decode.nullable change) value of
-                            Ok decoded ->
-                                Decode.succeed decoded
-
-                            Err problem ->
-                                Decode.fail (Decode.errorToString problem)
-            )
+    Decode.field "scheduled_change" (Decode.nullable change)
 
 
 change : Decoder { action : String, effectiveAt : String }

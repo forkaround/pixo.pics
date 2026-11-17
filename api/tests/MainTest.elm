@@ -1022,6 +1022,13 @@ suite =
                               , signatures = [ String.repeat 64 "a" ]
                               }
                             ]
+            , test "answers 400 and logs only where a body did not decode" <|
+                \() ->
+                    startPaid
+                        |> webhook "first" freshSignature
+                        |> webhookChecked """{"event_id":"evt_1","event_type":"subscription.updated","data":{"id":"sub_1","status":"active"}}""" True
+                        |> expectSent (\values -> ( List.map .status (responses values), List.drop 1 (logs values) ))
+                            ( [ 400 ], [ ( "error", "Paddle webhook did not decode at data." ) ] )
             , test "answers 401 and warns when the check fails" <|
                 \() ->
                     startPaid

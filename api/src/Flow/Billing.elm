@@ -52,7 +52,7 @@ webhookChecked server resolver body valid =
                     Err problem ->
                         Batch
                             [ respond resolver (Response.error 400 "Expected a Paddle event.")
-                            , log Interop.Error ("Paddle webhook did not decode: " ++ String.left 200 (Decode.errorToString problem))
+                            , log Interop.Error ("Paddle webhook did not decode at " ++ failingPath problem ++ ".")
                             ]
 
                     Ok (Paddle.Ignored { eventType, eventId }) ->
@@ -135,6 +135,35 @@ update server msg =
                         [ respond resolver Response.unavailable
                         , log Interop.Error (name ++ " got an unknown outcome from the database.")
                         ]
+
+
+failingPath : Decode.Error -> String
+failingPath problem =
+    case problemPath problem of
+        [] ->
+            "the top"
+
+        steps ->
+            String.join "." steps
+
+
+problemPath : Decode.Error -> List String
+problemPath problem =
+    case problem of
+        Decode.Field name inner ->
+            name :: problemPath inner
+
+        Decode.Index i inner ->
+            String.fromInt i :: problemPath inner
+
+        Decode.OneOf (first :: _) ->
+            problemPath first
+
+        Decode.OneOf [] ->
+            []
+
+        Decode.Failure _ _ ->
+            []
 
 
 answered : Interop.Resolver -> Interop.Level -> String -> Effect msg
