@@ -528,6 +528,37 @@ ALTER TABLE ONLY public.passkeys FORCE ROW LEVEL SECURITY;
 
 
 --
+-- Name: published_pictures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.published_pictures (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    prompt text NOT NULL,
+    width integer NOT NULL,
+    height integer NOT NULL,
+    steps integer NOT NULL,
+    seed bigint NOT NULL,
+    model text NOT NULL,
+    bytes integer NOT NULL,
+    tags text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    published_at timestamp with time zone,
+    removed_at timestamp with time zone,
+    CONSTRAINT published_pictures_bytes_check CHECK (((bytes >= 1) AND (bytes <= 2097152))),
+    CONSTRAINT published_pictures_height_check CHECK ((((height >= 256) AND (height <= 1024)) AND ((height % 64) = 0))),
+    CONSTRAINT published_pictures_model_check CHECK (((model <> ''::text) AND (char_length(model) <= 200))),
+    CONSTRAINT published_pictures_prompt_check CHECK (((prompt = btrim(prompt)) AND (prompt <> ''::text) AND (char_length(prompt) <= 2000))),
+    CONSTRAINT published_pictures_seed_check CHECK (((seed >= 0) AND (seed <= '4294967295'::bigint))),
+    CONSTRAINT published_pictures_steps_check CHECK (((steps >= 1) AND (steps <= 50))),
+    CONSTRAINT published_pictures_tags_check CHECK (((cardinality(tags) <= 8) AND (array_position(tags, NULL::text) IS NULL) AND (array_to_string(tags, ','::text) ~ '^([^,]{1,24}(,[^,]{1,24})*)?$'::text) AND (array_to_string(tags, ','::text) = lower(array_to_string(tags, ','::text))))),
+    CONSTRAINT published_pictures_width_check CHECK ((((width >= 256) AND (width <= 1024)) AND ((width % 64) = 0)))
+);
+
+ALTER TABLE ONLY public.published_pictures FORCE ROW LEVEL SECURITY;
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -621,6 +652,14 @@ ALTER TABLE ONLY public.passkeys
 
 
 --
+-- Name: published_pictures published_pictures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.published_pictures
+    ADD CONSTRAINT published_pictures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -698,6 +737,27 @@ CREATE INDEX passkeys_user_id_idx ON public.passkeys USING btree (user_id);
 
 
 --
+-- Name: published_pictures_feed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX published_pictures_feed_idx ON public.published_pictures USING btree (published_at DESC, id DESC) WHERE ((published_at IS NOT NULL) AND (removed_at IS NULL));
+
+
+--
+-- Name: published_pictures_tags_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX published_pictures_tags_idx ON public.published_pictures USING gin (tags) WHERE ((published_at IS NOT NULL) AND (removed_at IS NULL));
+
+
+--
+-- Name: published_pictures_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX published_pictures_user_id_idx ON public.published_pictures USING btree (user_id);
+
+
+--
 -- Name: sessions_expires_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -741,6 +801,14 @@ ALTER TABLE ONLY public.passkeys
 
 
 --
+-- Name: published_pictures published_pictures_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.published_pictures
+    ADD CONSTRAINT published_pictures_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -778,6 +846,13 @@ CREATE POLICY own_rows ON public.passkeys USING ((user_id = ( SELECT (NULLIF(cur
 
 
 --
+-- Name: published_pictures own_rows; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY own_rows ON public.published_pictures USING ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif"))) WITH CHECK ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif")));
+
+
+--
 -- Name: sessions own_rows; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -810,6 +885,12 @@ CREATE POLICY own_rows ON public.webauthn_challenges USING ((user_id = ( SELECT 
 --
 
 ALTER TABLE public.passkeys ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: published_pictures; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.published_pictures ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: sessions; Type: ROW SECURITY; Schema: public; Owner: -
@@ -965,6 +1046,83 @@ GRANT SELECT,INSERT,DELETE ON TABLE public.passkeys TO api;
 --
 
 GRANT UPDATE(name) ON TABLE public.passkeys TO api;
+
+
+--
+-- Name: TABLE published_pictures; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,DELETE ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.user_id; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(user_id) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.prompt; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(prompt) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.width; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(width) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.height; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(height) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.steps; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(steps) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.seed; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(seed) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.model; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(model) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.bytes; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(bytes) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.tags; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT INSERT(tags) ON TABLE public.published_pictures TO api;
+
+
+--
+-- Name: COLUMN published_pictures.published_at; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT UPDATE(published_at) ON TABLE public.published_pictures TO api;
 
 
 --
