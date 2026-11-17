@@ -22,6 +22,10 @@ IndexedDB for Elm and know nothing of pictures.
   accounts have no `owner` and are claimed by the first account to open the library in
   that browser (`Idb.Patch`, label `owner`). Signing out empties the model and releases
   its object URLs.
+- A published picture's row has `published`, its `PictureId` on the server
+  (`Library.markPublished`, label `published`). Publishing re-encodes the picture as a JPEG in
+  `client/jpeg.ts` and uploads it with `client/send.ts`; `client/Publish.elm` decides
+  everything else.
 - Search (`client/Bm25.elm`) folds accents by hand, since Elm has no Unicode
   normalisation: a Latin letter missing from `plain` is added there.
 - A picture has no address to share, so sharing hands over the file: a network copies

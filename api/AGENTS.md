@@ -66,6 +66,23 @@ The Elm HTTP server in `api/`: flows, answers, queries, emails and their tests.
   request.
 - An account with a renewing subscription can't be deleted (`'renewing'`, 409): cancel first.
 
+## Pictures
+
+- Publishing never sends picture bytes through the server. `POST /api/pictures` checks the
+  metadata and declared size, inserts the row only for a Pro user with fewer than 3 unfinished
+  publishes, and answers a 10-minute presigned `PUT` for `incoming/<id>.jpg` in the private
+  upload bucket, with `content-type: image/jpeg` signed (R2 enforces it).
+- `POST /api/pictures/<id>/published` `HEAD`s the staged file, refuses a size other than the
+  declared one (so over 2 MiB) or a type other than `image/jpeg`, copies it into the public
+  bucket with `REPLACE` metadata, deletes the staged file, then sets `published_at`. Only rows
+  with `published_at` are ever shown.
+- Unpublishing and account deletion delete the public file before the row, one file at a time.
+  The upload bucket's lifecycle rule removes anything staged and never confirmed.
+- A picture's tags (at most 8 `Data.Tag`s, from the library's tagger) are stored in
+  `published_pictures.tags`, a `text[]` with a GIN index, so the feed can filter by one.
+- A presigned URL is a credential until it expires: never log one.
+- `removed_at` is for moderation; `api` can't write it.
+
 ## Adding a route
 
 1. A variant of `Api.Route` in `shared/Api.elm`: keep `Api.parse` in step with

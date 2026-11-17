@@ -13,7 +13,9 @@ you are.
 
 No account is needed to make pictures. An account signs in with a passkey or a link by
 email; the server keeps the account, its passkeys, sessions and Pro subscription. Pro, $5 a
-month through Paddle, adds a public profile, the feed and cloud sync.
+month through Paddle, adds a public profile, the feed and cloud sync. Published pictures (Pro)
+go from the browser to Cloudflare R2 and are served from img.pixo.pics; the server only signs
+the upload and checks it.
 
 ## How it's built
 
@@ -77,20 +79,26 @@ server's log.
 
 `.env.example` lists every variable, with values that work on a fresh checkout.
 
-| Variable                | For                                                            |
-| ----------------------- | -------------------------------------------------------------- |
-| `DATABASE_URL`          | The app's database, as its owner: migrations                   |
-| `API_DATABASE_PASSWORD` | The password of `api`, the role the server connects as         |
-| `NEON_ENDPOINT`         | The local proxy, `http://localhost:4445/sql`; not on Vercel    |
-| `SHADOW_DATABASE_URL`   | A scratch database for `bun db watch` and `commit`             |
-| `ROOT_DATABASE_URL`     | A superuser, for `bun db reset` and the proxy                  |
-| `BREVO_API_KEY`         | Sends the sign-in emails; empty prints them to the log instead |
-| `EMAIL_FROM`            | The address those emails come from                             |
-| `PADDLE_ENVIRONMENT`    | `sandbox` or `production`; empty turns billing off             |
-| `PADDLE_API_KEY`        | Server-side Paddle API key                                     |
-| `PADDLE_WEBHOOK_SECRET` | Secret of the Paddle notification destination                  |
-| `PADDLE_CLIENT_TOKEN`   | Paddle.js client-side token                                    |
-| `PADDLE_PRO_PRICE_ID`   | The Pro price, `pri_...`                                       |
+| Variable                | For                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------- |
+| `DATABASE_URL`          | The app's database, as its owner: migrations                                        |
+| `API_DATABASE_PASSWORD` | The password of `api`, the role the server connects as                              |
+| `NEON_ENDPOINT`         | The local proxy, `http://localhost:4445/sql`; not on Vercel                         |
+| `SHADOW_DATABASE_URL`   | A scratch database for `bun db watch` and `commit`                                  |
+| `ROOT_DATABASE_URL`     | A superuser, for `bun db reset` and the proxy                                       |
+| `BREVO_API_KEY`         | Sends the sign-in emails; empty prints them to the log instead                      |
+| `EMAIL_FROM`            | The address those emails come from                                                  |
+| `PADDLE_ENVIRONMENT`    | `sandbox` or `production`; empty turns billing off                                  |
+| `PADDLE_API_KEY`        | Server-side Paddle API key                                                          |
+| `PADDLE_WEBHOOK_SECRET` | Secret of the Paddle notification destination                                       |
+| `PADDLE_CLIENT_TOKEN`   | Paddle.js client-side token                                                         |
+| `PADDLE_PRO_PRICE_ID`   | The Pro price, `pri_...`                                                            |
+| `R2_ACCOUNT_ID`         | The Cloudflare account that holds the picture buckets                               |
+| `R2_ACCESS_KEY_ID`      | Access key of an R2 token for the two buckets                                       |
+| `R2_SECRET_ACCESS_KEY`  | Its secret                                                                          |
+| `R2_BUCKET`             | The public bucket served from `IMAGES_ORIGIN`                                       |
+| `R2_UPLOAD_BUCKET`      | The private bucket browsers upload to before the server checks and copies a picture |
+| `IMAGES_ORIGIN`         | Where published pictures are served, `https://img.pixo.pics`                        |
 
 ## Row-level security
 
