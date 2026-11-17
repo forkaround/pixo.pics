@@ -1627,7 +1627,7 @@ simulateEffects effect =
                 { method = method
                 , headers = List.map (\( name, value ) -> SimulatedEffect.Http.header name value) headers
                 , url = url
-                , body = SimulatedEffect.Http.jsonBody body
+                , body = simulatedBody body
                 , resolver = SimulatedEffect.Http.stringResolver (onResponse >> Ok)
                 , timeout = timeout
                 }
@@ -1651,3 +1651,16 @@ simulateSubscriptions _ =
 deleteAccount : List ( String, String ) -> App -> App
 deleteAccount headers =
     requestWith { resolve = "first", method = "DELETE", path = [ "api", "auth", "account" ], headers = headers, body = "" }
+
+
+simulatedBody : Effect.Body -> SimulatedEffect.Http.Body
+simulatedBody body =
+    case body of
+        Effect.JsonBody value ->
+            SimulatedEffect.Http.jsonBody value
+
+        Effect.FormBody pairs ->
+            SimulatedEffect.Http.stringBody "application/x-www-form-urlencoded" (Effect.encodeForm pairs)
+
+        Effect.EmptyBody ->
+            SimulatedEffect.Http.emptyBody

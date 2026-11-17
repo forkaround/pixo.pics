@@ -1,4 +1,16 @@
-module Effect exposing (Effect(..), Failure, HttpRequest, log, map, query, respond, toTask, transact)
+module Effect exposing
+    ( Body(..)
+    , Effect(..)
+    , Failure
+    , HttpRequest
+    , encodeForm
+    , log
+    , map
+    , query
+    , respond
+    , toTask
+    , transact
+    )
 
 import Http
 import InteropDefinitions as Interop
@@ -7,6 +19,7 @@ import Response exposing (Response)
 import Services.Neon as Neon
 import Task exposing (Task)
 import Time
+import Url
 
 
 type Effect msg
@@ -26,11 +39,17 @@ type alias Failure =
     }
 
 
+type Body
+    = JsonBody Encode.Value
+    | FormBody (List ( String, String ))
+    | EmptyBody
+
+
 type alias HttpRequest msg =
     { method : String
     , headers : List ( String, String )
     , url : String
-    , body : Encode.Value
+    , body : Body
     , timeout : Maybe Float
     , onResponse : Http.Response String -> msg
     }
@@ -111,7 +130,27 @@ toTask { method, headers, url, body, timeout, onResponse } =
         { method = method
         , headers = List.map (\( name, value ) -> Http.header name value) headers
         , url = url
-        , body = Http.jsonBody body
+        , body = httpBody body
         , resolver = Http.stringResolver (onResponse >> Ok)
         , timeout = timeout
         }
+
+
+httpBody : Body -> Http.Body
+httpBody body =
+    case body of
+        JsonBody value ->
+            Http.jsonBody value
+
+        FormBody pairs ->
+            Http.stringBody "application/x-www-form-urlencoded" (encodeForm pairs)
+
+        EmptyBody ->
+            Http.emptyBody
+
+
+encodeForm : List ( String, String ) -> String
+encodeForm pairs =
+    pairs
+        |> List.map (\( name, value ) -> Url.percentEncode name ++ "=" ++ Url.percentEncode value)
+        |> String.join "&"
