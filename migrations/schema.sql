@@ -20,6 +20,20 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+--
 -- Name: apply_paddle_subscription(text, uuid, text, text, text, timestamp with time zone, text, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -792,6 +806,39 @@ ALTER TABLE ONLY public.subscriptions FORCE ROW LEVEL SECURITY;
 
 
 --
+-- Name: sync_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sync_attempts (
+    state text NOT NULL,
+    user_id uuid NOT NULL,
+    provider text NOT NULL,
+    verifier text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT sync_attempts_provider_check CHECK ((provider = ANY (ARRAY['dropbox'::text, 'google-drive'::text]))),
+    CONSTRAINT sync_attempts_state_check CHECK ((state ~ '^[A-Za-z0-9_-]{43}$'::text)),
+    CONSTRAINT sync_attempts_verifier_check CHECK ((verifier ~ '^[A-Za-z0-9_-]{43}$'::text))
+);
+
+ALTER TABLE ONLY public.sync_attempts FORCE ROW LEVEL SECURITY;
+
+
+--
+-- Name: sync_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sync_connections (
+    user_id uuid NOT NULL,
+    provider text NOT NULL,
+    refresh_token bytea NOT NULL,
+    connected_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sync_connections_provider_check CHECK ((provider = ANY (ARRAY['dropbox'::text, 'google-drive'::text])))
+);
+
+ALTER TABLE ONLY public.sync_connections FORCE ROW LEVEL SECURITY;
+
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -879,6 +926,22 @@ ALTER TABLE ONLY public.sessions
 
 ALTER TABLE ONLY public.subscriptions
     ADD CONSTRAINT subscriptions_pkey PRIMARY KEY (paddle_subscription_id);
+
+
+--
+-- Name: sync_attempts sync_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_attempts
+    ADD CONSTRAINT sync_attempts_pkey PRIMARY KEY (state);
+
+
+--
+-- Name: sync_connections sync_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_connections
+    ADD CONSTRAINT sync_connections_pkey PRIMARY KEY (user_id, provider);
 
 
 --
@@ -984,6 +1047,13 @@ CREATE INDEX subscriptions_user_id_idx ON public.subscriptions USING btree (user
 
 
 --
+-- Name: sync_attempts_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sync_attempts_user_id_idx ON public.sync_attempts USING btree (user_id);
+
+
+--
 -- Name: webauthn_challenges_expires_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1038,6 +1108,22 @@ ALTER TABLE ONLY public.subscriptions
 
 
 --
+-- Name: sync_attempts sync_attempts_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_attempts
+    ADD CONSTRAINT sync_attempts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sync_connections sync_connections_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_connections
+    ADD CONSTRAINT sync_connections_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: webauthn_challenges webauthn_challenges_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1077,6 +1163,20 @@ CREATE POLICY own_rows ON public.sessions USING ((user_id = ( SELECT (NULLIF(cur
 --
 
 CREATE POLICY own_rows ON public.subscriptions USING ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif"))) WITH CHECK ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif")));
+
+
+--
+-- Name: sync_attempts own_rows; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY own_rows ON public.sync_attempts USING ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif"))) WITH CHECK ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif")));
+
+
+--
+-- Name: sync_connections own_rows; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY own_rows ON public.sync_connections USING ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif"))) WITH CHECK ((user_id = ( SELECT (NULLIF(current_setting('app.user_id'::text, true), ''::text))::uuid AS "nullif")));
 
 
 --
@@ -1122,6 +1222,18 @@ ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sync_attempts; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sync_attempts ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sync_connections; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sync_connections ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: users; Type: ROW SECURITY; Schema: public; Owner: -
@@ -1430,6 +1542,34 @@ GRANT SELECT(expires_at) ON TABLE public.sessions TO api;
 --
 
 GRANT SELECT ON TABLE public.subscriptions TO api;
+
+
+--
+-- Name: TABLE sync_attempts; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE ON TABLE public.sync_attempts TO api;
+
+
+--
+-- Name: TABLE sync_connections; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE ON TABLE public.sync_connections TO api;
+
+
+--
+-- Name: COLUMN sync_connections.refresh_token; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT UPDATE(refresh_token) ON TABLE public.sync_connections TO api;
+
+
+--
+-- Name: COLUMN sync_connections.connected_at; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT UPDATE(connected_at) ON TABLE public.sync_connections TO api;
 
 
 --
