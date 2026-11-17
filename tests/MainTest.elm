@@ -2230,6 +2230,102 @@ suite =
                             , attribute (Html.Attributes.attribute "aria-label" "Download Bonsai ternary, 2-bit")
                             ]
             ]
+        , describe "Publish"
+            [ test "offers a free account Pro instead of publishing" <|
+                \() ->
+                    library
+                        |> ProgramTest.clickButton "Open a red fox in the snow"
+                        |> ProgramTest.expectView
+                            (Query.find [ tag "elmcn-dialog", id "picture" ]
+                                >> Query.find [ tag "a", containing [ text "Publish with Pro" ] ]
+                                >> Query.has [ attribute (Html.Attributes.href "/settings/account") ]
+                            )
+            , test "asks before publishing, then encodes the picture as a JPEG" <|
+                \() ->
+                    proLibrary
+                        |> inPicture (ProgramTest.clickButton "Publish")
+                        |> ProgramTest.ensureViewHas [ text "Publish this picture? Its prompt, settings and tags will be public." ]
+                        |> inPicture (ProgramTest.clickButton "Publish")
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (Expect.equal [ """{"tag":"EncodePicture","data":{"label":"publish:1","url":"blob:https://pixo.pics/1","quality":0.9}}""" ])
+            , test "can be cancelled at the question" <|
+                \() ->
+                    proLibrary
+                        |> inPicture (ProgramTest.clickButton "Publish")
+                        |> inPicture (ProgramTest.clickButton "Cancel")
+                        |> ProgramTest.ensureViewHasNot [ text "Publish this picture?" ]
+                        |> ProgramTest.expectOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [])
+            , test "asks the server with the picture's settings, then uploads straight to the link, then confirms" <|
+                \() ->
+                    encoded proLibrary
+                        |> ProgramTest.ensureHttpRequest "POST"
+                            "/api/pictures"
+                            (Test.Http.expectJsonBody Decode.value
+                                (Encode.encode 0
+                                    >> Expect.equal """{"prompt":"a red fox in the snow","width":512,"height":512,"steps":4,"seed":7,"model":"prism-ml/bonsai-image-ternary-4B-mlx-2bit","bytes":12,"tags":[]}"""
+                                )
+                            )
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/pictures" (response 201 upload)
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (List.drop 1 >> Expect.equal [ sendBlob ])
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (blobSent 200)
+                        |> ProgramTest.ensureHttpRequest "POST" ("/api/pictures/" ++ publishedId ++ "/published") (\_ -> Expect.pass)
+                        |> ProgramTest.simulateHttpResponse "POST" ("/api/pictures/" ++ publishedId ++ "/published") (response 200 published)
+                        |> ProgramTest.ensureViewHas [ text "Published" ]
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (Expect.equal [ publishedPatch ("\"" ++ publishedId ++ "\"") ])
+                        |> inPicture (ProgramTest.clickButton "Unpublish")
+                        |> ProgramTest.expectHttpRequest "DELETE" ("/api/pictures/" ++ publishedId) (\_ -> Expect.pass)
+            , test "publishes the picture's tags" <|
+                \() ->
+                    encoded (proLibraryOf [ storedWithTags [ "fox" ] 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ])
+                        |> ProgramTest.expectHttpRequest "POST"
+                            "/api/pictures"
+                            (Test.Http.expectJsonBody (Decode.field "tags" (Decode.list Decode.string)) (Expect.equal [ "fox" ]))
+            , test "says why the server refused the picture, and uploads nothing" <|
+                \() ->
+                    encoded proLibrary
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/pictures" (response 403 """{"error":"Publishing needs Pro."}""")
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.field "tag" Decode.string)
+                            (Expect.equal [ "EncodePicture", "IdbRelease" ])
+                        |> ProgramTest.ensureViewHas [ text "Couldn't publish the picture" ]
+                        |> ProgramTest.expectViewHas [ text "Publishing needs Pro." ]
+            , test "cancels the row and says so when the upload is refused" <|
+                \() ->
+                    encoded proLibrary
+                        |> ProgramTest.simulateHttpResponse "POST" "/api/pictures" (response 201 upload)
+                        |> ProgramTest.simulateIncomingPort "interopToElm" (blobSent 403)
+                        |> ProgramTest.ensureViewHas [ text "Couldn't publish the picture" ]
+                        |> ProgramTest.ensureViewHas [ text "The upload didn't go through." ]
+                        |> ProgramTest.expectHttpRequest "DELETE" ("/api/pictures/" ++ publishedId) (\_ -> Expect.pass)
+            , test "says why the browser could not encode the picture, and asks the server nothing" <|
+                \() ->
+                    proLibrary
+                        |> inPicture (ProgramTest.clickButton "Publish")
+                        |> inPicture (ProgramTest.clickButton "Publish")
+                        |> ProgramTest.simulateIncomingPort "interopToElm"
+                            (Encode.object [ ( "tag", Encode.string "PictureEncodeFailed" ), ( "label", Encode.string "publish:1" ), ( "message", Encode.string "The picture is too large." ) ])
+                        |> ProgramTest.ensureViewHas [ text "Couldn't publish the picture" ]
+                        |> ProgramTest.ensureViewHas [ text "The picture is too large." ]
+                        |> ProgramTest.expectHttpRequests "POST" "/api/pictures" (List.length >> Expect.equal 0)
+            , test "unpublishes a published picture, and forgets its id" <|
+                \() ->
+                    proLibraryOf [ storedPublished 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ]
+                        |> inPicture (ProgramTest.clickButton "Unpublish")
+                        |> ProgramTest.ensureHttpRequest "DELETE" ("/api/pictures/" ++ publishedId) (\_ -> Expect.pass)
+                        |> ProgramTest.simulateHttpResponse "DELETE" ("/api/pictures/" ++ publishedId) (response 200 "{}")
+                        |> ProgramTest.ensureViewHas [ text "Unpublished" ]
+                        |> ProgramTest.ensureOutgoingPortValues "interopFromElm"
+                            (Decode.map (Encode.encode 0) Decode.value)
+                            (Expect.equal [ publishedPatch "null" ])
+                        |> ProgramTest.expectViewHas [ tag "button", containing [ text "Publish" ] ]
+            ]
         , describe "Library"
             [ test "asks the browser for the saved pictures" <|
                 \() ->
@@ -2715,6 +2811,80 @@ taggedLibrary =
                 [ storedWithTags [ "fox" ] 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512
                 , storedWithTags [ "sunset", "lighthouse" ] 2 "blob:https://pixo.pics/2" "a lighthouse on a cliff at sunset" 1024 576
                 , storedWithTags [ "sunset" ] 3 "blob:https://pixo.pics/3" "a city skyline at sunset" 576 1024
+                ]
+            )
+
+
+publishedId : String
+publishedId =
+    "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11"
+
+
+upload : String
+upload =
+    """{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://acc.r2.cloudflarestorage.com/uploads/incoming/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg?X-Amz-Signature=x","headers":[["content-type","image/jpeg"]]}"""
+
+
+published : String
+published =
+    """{"id":"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11","url":"https://img.pixo.pics/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg","publishedAt":"2026-11-17T10:00:00Z"}"""
+
+
+sendBlob : String
+sendBlob =
+    """{"tag":"SendBlob","data":{"label":"publish:1","url":"blob:https://pixo.pics/jpeg-1","method":"PUT","endpoint":"https://acc.r2.cloudflarestorage.com/uploads/incoming/6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11.jpg?X-Amz-Signature=x","headers":[["content-type","image/jpeg"]],"release":true}}"""
+
+
+publishedPatch : String -> String
+publishedPatch value =
+    """{"tag":"IdbPatch","data":{"database":{"name":"pixo","version":1,"stores":[{"name":"pictures","keyPath":"id","autoIncrement":true}]},"store":"pictures","key":1,"fields":{"published":""" ++ value ++ """},"label":"published"}}"""
+
+
+blobSent : Int -> Encode.Value
+blobSent status =
+    Encode.object
+        [ ( "tag", Encode.string "BlobSent" )
+        , ( "label", Encode.string "publish:1" )
+        , ( "status", Encode.int status )
+        , ( "body", Encode.string "" )
+        ]
+
+
+storedPublished : Int -> String -> String -> Int -> Int -> Encode.Value
+storedPublished id url prompt width height =
+    Encode.object (storedFields id url prompt width height ++ [ ( "owner", Encode.string "ada" ), ( "published", Encode.string publishedId ) ])
+
+
+proLibrary : ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+proLibrary =
+    proLibraryOf [ stored 1 "blob:https://pixo.pics/1" "a red fox in the snow" 512 512 ]
+
+
+proLibraryOf : List Encode.Value -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+proLibraryOf pictures =
+    startAt "/library" defaultFlags
+        |> ProgramTest.simulateHttpOk "GET" "/api/auth/session" mePro
+        |> ProgramTest.simulateIncomingPort "interopToElm" (libraryLoaded pictures)
+        |> ProgramTest.clickButton "Open a red fox in the snow"
+        |> ProgramTest.ensureOutgoingPortValues "interopFromElm" Decode.value (\_ -> Expect.pass)
+
+
+inPicture : (ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+inPicture =
+    ProgramTest.within (Query.find [ tag "elmcn-dialog", id "picture" ])
+
+
+encoded : ProgramTest Main.Model Main.Msg (Effect Main.Msg) -> ProgramTest Main.Model Main.Msg (Effect Main.Msg)
+encoded app =
+    app
+        |> inPicture (ProgramTest.clickButton "Publish")
+        |> inPicture (ProgramTest.clickButton "Publish")
+        |> ProgramTest.simulateIncomingPort "interopToElm"
+            (Encode.object
+                [ ( "tag", Encode.string "PictureEncoded" )
+                , ( "label", Encode.string "publish:1" )
+                , ( "url", Encode.string "blob:https://pixo.pics/jpeg-1" )
+                , ( "bytes", Encode.int 12 )
                 ]
             )
 

@@ -1,5 +1,6 @@
 module LibraryTest exposing (suite)
 
+import Data.PictureId as PictureId
 import Data.Tag as Tag exposing (Tag)
 import Data.Username as Username
 import Expect
@@ -373,6 +374,41 @@ suite =
                         |> .zoomed
                         |> Expect.equal True
             ]
+        , describe "published pictures"
+            [ test "load as published when their row names the server's id" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Rows { label = "", rows = [ withPublished "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11" fox, row lighthouse ] })) ] opening
+                        |> Library.visible
+                        |> List.map (\picture -> ( picture.id, Maybe.map PictureId.toString picture.published ))
+                        |> Expect.equal [ ( 2, Nothing ), ( 1, Just "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11" ) ]
+            , test "load as unpublished when the id is null or not an id" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Rows { label = "", rows = [ withPublishedValue Encode.null fox, withPublishedValue (Encode.string "nope") lighthouse ] })) ] opening
+                        |> Library.visible
+                        |> List.map .published
+                        |> Expect.equal [ Nothing, Nothing ]
+            , test "are marked, and patched in the database" <|
+                \() ->
+                    Library.markPublished 1 (PictureId.fromString "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11") loaded
+                        |> Tuple.mapBoth
+                            (\model -> Maybe.map (.published >> Maybe.map PictureId.toString) (Library.find 1 model))
+                            (List.map patched)
+                        |> Expect.equal
+                            ( Just (Just "6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11")
+                            , [ "pictures:1:published:{\"published\":\"6f1c2a52-3d0e-4a53-9a7e-0f6f1f3f5b11\"}" ]
+                            )
+            , test "are unmarked with a null" <|
+                \() ->
+                    Library.markPublished 1 Nothing loaded
+                        |> Tuple.second
+                        |> List.map patched
+                        |> Expect.equal [ "pictures:1:published:{\"published\":null}" ]
+            , test "ignore a published patch that failed" <|
+                \() ->
+                    run [ Happened (Answered (Idb.Failed { label = "published", message = "The database is blocked." })) ] loaded
+                        |> .notice
+                        |> Expect.equal Nothing
+            ]
         , describe "sharing"
             [ test "copies the picture, then opens the network with the prompt" <|
                 \() ->
@@ -524,6 +560,27 @@ withTags names stored =
         , ( "model", Encode.string stored.model )
         , ( "tags", Encode.list Encode.string names )
         , ( "owner", Encode.string "ada" )
+        ]
+
+
+withPublished : String -> Row -> Value
+withPublished id =
+    withPublishedValue (Encode.string id)
+
+
+withPublishedValue : Value -> Row -> Value
+withPublishedValue published stored =
+    Encode.object
+        [ ( "id", Encode.int stored.id )
+        , ( "blob", Encode.string stored.blob )
+        , ( "prompt", Encode.string stored.prompt )
+        , ( "width", Encode.int stored.width )
+        , ( "height", Encode.int stored.height )
+        , ( "steps", Encode.int stored.steps )
+        , ( "seed", Encode.int stored.seed )
+        , ( "model", Encode.string stored.model )
+        , ( "owner", Encode.string "ada" )
+        , ( "published", published )
         ]
 
 

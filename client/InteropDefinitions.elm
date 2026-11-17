@@ -45,6 +45,8 @@ type FromElm
     | RunStylist Stylist.Command
     | RunTagger Tagger.Command
     | OpenCheckout { transactionId : String, clientToken : String, environment : String }
+    | EncodePicture { label : String, url : String, quality : Float }
+    | SendBlob { label : String, url : String, method : String, endpoint : String, headers : List ( String, String ), release : Bool }
 
 
 type ToElm
@@ -57,6 +59,10 @@ type ToElm
     | StylistEvent Stylist.Event
     | TaggerEvent Tagger.Event
     | CheckoutEvent String
+    | PictureEncoded { label : String, url : String, bytes : Int }
+    | PictureEncodeFailed { label : String, message : String }
+    | BlobSent { label : String, status : Int, body : String }
+    | BlobFailed { label : String, message : String }
 
 
 type alias Flags =
@@ -87,7 +93,7 @@ themeToString theme =
 fromElm : Encoder FromElm
 fromElm =
     TsEncode.union
-        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbPatch idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist loadTagger tagPicture releaseTagger openCheckout value ->
+        (\writeToLocalStorage createPasskey getPasskey checkWebGpu loadModel generateImage cancelPipeline releaseModel clearModelCache idbGetAll idbAdd idbDelete idbPatch idbRelease sharePicture copyPicture openTab loadStylist writePrompt stopWriting removeStylist loadTagger tagPicture releaseTagger openCheckout encodePicture sendBlob value ->
             case value of
                 WriteToLocalStorage entry ->
                     writeToLocalStorage entry
@@ -163,6 +169,12 @@ fromElm =
 
                 OpenCheckout checkout ->
                     openCheckout checkout
+
+                EncodePicture request ->
+                    encodePicture request
+
+                SendBlob request ->
+                    sendBlob request
         )
         |> TsEncode.variantTagged "WriteToLocalStorage"
             (TsEncode.object
@@ -291,6 +303,23 @@ fromElm =
                 , TsEncode.required "environment" .environment TsEncode.string
                 ]
             )
+        |> TsEncode.variantTagged "EncodePicture"
+            (TsEncode.object
+                [ TsEncode.required "label" .label TsEncode.string
+                , TsEncode.required "url" .url TsEncode.string
+                , TsEncode.required "quality" .quality TsEncode.float
+                ]
+            )
+        |> TsEncode.variantTagged "SendBlob"
+            (TsEncode.object
+                [ TsEncode.required "label" .label TsEncode.string
+                , TsEncode.required "url" .url TsEncode.string
+                , TsEncode.required "method" .method TsEncode.string
+                , TsEncode.required "endpoint" .endpoint TsEncode.string
+                , TsEncode.required "headers" .headers (TsEncode.list (TsEncode.tuple TsEncode.string TsEncode.string))
+                , TsEncode.required "release" .release TsEncode.bool
+                ]
+            )
         |> TsEncode.buildUnion
 
 
@@ -399,6 +428,28 @@ toElm =
                 )
           )
         , ( "CheckoutEvent", TsDecode.map CheckoutEvent (TsDecode.field "name" TsDecode.string) )
+        , ( "PictureEncoded"
+          , TsDecode.map3 (\label url bytes -> PictureEncoded { label = label, url = url, bytes = bytes })
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "url" TsDecode.string)
+                (TsDecode.field "bytes" TsDecode.int)
+          )
+        , ( "PictureEncodeFailed"
+          , TsDecode.map2 (\label message -> PictureEncodeFailed { label = label, message = message })
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "message" TsDecode.string)
+          )
+        , ( "BlobSent"
+          , TsDecode.map3 (\label status body -> BlobSent { label = label, status = status, body = body })
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "status" TsDecode.int)
+                (TsDecode.field "body" TsDecode.string)
+          )
+        , ( "BlobFailed"
+          , TsDecode.map2 (\label message -> BlobFailed { label = label, message = message })
+                (TsDecode.field "label" TsDecode.string)
+                (TsDecode.field "message" TsDecode.string)
+          )
         , ( "PictureCopied", TsDecode.succeed (LibraryEvent Library.Copied) )
         , ( "ShareFailed"
           , TsDecode.map (Library.ShareFailed >> LibraryEvent) (TsDecode.field "name" TsDecode.string)
